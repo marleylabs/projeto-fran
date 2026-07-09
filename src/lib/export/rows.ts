@@ -1,6 +1,7 @@
 import type { Colaborador } from "@/lib/types/payroll";
 
 export const COLABORADOR_HEADERS = [
+  "Empresa",
   "Código",
   "Nome",
   "CPF",
@@ -31,6 +32,7 @@ export const COLABORADOR_HEADERS = [
 
 export function colaboradorToRow(c: Colaborador): (string | number)[] {
   return [
+    c.empresaNome || "",
     c.codigo,
     c.nome,
     c.cpf,

@@ -1,5 +1,7 @@
 import { prisma } from "./prisma";
 import type { PayrollExtractionResult } from "@/lib/parser/router";
+import type { ExtractionResult } from "@/lib/types/payroll";
+import { combineExtratoMensalSources } from "@/lib/parser/combineExtratoMensal";
 
 function summaryOf(result: PayrollExtractionResult): { totalColaboradores: number; liquidoGeral: number } {
   if (result.formato === "extrato-mensal") {
@@ -92,4 +94,28 @@ export async function listUploads(limit = 20) {
 
 export async function getUploadById(id: string) {
   return prisma.upload.findUnique({ where: { id } });
+}
+
+export async function getCombinedUploadById(id: string): Promise<PayrollExtractionResult | null> {
+  const upload = await getUploadById(id);
+  if (!upload) return null;
+
+  const result = upload.data as unknown as PayrollExtractionResult;
+  if (result.formato !== "extrato-mensal" || !upload.periodoChave) {
+    return { ...result, id: upload.id };
+  }
+
+  const uploads = await prisma.upload.findMany({
+    where: { formato: "extrato-mensal", periodoChave: upload.periodoChave },
+    orderBy: [{ empresaChave: "asc" }, { createdAt: "asc" }],
+    select: { id: true, fileName: true, data: true },
+  });
+
+  const combined = combineExtratoMensalSources(
+    uploads
+      .map((item) => ({ uploadId: item.id, fileName: item.fileName, result: item.data as unknown as ExtractionResult }))
+      .filter((item) => item.result.formato === "extrato-mensal")
+  );
+
+  return combined ?? { ...result, id: upload.id };
 }

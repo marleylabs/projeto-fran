@@ -81,6 +81,7 @@ export function EmployeeDetailModal({ colaborador, onClose, onSave }: Props) {
               )}
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                <Field label="Empresa" value={colaborador.empresaNome || ""} />
                 <Field label="Código" value={colaborador.codigo} />
                 <Field label="CPF" value={colaborador.cpf} />
                 <Field label="Admissão" value={colaborador.admissao} />

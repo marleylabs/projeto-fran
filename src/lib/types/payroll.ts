@@ -28,6 +28,11 @@ export interface CampoNumerico {
 
 export interface Colaborador {
   id: string;
+  /** Empresa de origem quando a tela está exibindo uma competência consolidada. */
+  empresaNome?: string;
+  empresaCnpj?: string;
+  competencia?: string;
+  arquivoOrigem?: string;
   codigo: string;
   nome: string;
   cpf: string;
@@ -90,6 +95,18 @@ export interface ExtractionResult {
   formato: "extrato-mensal";
   /** Id do registro salvo no banco (ausente se a extração não foi persistida). */
   id?: string;
+  /** true quando a resposta reúne mais de um PDF da mesma competência. */
+  consolidado?: boolean;
+  /** Empresas/arquivos que compõem uma visão consolidada por competência. */
+  empresas?: {
+    nome: string;
+    cnpj: string;
+    competencia: string;
+    uploadId?: string;
+    fileName?: string;
+    totalColaboradores: number;
+    liquidoGeral: number;
+  }[];
   empresa: Empresa;
   colaboradores: Colaborador[];
   totaisGerais: TotaisGerais;

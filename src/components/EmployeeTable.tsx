@@ -42,6 +42,7 @@ export function EmployeeTable({ colaboradores, onVerDetalhes }: Props) {
           </div>
         ),
       }),
+      columnHelper.accessor("empresaNome", { header: "Empresa", cell: (info) => info.getValue() || "—" }),
       columnHelper.accessor("cpf", { header: "CPF", cell: (info) => info.getValue() || "—" }),
       columnHelper.accessor("cargo", { header: "Cargo", cell: (info) => info.getValue() || "—" }),
       columnHelper.accessor("departamento", { header: "Depto", cell: (info) => info.getValue() || "—" }),
@@ -78,7 +79,7 @@ export function EmployeeTable({ colaboradores, onVerDetalhes }: Props) {
 
   return (
     <div className="card overflow-x-auto scrollbar-thin">
-      <table className="w-full text-sm border-collapse min-w-[820px]">
+      <table className="w-full text-sm border-collapse min-w-[980px]">
         <thead>
           {table.getHeaderGroups().map((hg) => (
             <tr key={hg.id} className="border-b border-border">

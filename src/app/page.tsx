@@ -176,10 +176,17 @@ export default function Home() {
     return [...new Set(extrato.colaboradores.map((c) => c.situacao).filter(Boolean))];
   }, [extrato]);
 
+  const empresasDisponiveis = useMemo(() => {
+    if (!extrato) return [];
+    return [...new Set(extrato.colaboradores.map((c) => c.empresaNome || extrato.empresa.nome).filter(Boolean))].sort();
+  }, [extrato]);
+
   const filteredColaboradores = useMemo(() => {
     if (!extrato) return [];
     const f = filters;
     return extrato.colaboradores.filter((c) => {
+      const empresaNome = c.empresaNome || extrato.empresa.nome;
+      if (f.empresa && empresaNome !== f.empresa) return false;
       if (f.nome && !c.nome.toLowerCase().includes(f.nome.toLowerCase())) return false;
       if (f.cpf && !c.cpf.includes(f.cpf)) return false;
       if (f.cargo && !c.cargo.toLowerCase().includes(f.cargo.toLowerCase())) return false;
@@ -284,15 +291,25 @@ export default function Home() {
 
             <div className="flex items-center justify-between text-sm text-text-muted">
               <span>
-                {extrato.empresa.nome} · CNPJ {extrato.empresa.cnpj} · Competência {extrato.empresa.competencia} · Leitura por{" "}
-                {extrato.metodoLeitura === "texto" ? "texto" : "OCR"} · Formato: Extrato Mensal
+                {extrato.consolidado
+                  ? `${extrato.empresa.nome} · Competência ${extrato.empresa.competencia} · ${empresasDisponiveis.length} empresa(s) · Leitura por ${
+                      extrato.metodoLeitura === "texto" ? "texto" : "OCR"
+                    } · Formato: Extrato Mensal`
+                  : `${extrato.empresa.nome} · CNPJ ${extrato.empresa.cnpj} · Competência ${extrato.empresa.competencia} · Leitura por ${
+                      extrato.metodoLeitura === "texto" ? "texto" : "OCR"
+                    } · Formato: Extrato Mensal`}
               </span>
             </div>
 
             <SummaryCards totais={extrato.totaisGerais} />
 
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-              <Filters filters={filters} onChange={setFilters} situacoesDisponiveis={situacoesDisponiveis} />
+              <Filters
+                filters={filters}
+                onChange={setFilters}
+                empresasDisponiveis={empresasDisponiveis}
+                situacoesDisponiveis={situacoesDisponiveis}
+              />
               <ExportButtons result={extrato} />
             </div>
 

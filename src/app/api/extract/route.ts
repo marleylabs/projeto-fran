@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { parsePayrollPdfAny } from "@/lib/parser/router";
-import { deleteUpload, findDuplicateUpload, saveUpload } from "@/lib/db/uploads";
+import { deleteUpload, findDuplicateUpload, getCombinedUploadById, saveUpload } from "@/lib/db/uploads";
 import { requireUser } from "@/lib/auth/session";
 
 export const runtime = "nodejs";
@@ -38,6 +38,7 @@ export async function POST(request: Request) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const result = await parsePayrollPdfAny(buffer);
+    let responseResult = result;
 
     try {
       if (result.formato !== "desconhecido") {
@@ -54,12 +55,13 @@ export async function POST(request: Request) {
 
       const saved = await saveUpload(file.name, result);
       result.id = saved.id;
+      responseResult = (await getCombinedUploadById(saved.id)) ?? result;
     } catch (dbError) {
       console.error("Falha ao salvar extração no banco de dados:", dbError);
       result.avisos.push("Não foi possível salvar esta extração no banco de dados; ela não aparecerá no histórico após recarregar a página.");
     }
 
-    return NextResponse.json(result);
+    return NextResponse.json(responseResult);
   } catch (error) {
     console.error("Falha ao processar PDF de folha de pagamento:", error);
     const message = error instanceof Error ? error.message : "Erro desconhecido ao processar o PDF.";

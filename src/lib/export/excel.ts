@@ -6,9 +6,6 @@ import { triggerDownload } from "./download";
 
 // Formato "Contábil" (padrão do Excel/pt-BR) para as colunas monetárias.
 const ACCOUNTING_FORMAT = '_-"R$" * #,##0.00_-;-"R$" * #,##0.00_-;_-"R$" * "-"??_-;_-@_-';
-// Colunas monetárias: da SALARIO até LIQUIDO (índice 1-based, MAT=1, NOME=2, CH=3).
-const ACCOUNTING_COLUMNS_RANGE = [4, 18] as const;
-const MAT_COLUMN = 1;
 
 export async function exportExcel(result: ExtractionResult, filename = "extrato-mensal.xlsx") {
   const workbook = new ExcelJS.Workbook();
@@ -16,22 +13,28 @@ export async function exportExcel(result: ExtractionResult, filename = "extrato-
   workbook.created = new Date();
 
   const sheet = workbook.addWorksheet("Colaboradores");
-  sheet.columns = SINTETICO_HEADERS.map(() => ({ width: 16 }));
+  const includesEmpresa = result.colaboradores.some((c) => c.empresaNome);
+  const headers = includesEmpresa ? ["EMPRESA", ...SINTETICO_HEADERS] : [...SINTETICO_HEADERS];
+  sheet.columns = headers.map(() => ({ width: 16 }));
 
-  const rows = result.colaboradores.map((c) => unifiedRowToArray(unifiedRowFromColaborador(c)));
+  const rows = result.colaboradores.map((c) => {
+    const row = unifiedRowToArray(unifiedRowFromColaborador(c));
+    return includesEmpresa ? [c.empresaNome || "", ...row] : row;
+  });
 
   sheet.addTable({
     name: "Colaboradores",
     ref: "A1",
     headerRow: true,
     style: { theme: "TableStyleMedium2", showRowStripes: true },
-    columns: SINTETICO_HEADERS.map((name) => ({ name, filterButton: true })),
+    columns: headers.map((name) => ({ name, filterButton: true })),
     rows,
   });
 
   // MAT no padrão "000025" e colunas de valores no formato Contábil.
-  sheet.getColumn(MAT_COLUMN).numFmt = "000000";
-  for (let col = ACCOUNTING_COLUMNS_RANGE[0]; col <= ACCOUNTING_COLUMNS_RANGE[1]; col++) {
+  const offset = includesEmpresa ? 1 : 0;
+  sheet.getColumn(1 + offset).numFmt = "000000";
+  for (let col = 4 + offset; col <= 18 + offset; col++) {
     sheet.getColumn(col).numFmt = ACCOUNTING_FORMAT;
   }
 
