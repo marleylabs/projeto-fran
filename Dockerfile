@@ -43,7 +43,13 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 COPY --from=builder /app/next.config.ts ./next.config.ts
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/package.json ./package.json
+# src/ e scripts/ (código-fonte TS, não o build compilado) ficam disponíveis para
+# rodar utilitários como o seed do primeiro usuário via `docker exec ... npx tsx scripts/...`
+# em qualquer ambiente novo, sem depender de rodar isso fora do container.
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/scripts ./scripts
 COPY docker-entrypoint.sh ./
 
 RUN chown -R nextjs:nodejs /app

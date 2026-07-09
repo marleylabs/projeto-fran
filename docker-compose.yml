@@ -5,15 +5,17 @@ services:
     image: postgres:16-alpine
     container_name: extrato-mensal-db
     environment:
-      POSTGRES_USER: extrato
-      POSTGRES_PASSWORD: extrato
-      POSTGRES_DB: extrato_mensal
+      POSTGRES_USER: ${POSTGRES_USER:-extrato}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no arquivo .env}
+      POSTGRES_DB: ${POSTGRES_DB:-extrato_mensal}
     volumes:
       - extrato_mensal_db_data:/var/lib/postgresql/data
     ports:
-      - "5433:5432"
+      # Só acessível pela própria máquina — o banco não precisa (e não deve)
+      # ficar exposto na rede. Use um túnel SSH se precisar acessar de fora.
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U extrato -d extrato_mensal"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-extrato} -d ${POSTGRES_DB:-extrato_mensal}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -25,10 +27,14 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "${WEB_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://extrato:extrato@db:5432/extrato_mensal
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-extrato}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-extrato_mensal}
+      # "false" só se estiver acessando via HTTP puro (sem proxy reverso/HTTPS na
+      # frente) — necessário para o cookie de sessão funcionar, mas a senha e a
+      # sessão trafegam sem criptografia. Use HTTPS assim que possível.
+      - SECURE_COOKIES=${SECURE_COOKIES:-true}
     depends_on:
       db:
         condition: service_healthy

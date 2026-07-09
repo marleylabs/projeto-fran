@@ -6,6 +6,18 @@ import { prisma } from "@/lib/db/prisma";
 const COOKIE_NAME = "session";
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * O cookie "Secure" só é enviado pelo navegador em HTTPS. Por padrão isso é
+ * exigido em produção — mas um deploy acessado só por IP:porta HTTP (sem proxy
+ * reverso/TLS na frente) precisa desligar isso explicitamente com
+ * SECURE_COOKIES=false, senão o login nunca vai persistir a sessão.
+ */
+function resolveSecureCookieFlag(): boolean {
+  if (process.env.SECURE_COOKIES === "false") return false;
+  if (process.env.SECURE_COOKIES === "true") return true;
+  return process.env.NODE_ENV === "production";
+}
+
 export async function createSession(userId: string): Promise<void> {
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
   const session = await prisma.session.create({ data: { userId, expiresAt } });
@@ -13,7 +25,7 @@ export async function createSession(userId: string): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, session.id, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: resolveSecureCookieFlag(),
     sameSite: "lax",
     expires: expiresAt,
     path: "/",
