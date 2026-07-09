@@ -1,65 +1,379 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import type { Colaborador } from "@/lib/types/payroll";
+import type { PayrollExtractionResult } from "@/lib/parser/router";
+import { computeTotaisGerais } from "@/lib/parser/computeTotals";
+import { uploadPdf, type DuplicateExisting } from "@/lib/uploadWithProgress";
+import { FileUpload } from "@/components/FileUpload";
+import { ProgressBar } from "@/components/ProgressBar";
+import { SummaryCards } from "@/components/SummaryCards";
+import { SinteticoSummaryCards } from "@/components/SinteticoSummaryCards";
+import { Filters, EMPTY_FILTERS, type FiltersState } from "@/components/Filters";
+import { EmployeeTable } from "@/components/EmployeeTable";
+import { SinteticoTable } from "@/components/SinteticoTable";
+import { EmployeeDetailModal } from "@/components/EmployeeDetailModal";
+import { ExportButtons } from "@/components/ExportButtons";
+import { RecentUploads, type UploadSummary } from "@/components/RecentUploads";
+import { DuplicateUploadModal } from "@/components/DuplicateUploadModal";
+
+type Stage = "idle" | "uploading" | "processing" | "error";
+
+const LAST_UPLOAD_KEY = "extratoMensal:currentUploadId";
 
 export default function Home() {
+  const router = useRouter();
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [stage, setStage] = useState<Stage>("idle");
+  const [progress, setProgress] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [result, setResult] = useState<PayrollExtractionResult | null>(null);
+  const [filters, setFilters] = useState<FiltersState>(EMPTY_FILTERS);
+  const [sinteticoBusca, setSinteticoBusca] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string>("");
+  const [restoring, setRestoring] = useState(true);
+  const [recentUploads, setRecentUploads] = useState<UploadSummary[]>([]);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [duplicateExisting, setDuplicateExisting] = useState<DuplicateExisting | null>(null);
+
+  const processingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadRecentUploads = () => {
+    fetch("/api/uploads")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((json) => setRecentUploads(json.uploads ?? []))
+      .catch(() => setRecentUploads([]));
+  };
+
+  // Ao carregar a página, restaura a última extração vista (guardada no banco) em vez
+  // de sempre voltar para a tela de upload — o usuário reclamou que recarregar a
+  // página perdia o que ele tinha acabado de processar.
+  useEffect(() => {
+    const lastId = localStorage.getItem(LAST_UPLOAD_KEY);
+
+    const restore = lastId
+      ? fetch(`/api/uploads/${lastId}`)
+          .then((r) => (r.ok ? r.json() : Promise.reject()))
+          .then((data: PayrollExtractionResult) => setResult(data))
+          .catch(() => {
+            localStorage.removeItem(LAST_UPLOAD_KEY);
+            loadRecentUploads();
+          })
+      : Promise.resolve().then(() => loadRecentUploads());
+
+    restore.finally(() => setRestoring(false));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((me) => setCurrentUserEmail(me.email))
+      .catch(() => setCurrentUserEmail(null));
+  }, []);
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
+
+  const runUpload = async (file: File, duplicateAction?: "replace" | "keep_both") => {
+    setStage("uploading");
+    setErrorMessage(null);
+    setResult(null);
+    setProgress(0);
+    setFileName(file.name);
+
+    try {
+      const outcome = await uploadPdf(
+        file,
+        (uploadPercent) => {
+          const mapped = uploadPercent * 0.5;
+          setProgress(mapped);
+          if (uploadPercent >= 100) {
+            setStage("processing");
+            if (!processingIntervalRef.current) {
+              processingIntervalRef.current = setInterval(() => {
+                setProgress((p) => (p < 92 ? p + (92 - p) * 0.08 : p));
+              }, 200);
+            }
+          }
+        },
+        duplicateAction
+      );
+
+      if (processingIntervalRef.current) {
+        clearInterval(processingIntervalRef.current);
+        processingIntervalRef.current = null;
+      }
+
+      if (outcome.status === "duplicate") {
+        setPendingFile(file);
+        setDuplicateExisting(outcome.existing);
+        setStage("idle");
+        return;
+      }
+
+      const data = outcome.data;
+      setProgress(100);
+      setResult(data);
+      if (data.id) localStorage.setItem(LAST_UPLOAD_KEY, data.id);
+
+      const isEmpty =
+        data.formato === "desconhecido" ||
+        (data.formato === "extrato-mensal" && data.colaboradores.length === 0) ||
+        (data.formato === "relatorio-sintetico" && data.linhas.length === 0);
+
+      setStage(isEmpty ? "error" : "idle");
+      if (isEmpty && data.avisos.length > 0) {
+        setErrorMessage(data.avisos[0]);
+      }
+    } catch (err) {
+      if (processingIntervalRef.current) {
+        clearInterval(processingIntervalRef.current);
+        processingIntervalRef.current = null;
+      }
+      setStage("error");
+      setErrorMessage(err instanceof Error ? err.message : "Erro desconhecido ao processar o PDF.");
+    }
+  };
+
+  const handleFileSelected = (file: File) => {
+    runUpload(file);
+  };
+
+  const handleDuplicateDecision = (action: "replace" | "keep_both" | "cancel") => {
+    const file = pendingFile;
+    setDuplicateExisting(null);
+    setPendingFile(null);
+    if (action === "cancel" || !file) {
+      setStage("idle");
+      return;
+    }
+    runUpload(file, action);
+  };
+
+  const handleSelectRecent = (id: string) => {
+    setRestoring(true);
+    fetch(`/api/uploads/${id}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data: PayrollExtractionResult) => {
+        setResult(data);
+        localStorage.setItem(LAST_UPLOAD_KEY, id);
+      })
+      .catch(() => setErrorMessage("Não foi possível carregar esse upload."))
+      .finally(() => setRestoring(false));
+  };
+
+  const extrato = result?.formato === "extrato-mensal" ? result : null;
+  const sintetico = result?.formato === "relatorio-sintetico" ? result : null;
+
+  const situacoesDisponiveis = useMemo(() => {
+    if (!extrato) return [];
+    return [...new Set(extrato.colaboradores.map((c) => c.situacao).filter(Boolean))];
+  }, [extrato]);
+
+  const filteredColaboradores = useMemo(() => {
+    if (!extrato) return [];
+    const f = filters;
+    return extrato.colaboradores.filter((c) => {
+      if (f.nome && !c.nome.toLowerCase().includes(f.nome.toLowerCase())) return false;
+      if (f.cpf && !c.cpf.includes(f.cpf)) return false;
+      if (f.cargo && !c.cargo.toLowerCase().includes(f.cargo.toLowerCase())) return false;
+      if (f.departamento && c.departamento !== f.departamento && !c.departamento.includes(f.departamento)) return false;
+      if (f.centroCusto && c.centroCusto !== f.centroCusto && !c.centroCusto.includes(f.centroCusto)) return false;
+      if (f.situacao && c.situacao !== f.situacao) return false;
+      return true;
+    });
+  }, [extrato, filters]);
+
+  const filteredLinhas = useMemo(() => {
+    if (!sintetico) return [];
+    const termo = sinteticoBusca.trim().toLowerCase();
+    if (!termo) return sintetico.linhas;
+    return sintetico.linhas.filter((l) => l.nome.toLowerCase().includes(termo) || l.mat.includes(termo));
+  }, [sintetico, sinteticoBusca]);
+
+  const selectedColaborador = extrato?.colaboradores.find((c) => c.id === selectedId) ?? null;
+
+  const handleSaveColaborador = (updated: Colaborador) => {
+    if (!extrato) return;
+    const colaboradores = extrato.colaboradores.map((c) => (c.id === updated.id ? updated : c));
+    setResult({ ...extrato, colaboradores, totaisGerais: computeTotaisGerais(colaboradores) });
+  };
+
+  const reset = () => {
+    setStage("idle");
+    setResult(null);
+    setErrorMessage(null);
+    setProgress(0);
+    setFilters(EMPTY_FILTERS);
+    setSinteticoBusca("");
+    localStorage.removeItem(LAST_UPLOAD_KEY);
+    loadRecentUploads();
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="flex-1 flex flex-col">
+      <header className="bg-surface border-b border-border">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-lg font-bold text-primary">Extrato Mensal</h1>
+            <p className="text-xs text-text-muted">Extração automática de folha de pagamento</p>
+          </div>
+          <div className="flex items-center gap-4">
+            {result && (
+              <button onClick={reset} className="text-sm font-medium text-text-muted hover:text-primary">
+                Novo upload
+              </button>
+            )}
+            <Link href="/usuarios" className="text-sm font-medium text-text-muted hover:text-primary">
+              Usuários
+            </Link>
+            {currentUserEmail && <span className="text-sm text-text-muted hidden sm:inline">{currentUserEmail}</span>}
+            <button onClick={handleLogout} className="text-sm font-medium text-text-muted hover:text-primary">
+              Sair
+            </button>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+      </header>
+
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col gap-6">
+        {restoring && (
+          <div className="flex-1 flex items-center justify-center py-16 text-sm text-text-muted">Carregando...</div>
+        )}
+
+        {!restoring && !result && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-6 py-16">
+            <FileUpload onFileSelected={handleFileSelected} disabled={stage === "uploading" || stage === "processing"} />
+
+            {(stage === "uploading" || stage === "processing") && (
+              <ProgressBar
+                percent={progress}
+                label={stage === "uploading" ? `Enviando ${fileName}...` : "Lendo PDF e extraindo colaboradores..."}
+              />
+            )}
+
+            {stage === "error" && errorMessage && (
+              <div className="max-w-md rounded-md bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3">
+                {errorMessage}
+              </div>
+            )}
+
+            <RecentUploads uploads={recentUploads} onSelect={handleSelectRecent} />
+          </div>
+        )}
+
+        {extrato && extrato.colaboradores.length > 0 && (
+          <>
+            {extrato.avisos.length > 0 && (
+              <details className="card p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200">
+                <summary className="cursor-pointer font-medium">
+                  {extrato.avisos.length} aviso(s) de leitura — revisar antes de exportar
+                </summary>
+                <ul className="list-disc list-inside mt-2 space-y-1">
+                  {extrato.avisos.map((a, i) => (
+                    <li key={i}>{a}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+
+            <div className="flex items-center justify-between text-sm text-text-muted">
+              <span>
+                {extrato.empresa.nome} · CNPJ {extrato.empresa.cnpj} · Competência {extrato.empresa.competencia} · Leitura por{" "}
+                {extrato.metodoLeitura === "texto" ? "texto" : "OCR"} · Formato: Extrato Mensal
+              </span>
+            </div>
+
+            <SummaryCards totais={extrato.totaisGerais} />
+
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <Filters filters={filters} onChange={setFilters} situacoesDisponiveis={situacoesDisponiveis} />
+              <ExportButtons result={extrato} />
+            </div>
+
+            <p className="text-sm text-text-muted">
+              Exibindo {filteredColaboradores.length} de {extrato.colaboradores.length} colaboradores.
+            </p>
+
+            <EmployeeTable colaboradores={filteredColaboradores} onVerDetalhes={setSelectedId} />
+          </>
+        )}
+
+        {sintetico && sintetico.linhas.length > 0 && (
+          <>
+            <div className="card p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200">
+              Formato experimental: o suporte a &quot;Relatório Sintético&quot; ainda não foi validado contra um PDF real deste
+              layout. Revise os valores com atenção antes de usar para folha oficial.
+            </div>
+
+            {sintetico.avisos.length > 1 && (
+              <details className="card p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200">
+                <summary className="cursor-pointer font-medium">
+                  {sintetico.avisos.length} aviso(s) de leitura — revisar antes de exportar
+                </summary>
+                <ul className="list-disc list-inside mt-2 space-y-1">
+                  {sintetico.avisos.map((a, i) => (
+                    <li key={i}>{a}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+
+            <div className="flex items-center justify-between text-sm text-text-muted">
+              <span>
+                {sintetico.empresa.nome} · Departamento {sintetico.empresa.departamento} · Período{" "}
+                {sintetico.empresa.periodoInicio} a {sintetico.empresa.periodoFim} · Formato: Relatório Sintético
+              </span>
+            </div>
+
+            <SinteticoSummaryCards totais={sintetico.totais} />
+
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <div className="card p-4 flex items-end gap-3">
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="text-xs font-medium text-text-muted">Nome ou matrícula</span>
+                  <input
+                    type="text"
+                    value={sinteticoBusca}
+                    onChange={(e) => setSinteticoBusca(e.target.value)}
+                    placeholder="Buscar colaborador"
+                    className="rounded-md border border-border px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  />
+                </label>
+              </div>
+              <ExportButtons result={sintetico} />
+            </div>
+
+            <p className="text-sm text-text-muted">
+              Exibindo {filteredLinhas.length} de {sintetico.linhas.length} colaboradores.
+            </p>
+
+            <SinteticoTable linhas={filteredLinhas} />
+          </>
+        )}
       </main>
+
+      {selectedColaborador && (
+        <EmployeeDetailModal
+          colaborador={selectedColaborador}
+          onClose={() => setSelectedId(null)}
+          onSave={handleSaveColaborador}
+        />
+      )}
+
+      {duplicateExisting && (
+        <DuplicateUploadModal
+          existing={duplicateExisting}
+          onReplace={() => handleDuplicateDecision("replace")}
+          onKeepBoth={() => handleDuplicateDecision("keep_both")}
+          onCancel={() => handleDuplicateDecision("cancel")}
+        />
+      )}
     </div>
   );
 }

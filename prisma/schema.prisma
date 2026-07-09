@@ -1,0 +1,53 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Guarda cada extração de PDF processada. O resultado completo (colaboradores/linhas,
+// totais, avisos) fica em "data" como JSON — evita normalizar duas estruturas bem
+// diferentes (Extrato Mensal em blocos vs Relatório Sintético em tabela) em tabelas
+// separadas, mantendo simples adicionar um terceiro formato no futuro.
+model Upload {
+  id                 String   @id @default(cuid())
+  fileName           String
+  formato            String
+  createdAt          DateTime @default(now())
+  totalColaboradores Int      @default(0)
+  liquidoGeral       Float    @default(0)
+  // Identificam a empresa (CNPJ/código) e o período (Competência ou período do
+  // Relatório Sintético) para detectar upload duplicado do mesmo período.
+  // Ficam nulos quando o PDF não tinha essa informação legível.
+  empresaChave       String?
+  periodoChave       String?
+  data               Json
+
+  @@index([formato, empresaChave, periodoChave])
+}
+
+// Contas de acesso ao sistema. Sem cadastro público — usuários são criados por
+// quem já está logado, na tela "Usuários". Senha nunca fica em texto puro,
+// somente o hash (bcrypt).
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+}
+
+// Sessão de login, verificada no banco a cada requisição (não é um JWT
+// autocontido) para permitir revogar o acesso a qualquer momento.
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}

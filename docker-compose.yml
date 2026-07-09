@@ -1,0 +1,38 @@
+name: extrato-mensal
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: extrato-mensal-db
+    environment:
+      POSTGRES_USER: extrato
+      POSTGRES_PASSWORD: extrato
+      POSTGRES_DB: extrato_mensal
+    volumes:
+      - extrato_mensal_db_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U extrato -d extrato_mensal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  extrato-mensal-web:
+    container_name: extrato-mensal-web
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://extrato:extrato@db:5432/extrato_mensal
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  extrato_mensal_db_data:
