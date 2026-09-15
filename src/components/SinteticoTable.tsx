@@ -18,12 +18,25 @@ function money(v: number) {
   return `R$ ${formatBRNumber(v)}`;
 }
 
+function moneyHeader(label: string) {
+  function Header() {
+    return <span className="block text-right">{label}</span>;
+  }
+  Header.displayName = `MoneyHeader(${label})`;
+  return Header;
+}
+
+function moneyCell(info: { getValue: () => number }) {
+  return <span className="block text-right tabular-nums">{money(info.getValue())}</span>;
+}
+moneyCell.displayName = "MoneyCell";
+
 export function SinteticoTable({ linhas }: { linhas: LinhaSintetico[] }) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "nome", desc: false }]);
 
   const columns = useMemo(
     () => [
-      columnHelper.accessor("mat", { header: "MAT" }),
+      columnHelper.accessor("mat", { header: "MAT", cell: (i) => <span className="tabular-nums">{i.getValue()}</span> }),
       columnHelper.accessor("nome", {
         header: "NOME",
         cell: (info) => (
@@ -32,7 +45,7 @@ export function SinteticoTable({ linhas }: { linhas: LinhaSintetico[] }) {
             {info.row.original.camposBaixaConfianca.length > 0 && (
               <span
                 title={`Campos com baixa confiança: ${info.row.original.camposBaixaConfianca.join(", ")}`}
-                className="inline-flex items-center rounded-full bg-amber-400 text-white text-[10px] font-bold w-4 h-4 justify-center shrink-0"
+                className="inline-flex items-center rounded-full bg-warning text-white text-[10px] font-bold w-4 h-4 justify-center shrink-0"
               >
                 !
               </span>
@@ -40,22 +53,22 @@ export function SinteticoTable({ linhas }: { linhas: LinhaSintetico[] }) {
           </div>
         ),
       }),
-      columnHelper.accessor("ch", { header: "CH" }),
-      columnHelper.accessor("salario", { header: "SALARIO", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("he", { header: "H.E", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("dsr", { header: "DSR", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("totalHE", { header: "TOTAL H.E", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("salFamilia", { header: "SAL FAMILIA", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("adcNoturno", { header: "ADC NOTURNO", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("periculosidade", { header: "PERICULOSIDADE", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("total", { header: "TOTAL", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("inss", { header: "INSS", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("vt", { header: "VT", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("descAut", { header: "DESC AUT", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("ir", { header: "IR", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("outros", { header: "OUTROS", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("totalDesc", { header: "TOTAL DESC", cell: (i) => money(i.getValue()) }),
-      columnHelper.accessor("liquido", { header: "LIQUIDO", cell: (i) => money(i.getValue()) }),
+      columnHelper.accessor("ch", { header: "CH", cell: (i) => <span className="tabular-nums">{i.getValue()}</span> }),
+      columnHelper.accessor("salario", { header: moneyHeader("SALARIO"), cell: moneyCell }),
+      columnHelper.accessor("he", { header: moneyHeader("H.E"), cell: moneyCell }),
+      columnHelper.accessor("dsr", { header: moneyHeader("DSR"), cell: moneyCell }),
+      columnHelper.accessor("totalHE", { header: moneyHeader("TOTAL H.E"), cell: moneyCell }),
+      columnHelper.accessor("salFamilia", { header: moneyHeader("SAL FAMILIA"), cell: moneyCell }),
+      columnHelper.accessor("adcNoturno", { header: moneyHeader("ADC NOTURNO"), cell: moneyCell }),
+      columnHelper.accessor("periculosidade", { header: moneyHeader("PERICULOSIDADE"), cell: moneyCell }),
+      columnHelper.accessor("total", { header: moneyHeader("TOTAL"), cell: (i) => <span className="block text-right font-medium tabular-nums">{money(i.getValue())}</span> }),
+      columnHelper.accessor("inss", { header: moneyHeader("INSS"), cell: moneyCell }),
+      columnHelper.accessor("vt", { header: moneyHeader("VT"), cell: moneyCell }),
+      columnHelper.accessor("descAut", { header: moneyHeader("DESC AUT"), cell: moneyCell }),
+      columnHelper.accessor("ir", { header: moneyHeader("IR"), cell: moneyCell }),
+      columnHelper.accessor("outros", { header: moneyHeader("OUTROS"), cell: moneyCell }),
+      columnHelper.accessor("totalDesc", { header: moneyHeader("TOTAL DESC"), cell: moneyCell }),
+      columnHelper.accessor("liquido", { header: moneyHeader("LIQUIDO"), cell: (i) => <span className="block text-right font-semibold text-primary tabular-nums">{money(i.getValue())}</span> }),
     ],
     []
   );
@@ -74,7 +87,7 @@ export function SinteticoTable({ linhas }: { linhas: LinhaSintetico[] }) {
       <table className="w-full text-sm border-collapse min-w-[1400px]">
         <thead>
           {table.getHeaderGroups().map((hg) => (
-            <tr key={hg.id} className="border-b border-border">
+            <tr key={hg.id} className="bg-surface-soft border-b border-border">
               {hg.headers.map((header) => (
                 <th
                   key={header.id}

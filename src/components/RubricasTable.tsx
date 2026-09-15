@@ -1,12 +1,12 @@
-import clsx from "clsx";
 import type { Rubrica } from "@/lib/types/payroll";
 import { formatBRNumber } from "@/lib/normalize/money";
+import { Badge, type BadgeVariant } from "./ui/Badge";
 
-const TIPO_STYLES: Record<Rubrica["tipo"], string> = {
-  Provento: "bg-green-100 text-green-800",
-  Desconto: "bg-red-100 text-red-800",
-  Informativa: "bg-blue-100 text-blue-800",
-  "Informativa Dedutora": "bg-purple-100 text-purple-800",
+const TIPO_VARIANT: Record<Rubrica["tipo"], BadgeVariant> = {
+  Provento: "success",
+  Desconto: "danger",
+  Informativa: "info",
+  "Informativa Dedutora": "neutral",
 };
 
 export function RubricasTable({ rubricas }: { rubricas: Rubrica[] }) {
@@ -29,24 +29,22 @@ export function RubricasTable({ rubricas }: { rubricas: Rubrica[] }) {
         <tbody>
           {rubricas.map((r, i) => (
             <tr key={i} className="border-b border-border last:border-0">
-              <td className="px-3 py-2">{r.codigo || "—"}</td>
+              <td className="px-3 py-2 tabular-nums">{r.codigo || "—"}</td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-1.5">
                   {r.descricao}
                   {r.confianca === "baixa" && (
-                    <span title="Baixa confiança de leitura" className="text-amber-500 text-xs font-bold">
+                    <span title="Baixa confiança de leitura" className="text-warning text-xs font-bold">
                       !
                     </span>
                   )}
                 </div>
               </td>
               <td className="px-3 py-2">
-                <span className={clsx("inline-flex rounded-full px-2 py-0.5 text-xs font-medium", TIPO_STYLES[r.tipo])}>
-                  {r.tipo}
-                </span>
+                <Badge variant={TIPO_VARIANT[r.tipo]}>{r.tipo}</Badge>
               </td>
-              <td className="px-3 py-2">{r.referencia ?? "—"}</td>
-              <td className="px-3 py-2 text-right font-medium">R$ {formatBRNumber(r.valor)}</td>
+              <td className="px-3 py-2 tabular-nums">{r.referencia ?? "—"}</td>
+              <td className="px-3 py-2 text-right font-medium tabular-nums">R$ {formatBRNumber(r.valor)}</td>
             </tr>
           ))}
         </tbody>

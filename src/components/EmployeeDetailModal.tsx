@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import clsx from "clsx";
+import { X } from "lucide-react";
 import type { Colaborador } from "@/lib/types/payroll";
 import { formatBRNumber } from "@/lib/normalize/money";
 import { StatusBadge } from "./StatusBadge";
+import { Badge } from "./ui/Badge";
 import { RubricasTable } from "./RubricasTable";
 import { EditColaboradorForm } from "./EditColaboradorForm";
 
@@ -38,20 +40,18 @@ export function EmployeeDetailModal({ colaborador, onClose, onSave }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/40 p-2 sm:p-6 overflow-y-auto">
       <div className="card w-full max-w-3xl my-auto">
-        <div className="flex items-start justify-between p-5 border-b border-border">
-          <div>
-            <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+        <div className="flex items-start justify-between gap-3 p-5 border-b border-border">
+          <div className="min-w-0">
+            <h2 className="text-lg font-bold text-foreground flex items-center gap-2 truncate">
               {colaborador.nome || "Colaborador sem nome identificado"}
-              {colaborador.revisadoManualmente && (
-                <span className="text-xs font-medium bg-blue-100 text-blue-800 rounded-full px-2 py-0.5">revisado</span>
-              )}
+              {colaborador.revisadoManualmente && <Badge variant="info">revisado</Badge>}
             </h2>
             <p className="text-sm text-text-muted">
               Matrícula {colaborador.codigo || "—"} · {colaborador.cargo || "—"}
             </p>
           </div>
-          <button onClick={onClose} className="text-text-muted hover:text-text-muted text-xl leading-none px-2">
-            ×
+          <button onClick={onClose} className="btn btn-ghost btn-sm !p-1.5 shrink-0" aria-label="Fechar">
+            <X className="w-4 h-4" strokeWidth={1.75} />
           </button>
         </div>
 
@@ -61,7 +61,7 @@ export function EmployeeDetailModal({ colaborador, onClose, onSave }: Props) {
               key={t.id}
               onClick={() => setTab(t.id)}
               className={clsx(
-                "px-3 py-2 text-sm font-medium border-b-2 whitespace-nowrap",
+                "px-3 py-2 text-sm font-medium border-b-2 whitespace-nowrap transition-colors",
                 tab === t.id ? "border-primary text-primary" : "border-transparent text-text-muted hover:text-text"
               )}
             >
@@ -74,7 +74,7 @@ export function EmployeeDetailModal({ colaborador, onClose, onSave }: Props) {
           {tab === "detalhes" && (
             <div className="space-y-5">
               {colaborador.camposBaixaConfianca.length > 0 && (
-                <div className="rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-sm px-3 py-2">
+                <div className="rounded-lg bg-warning-soft text-warning-strong text-sm px-3 py-2">
                   Campos com baixa confiança de leitura: {colaborador.camposBaixaConfianca.join(", ")}. Revise em
                   &quot;Revisar / corrigir&quot;.
                 </div>

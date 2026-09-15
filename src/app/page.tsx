@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { AlertCircle, FileText, RefreshCcw } from "lucide-react";
 import type { Colaborador } from "@/lib/types/payroll";
 import type { PayrollExtractionResult } from "@/lib/parser/router";
 import { computeTotaisGerais } from "@/lib/parser/computeTotals";
 import { uploadPdf, type DuplicateExisting } from "@/lib/uploadWithProgress";
+import { AppHeader } from "@/components/ui/AppHeader";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Badge } from "@/components/ui/Badge";
 import { FileUpload } from "@/components/FileUpload";
 import { ProgressBar } from "@/components/ProgressBar";
 import { SummaryCards } from "@/components/SummaryCards";
@@ -23,9 +25,13 @@ type Stage = "idle" | "uploading" | "processing" | "error";
 
 const LAST_UPLOAD_KEY = "extratoMensal:currentUploadId";
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function Home() {
-  const router = useRouter();
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -34,6 +40,7 @@ export default function Home() {
   const [sinteticoBusca, setSinteticoBusca] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("");
+  const [fileSize, setFileSize] = useState<number>(0);
   const [restoring, setRestoring] = useState(true);
   const [recentUploads, setRecentUploads] = useState<UploadSummary[]>([]);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -67,25 +74,13 @@ export default function Home() {
     restore.finally(() => setRestoring(false));
   }, []);
 
-  useEffect(() => {
-    fetch("/api/auth/me")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((me) => setCurrentUserEmail(me.email))
-      .catch(() => setCurrentUserEmail(null));
-  }, []);
-
-  const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
-    router.refresh();
-  };
-
   const runUpload = async (file: File, duplicateAction?: "replace" | "keep_both") => {
     setStage("uploading");
     setErrorMessage(null);
     setResult(null);
     setProgress(0);
     setFileName(file.name);
+    setFileSize(file.size);
 
     try {
       const outcome = await uploadPdf(
@@ -223,50 +218,57 @@ export default function Home() {
     loadRecentUploads();
   };
 
+  const isBusy = stage === "uploading" || stage === "processing";
+
   return (
     <div className="flex-1 flex flex-col">
-      <header className="bg-surface border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-bold text-primary">Extrato Mensal</h1>
-            <p className="text-xs text-text-muted">Extração automática de folha de pagamento</p>
-          </div>
-          <div className="flex items-center gap-4">
-            {result && (
-              <button onClick={reset} className="text-sm font-medium text-text-muted hover:text-primary">
+      <AppHeader />
+
+      <main className="flex-1 page-container py-6 sm:py-8 flex flex-col gap-6">
+        <PageHeader
+          title="Extração de folha de pagamento"
+          description="Importe um arquivo PDF para processar e analisar os dados."
+          actions={
+            result && (
+              <button onClick={reset} className="btn btn-secondary btn-sm">
+                <RefreshCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
                 Novo upload
               </button>
-            )}
-            <Link href="/usuarios" className="text-sm font-medium text-text-muted hover:text-primary">
-              Usuários
-            </Link>
-            {currentUserEmail && <span className="text-sm text-text-muted hidden sm:inline">{currentUserEmail}</span>}
-            <button onClick={handleLogout} className="text-sm font-medium text-text-muted hover:text-primary">
-              Sair
-            </button>
-          </div>
-        </div>
-      </header>
+            )
+          }
+        />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col gap-6">
         {restoring && (
           <div className="flex-1 flex items-center justify-center py-16 text-sm text-text-muted">Carregando...</div>
         )}
 
         {!restoring && !result && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-6 py-16">
-            <FileUpload onFileSelected={handleFileSelected} disabled={stage === "uploading" || stage === "processing"} />
+          <div className="flex-1 flex flex-col items-center gap-6 py-6">
+            <FileUpload onFileSelected={handleFileSelected} disabled={isBusy} />
 
-            {(stage === "uploading" || stage === "processing") && (
-              <ProgressBar
-                percent={progress}
-                label={stage === "uploading" ? `Enviando ${fileName}...` : "Lendo PDF e extraindo colaboradores..."}
-              />
+            {isBusy && (
+              <div className="card w-full max-w-xl p-4 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-primary-soft text-primary flex items-center justify-center shrink-0">
+                  <FileText className="w-4.5 h-4.5" strokeWidth={1.75} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground truncate">{fileName}</p>
+                  <p className="text-xs text-text-muted mb-1.5">{formatFileSize(fileSize)}</p>
+                  <ProgressBar
+                    percent={progress}
+                    label={stage === "uploading" ? "Enviando..." : "Lendo PDF e extraindo colaboradores..."}
+                  />
+                </div>
+              </div>
             )}
 
             {stage === "error" && errorMessage && (
-              <div className="max-w-md rounded-md bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3">
-                {errorMessage}
+              <div className="w-full max-w-xl rounded-lg bg-danger-soft text-danger-strong text-sm px-4 py-3 flex gap-2.5">
+                <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" strokeWidth={1.75} />
+                <div>
+                  <p className="font-medium">Não foi possível processar o arquivo.</p>
+                  <p className="mt-0.5">{errorMessage}</p>
+                </div>
               </div>
             )}
 
@@ -277,7 +279,7 @@ export default function Home() {
         {extrato && extrato.colaboradores.length > 0 && (
           <>
             {extrato.avisos.length > 0 && (
-              <details className="card p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200">
+              <details className="card p-4 text-sm text-warning-strong bg-warning-soft border-0">
                 <summary className="cursor-pointer font-medium">
                   {extrato.avisos.length} aviso(s) de leitura — revisar antes de exportar
                 </summary>
@@ -289,33 +291,39 @@ export default function Home() {
               </details>
             )}
 
-            <div className="flex items-center justify-between text-sm text-text-muted">
-              <span>
-                {extrato.consolidado
-                  ? `${extrato.empresa.nome} · Competência ${extrato.empresa.competencia} · ${empresasDisponiveis.length} empresa(s) · Leitura por ${
-                      extrato.metodoLeitura === "texto" ? "texto" : "OCR"
-                    } · Formato: Extrato Mensal`
-                  : `${extrato.empresa.nome} · CNPJ ${extrato.empresa.cnpj} · Competência ${extrato.empresa.competencia} · Leitura por ${
-                      extrato.metodoLeitura === "texto" ? "texto" : "OCR"
-                    } · Formato: Extrato Mensal`}
-              </span>
+            <div className="card p-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-sm">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="w-4 h-4 text-text-muted shrink-0" strokeWidth={1.75} />
+                <span className="font-medium text-foreground truncate">
+                  {extrato.consolidado ? extrato.empresa.nome : `${extrato.empresa.nome} · CNPJ ${extrato.empresa.cnpj}`}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
+                <Badge variant="neutral">Competência {extrato.empresa.competencia}</Badge>
+                {extrato.consolidado && <Badge variant="neutral">{empresasDisponiveis.length} empresa(s)</Badge>}
+                <Badge variant={extrato.metodoLeitura === "texto" ? "success" : "warning"}>
+                  Leitura por {extrato.metodoLeitura === "texto" ? "texto" : "OCR"}
+                </Badge>
+                <Badge variant="neutral">Extrato Mensal</Badge>
+              </div>
             </div>
 
             <SummaryCards totais={extrato.totaisGerais} />
 
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-              <Filters
-                filters={filters}
-                onChange={setFilters}
-                empresasDisponiveis={empresasDisponiveis}
-                situacoesDisponiveis={situacoesDisponiveis}
-              />
+            <Filters
+              filters={filters}
+              onChange={setFilters}
+              empresasDisponiveis={empresasDisponiveis}
+              situacoesDisponiveis={situacoesDisponiveis}
+            />
+
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <p className="text-sm text-text-muted">
+                Exibindo <span className="font-medium text-foreground">{filteredColaboradores.length}</span> de{" "}
+                {extrato.colaboradores.length} colaboradores.
+              </p>
               <ExportButtons result={extrato} />
             </div>
-
-            <p className="text-sm text-text-muted">
-              Exibindo {filteredColaboradores.length} de {extrato.colaboradores.length} colaboradores.
-            </p>
 
             <EmployeeTable colaboradores={filteredColaboradores} onVerDetalhes={setSelectedId} />
           </>
@@ -323,13 +331,17 @@ export default function Home() {
 
         {sintetico && sintetico.linhas.length > 0 && (
           <>
-            <div className="card p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200">
-              Formato experimental: o suporte a &quot;Relatório Sintético&quot; ainda não foi validado contra um PDF real deste
-              layout. Revise os valores com atenção antes de usar para folha oficial.
+            <div className="card p-4 flex items-center gap-2.5 bg-warning-soft border-0">
+              <AlertCircle className="w-4.5 h-4.5 text-warning-strong shrink-0" strokeWidth={1.75} />
+              <p className="text-sm text-warning-strong">
+                <Badge variant="warning">Experimental</Badge>{" "}
+                O suporte a &quot;Relatório Sintético&quot; ainda não foi validado contra um PDF real deste layout. Revise os
+                valores com atenção antes de usar para folha oficial.
+              </p>
             </div>
 
             {sintetico.avisos.length > 1 && (
-              <details className="card p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200">
+              <details className="card p-4 text-sm text-warning-strong bg-warning-soft border-0">
                 <summary className="cursor-pointer font-medium">
                   {sintetico.avisos.length} aviso(s) de leitura — revisar antes de exportar
                 </summary>
@@ -341,34 +353,42 @@ export default function Home() {
               </details>
             )}
 
-            <div className="flex items-center justify-between text-sm text-text-muted">
-              <span>
-                {sintetico.empresa.nome} · Departamento {sintetico.empresa.departamento} · Período{" "}
-                {sintetico.empresa.periodoInicio} a {sintetico.empresa.periodoFim} · Formato: Relatório Sintético
-              </span>
+            <div className="card p-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-sm">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="w-4 h-4 text-text-muted shrink-0" strokeWidth={1.75} />
+                <span className="font-medium text-foreground truncate">{sintetico.empresa.nome}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
+                <Badge variant="neutral">Depto {sintetico.empresa.departamento}</Badge>
+                <Badge variant="neutral">
+                  {sintetico.empresa.periodoInicio} a {sintetico.empresa.periodoFim}
+                </Badge>
+                <Badge variant="neutral">Relatório Sintético</Badge>
+              </div>
             </div>
 
             <SinteticoSummaryCards totais={sintetico.totais} />
 
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-              <div className="card p-4 flex items-end gap-3">
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-xs font-medium text-text-muted">Nome ou matrícula</span>
-                  <input
-                    type="text"
-                    value={sinteticoBusca}
-                    onChange={(e) => setSinteticoBusca(e.target.value)}
-                    placeholder="Buscar colaborador"
-                    className="rounded-md border border-border px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-                  />
-                </label>
-              </div>
-              <ExportButtons result={sintetico} />
+            <div className="card p-4">
+              <label className="flex flex-col gap-1 text-sm w-full sm:w-72">
+                <span className="field-label">Buscar colaborador</span>
+                <input
+                  type="text"
+                  value={sinteticoBusca}
+                  onChange={(e) => setSinteticoBusca(e.target.value)}
+                  placeholder="Nome ou matrícula"
+                  className="field-input w-full"
+                />
+              </label>
             </div>
 
-            <p className="text-sm text-text-muted">
-              Exibindo {filteredLinhas.length} de {sintetico.linhas.length} colaboradores.
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <p className="text-sm text-text-muted">
+                Exibindo <span className="font-medium text-foreground">{filteredLinhas.length}</span> de{" "}
+                {sintetico.linhas.length} colaboradores.
+              </p>
+              <ExportButtons result={sintetico} />
+            </div>
 
             <SinteticoTable linhas={filteredLinhas} />
           </>

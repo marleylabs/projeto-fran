@@ -34,7 +34,7 @@ export function EmployeeTable({ colaboradores, onVerDetalhes }: Props) {
             {info.row.original.camposBaixaConfianca.length > 0 && (
               <span
                 title={`Campos com baixa confiança: ${info.row.original.camposBaixaConfianca.join(", ")}`}
-                className="inline-flex items-center rounded-full bg-amber-400 text-white text-[10px] font-bold w-4 h-4 justify-center shrink-0"
+                className="inline-flex items-center rounded-full bg-warning text-white text-[10px] font-bold w-4 h-4 justify-center shrink-0"
               >
                 !
               </span>
@@ -43,14 +43,14 @@ export function EmployeeTable({ colaboradores, onVerDetalhes }: Props) {
         ),
       }),
       columnHelper.accessor("empresaNome", { header: "Empresa", cell: (info) => info.getValue() || "—" }),
-      columnHelper.accessor("cpf", { header: "CPF", cell: (info) => info.getValue() || "—" }),
+      columnHelper.accessor("cpf", { header: "CPF", cell: (info) => <span className="tabular-nums">{info.getValue() || "—"}</span> }),
       columnHelper.accessor("cargo", { header: "Cargo", cell: (info) => info.getValue() || "—" }),
       columnHelper.accessor("departamento", { header: "Depto", cell: (info) => info.getValue() || "—" }),
       columnHelper.accessor("centroCusto", { header: "CC", cell: (info) => info.getValue() || "—" }),
       columnHelper.accessor("situacao", { header: "Situação", cell: (info) => <StatusBadge situacao={info.getValue()} /> }),
       columnHelper.accessor("liquido", {
-        header: "Líquido",
-        cell: (info) => `R$ ${formatBRNumber(info.getValue())}`,
+        header: () => <span className="block text-right">Líquido</span>,
+        cell: (info) => <span className="block text-right font-medium tabular-nums">R$ {formatBRNumber(info.getValue())}</span>,
       }),
       columnHelper.display({
         id: "acoes",
@@ -82,7 +82,7 @@ export function EmployeeTable({ colaboradores, onVerDetalhes }: Props) {
       <table className="w-full text-sm border-collapse min-w-[980px]">
         <thead>
           {table.getHeaderGroups().map((hg) => (
-            <tr key={hg.id} className="border-b border-border">
+            <tr key={hg.id} className="bg-surface-soft border-b border-border">
               {hg.headers.map((header) => (
                 <th
                   key={header.id}

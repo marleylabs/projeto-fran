@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { Trash2, UserPlus, Users } from "lucide-react";
+import { AppHeader } from "@/components/ui/AppHeader";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 interface UserRow {
   id: string;
@@ -12,6 +15,11 @@ interface UserRow {
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function initials(nameOrEmail: string) {
+  const base = nameOrEmail.trim();
+  return base.slice(0, 2).toUpperCase();
 }
 
 export default function UsuariosPage() {
@@ -74,99 +82,129 @@ export default function UsuariosPage() {
 
   return (
     <div className="flex-1 flex flex-col">
-      <header className="bg-surface border-b border-border">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-bold text-primary">Usuários</h1>
-            <p className="text-xs text-text-muted">Gerenciar quem pode acessar o sistema</p>
-          </div>
-          <Link href="/" className="text-sm font-medium text-text-muted hover:text-primary">
-            Voltar
-          </Link>
-        </div>
-      </header>
+      <AppHeader />
 
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col gap-6">
+      <main className="flex-1 page-container py-6 sm:py-8 flex flex-col gap-6">
+        <PageHeader title="Usuários" description="Gerencie quem pode acessar o sistema." backHref="/" backLabel="Extração" />
+
         <div className="card p-5">
-          <h2 className="text-sm font-semibold text-text-muted uppercase tracking-wide mb-4">Novo usuário</h2>
+          <div className="flex items-center gap-2 mb-4">
+            <UserPlus className="w-4 h-4 text-text-muted" strokeWidth={1.75} />
+            <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wide">Novo usuário</h2>
+          </div>
           <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
             <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs font-medium text-text-muted">Email</span>
+              <span className="field-label">Email</span>
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="rounded-md border border-border px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                className="field-input w-full"
               />
             </label>
             <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs font-medium text-text-muted">Nome (opcional)</span>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="rounded-md border border-border px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-              />
+              <span className="field-label">Nome (opcional)</span>
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="field-input w-full" />
             </label>
             <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs font-medium text-text-muted">Senha (mín. 8 caracteres)</span>
+              <span className="field-label">Senha (mín. 8 caracteres)</span>
               <input
                 type="password"
                 required
                 minLength={8}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="rounded-md border border-border px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                className="field-input w-full"
               />
             </label>
             <div className="sm:col-span-3 flex items-center justify-between gap-3">
-              {error && <p className="text-sm text-red-700">{error}</p>}
-              <button
-                type="submit"
-                disabled={saving}
-                className="ml-auto rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"
-              >
+              {error && <p className="text-sm text-danger">{error}</p>}
+              <button type="submit" disabled={saving} className="btn btn-primary ml-auto">
+                <UserPlus className="w-4 h-4" strokeWidth={1.75} />
                 {saving ? "Criando..." : "Criar usuário"}
               </button>
             </div>
           </form>
         </div>
 
-        <div className="card overflow-x-auto scrollbar-thin">
-          <table className="w-full text-sm border-collapse min-w-[520px]">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left px-4 py-3 text-xs font-semibold text-text-muted uppercase">Email</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-text-muted uppercase">Nome</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-text-muted uppercase">Criado em</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-2.5">{u.email}</td>
-                  <td className="px-4 py-2.5">{u.name || "—"}</td>
-                  <td className="px-4 py-2.5">{formatDate(u.createdAt)}</td>
-                  <td className="px-4 py-2.5 text-right">
+        <div className="card overflow-hidden">
+          <div className="px-5 py-4 border-b border-border">
+            <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wide">
+              {users.length} usuário(s) cadastrado(s)
+            </h2>
+          </div>
+
+          {users.length === 0 ? (
+            <EmptyState icon={Users} title="Nenhum usuário cadastrado" />
+          ) : (
+            <>
+              {/* Desktop: tabela */}
+              <table className="w-full text-sm border-collapse hidden sm:table">
+                <thead>
+                  <tr className="bg-surface-soft border-b border-border">
+                    <th className="text-left px-5 py-3 text-xs font-semibold text-text-muted uppercase">Usuário</th>
+                    <th className="text-left px-5 py-3 text-xs font-semibold text-text-muted uppercase">Criado em</th>
+                    <th className="px-5 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u) => (
+                    <tr key={u.id} className="border-b border-border last:border-0 hover:bg-surface-soft">
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-8 h-8 rounded-full bg-primary-soft text-primary text-xs font-semibold flex items-center justify-center shrink-0">
+                            {initials(u.name || u.email)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-medium text-foreground truncate">{u.name || u.email}</p>
+                            {u.name && <p className="text-xs text-text-muted truncate">{u.email}</p>}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-text-muted whitespace-nowrap">{formatDate(u.createdAt)}</td>
+                      <td className="px-5 py-3 text-right">
+                        {u.id !== currentUserId && (
+                          <button
+                            onClick={() => handleDelete(u.id)}
+                            className="btn btn-ghost btn-sm !text-danger hover:!bg-danger-soft"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                            Remover
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Mobile: cards */}
+              <ul className="sm:hidden divide-y divide-border">
+                {users.map((u) => (
+                  <li key={u.id} className="p-4 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-primary-soft text-primary text-xs font-semibold flex items-center justify-center shrink-0">
+                      {initials(u.name || u.email)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-foreground truncate">{u.name || u.email}</p>
+                      {u.name && <p className="text-xs text-text-muted truncate">{u.email}</p>}
+                      <p className="text-xs text-text-subtle mt-0.5">Criado em {formatDate(u.createdAt)}</p>
+                    </div>
                     {u.id !== currentUserId && (
-                      <button onClick={() => handleDelete(u.id)} className="text-sm font-medium text-red-700 hover:text-red-900">
-                        Remover
+                      <button
+                        onClick={() => handleDelete(u.id)}
+                        className="btn btn-ghost btn-sm !p-2 !text-danger shrink-0"
+                        aria-label="Remover usuário"
+                      >
+                        <Trash2 className="w-4 h-4" strokeWidth={1.75} />
                       </button>
                     )}
-                  </td>
-                </tr>
-              ))}
-              {users.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-text-muted">
-                    Nenhum usuário cadastrado.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       </main>
     </div>
