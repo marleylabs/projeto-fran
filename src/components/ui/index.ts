@@ -13,3 +13,8 @@ export { FileInput } from "./FileInput";
 export type { FileInputProps, FileInputStatus } from "./FileInput";
 export { FloatingActionMenu } from "./FloatingActionMenu";
 export { ToastProvider, useToast, type ToastType } from "./ToastProvider";
+export { PageHeader } from "./PageHeader";
+export { MetricCard } from "./MetricCard";
+export { Badge, type BadgeTone } from "./Badge";
+export { EmptyState } from "./EmptyState";
+export { FilterBar } from "./FilterBar";
