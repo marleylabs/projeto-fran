@@ -1,0 +1,6 @@
+import { NextResponse } from "next/server";
+import { PERMISSIONS,requirePermission } from "@/lib/auth/permissions";
+import { AccountsPayableDeletionError,deleteFoodOccurrences } from "@/modules/accounts-payable/deletion-server";
+import { FoodBatchValidationError,getFoodBatchOccurrences } from "@/modules/accounts-payable/food/server";
+export async function GET(_:Request,context:{params:Promise<{batchId:string}>}){const{response}=await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);if(response)return response;const{batchId}=await context.params;try{return NextResponse.json({occurrences:await getFoodBatchOccurrences(batchId)});}catch(error){if(error instanceof FoodBatchValidationError)return NextResponse.json({error:error.message},{status:404});throw error;}}
+export async function DELETE(request:Request,context:{params:Promise<{batchId:string}>}){const{user,response}=await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_DELETE);if(response||!user)return response;const{batchId}=await context.params;const body=await request.json().catch(()=>null) as {ids?:string[];reason?:string}|null;try{return NextResponse.json(await deleteFoodOccurrences({batchId,ids:body?.ids??[],reason:body?.reason,userId:user.id}));}catch(error){if(error instanceof AccountsPayableDeletionError)return NextResponse.json({error:error.message},{status:409});throw error;}}

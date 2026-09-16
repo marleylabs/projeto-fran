@@ -1,0 +1,2 @@
+import { PERMISSIONS,requirePermission } from "@/lib/auth/permissions";import { generateCollaboratorTemplate } from "@/modules/collaborators/import";
+export async function GET(){const{response}=await requirePermission(PERMISSIONS.MASTER_DATA_READ);if(response)return response;return new Response(await generateCollaboratorTemplate(),{headers:{"Content-Type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","Content-Disposition":'attachment; filename="Mascara_Colaboradores.xlsx"'}});}

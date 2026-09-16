@@ -2,6 +2,7 @@
 
 import { useForm } from "react-hook-form";
 import type { Colaborador } from "@/lib/types/payroll";
+import { Button } from "@/components/ui";
 
 type FormValues = {
   nome: string;
@@ -114,12 +115,12 @@ export function EditColaboradorForm({ colaborador, onSave, onCancel }: Props) {
       </label>
 
       <div className="sm:col-span-2 flex justify-end gap-2 pt-2">
-        <button type="button" onClick={onCancel} className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-surface-soft">
+        <Button type="button" onClick={onCancel} variant="secondary">
           Cancelar
-        </button>
-        <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover">
+        </Button>
+        <Button type="submit" aura>
           Salvar correção
-        </button>
+        </Button>
       </div>
     </form>
   );

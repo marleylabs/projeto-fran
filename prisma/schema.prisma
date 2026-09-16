@@ -32,12 +32,56 @@ model Upload {
 // quem já está logado, na tela "Usuários". Senha nunca fica em texto puro,
 // somente o hash (bcrypt).
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  name         String?
-  createdAt    DateTime  @default(now())
-  sessions     Session[]
+  id                 String                     @id @default(cuid())
+  email              String                     @unique
+  passwordHash       String
+  name               String?
+  active             Boolean                    @default(true)
+  lastLoginAt        DateTime?
+  createdAt          DateTime                   @default(now())
+  sessions           Session[]
+  roles              UserRole[]
+  financialRecords   FinancialRecord[]          @relation("FinancialRecordCreator")
+  uploadedDocuments  FinancialDocumentFile[]    @relation("DocumentUploader")
+  validationReviews  DocumentValidationReview[] @relation("ValidationReviewer")
+  initiatedApprovals ApprovalRequest[]          @relation("ApprovalInitiator")
+  approvalActions    ApprovalStepInstance[]     @relation("ApprovalActor")
+  foodBatches        FoodBatch[]
+  transitVoucherMaps TransitVoucherMap[]
+  foodBatchRevisions FoodBatchRevision[]
+  deletedFoodOccurrences FoodMealOccurrence[] @relation("FoodOccurrenceDeleter")
+  cancelledFoodBatches FoodBatch[] @relation("FoodBatchCanceller")
+  deletedTransitAllocations TransitVoucherAllocation[] @relation("TransitAllocationDeleter")
+  cancelledTransitMaps TransitVoucherMap[] @relation("TransitMapCanceller")
+  passwordResetTokens PasswordResetToken[]
+  administrativeActions UserAccessAudit[] @relation("UserAccessAuditActor")
+  receivedAdministrativeActions UserAccessAudit[] @relation("UserAccessAuditTarget")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model UserAccessAudit {
+  id           String   @id @default(cuid())
+  actorId      String
+  targetUserId String
+  action       String
+  details      Json?
+  createdAt    DateTime @default(now())
+  actor        User     @relation("UserAccessAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  targetUser   User     @relation("UserAccessAuditTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+
+  @@index([targetUserId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 // Sessão de login, verificada no banco a cada requisição (não é um JWT
@@ -50,4 +94,911 @@ model Session {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+// RBAC persistido e verificado no backend. As chaves são estáveis para uso no
+// código; nomes e descrições podem ser apresentados de forma amigável na UI.
+model Role {
+  id                  String                 @id @default(cuid())
+  key                 String                 @unique
+  name                String
+  description         String?
+  isSystem            Boolean                @default(true)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  users               UserRole[]
+  permissions         RolePermission[]
+  approvalPolicySteps ApprovalPolicyStep[]
+  approvalInstances   ApprovalStepInstance[]
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  description String?
+  createdAt   DateTime         @default(now())
+  roles       RolePermission[]
+}
+
+model UserRole {
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model Company {
+  id               String            @id @default(cuid())
+  legalName        String
+  tradeName        String?
+  taxId            String            @unique
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  branches         Branch[]
+  projects         Project[]
+  contracts        Contract[]
+  costCenters      CostCenter[]
+  departments      Department[]
+  financialRecords FinancialRecord[]
+  approvalPolicies ApprovalPolicy[]
+}
+
+model Branch {
+  id               String            @id @default(cuid())
+  companyId        String
+  code             String
+  name             String
+  taxId            String?           @unique
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  company          Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  financialRecords FinancialRecord[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+}
+
+model Supplier {
+  id               String            @id @default(cuid())
+  legalName        String
+  tradeName        String?
+  taxId            String?           @unique
+  email            String?
+  phone            String?
+  address          Json?
+  bankDetails      Json?
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  contracts        Contract[]
+  financialRecords FinancialRecord[]
+}
+
+// Cadastro administrativo genérico de entidades e favorecidos. Mantido
+// separado de Supplier para não alterar os vínculos atuais de Contas a Pagar.
+model AdministrativeEntity {
+  id               String                @id @default(cuid())
+  cnpj             String?               @db.VarChar(14)
+  legalName        String
+  tradeName        String
+  activityArea     String
+  appliesProjeta   Boolean
+  appliesBoinga    Boolean
+  locality         String
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  financialRecords FinancialRecord[]
+  foodBatches      FoodBatch[]
+  foodPriceConfigs FoodUnitPriceConfig[]
+  foodAllocations  FoodAllocation[]
+  transitVoucherMaps TransitVoucherMap[]
+  transitVoucherAllocations TransitVoucherAllocation[]
+
+  @@index([cnpj])
+  @@index([activityArea])
+  @@index([locality])
+}
+
+model Project {
+  id               String            @id @default(cuid())
+  companyId        String
+  code             String
+  name             String
+  description      String?
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  company          Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  contracts        Contract[]
+  financialRecords FinancialRecord[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+}
+
+model Contract {
+  id               String            @id @default(cuid())
+  companyId        String
+  supplierId       String?
+  projectId        String?
+  code             String
+  name             String
+  startDate        DateTime?
+  endDate          DateTime?
+  amount           Decimal?          @db.Decimal(19, 4)
+  currency         String            @default("BRL") @db.Char(3)
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  company          Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  supplier         Supplier?         @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  financialRecords FinancialRecord[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([supplierId])
+  @@index([projectId])
+}
+
+model CostCenter {
+  id               String            @id @default(cuid())
+  companyId        String
+  code             String
+  name             String
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  company          Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  financialRecords FinancialRecord[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+}
+
+model Department {
+  id               String            @id @default(cuid())
+  companyId        String
+  code             String
+  name             String
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  company          Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  financialRecords FinancialRecord[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+}
+
+model Category {
+  id               String            @id @default(cuid())
+  parentId         String?
+  code             String            @unique
+  name             String
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  parent           Category?         @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children         Category[]        @relation("CategoryHierarchy")
+  financialRecords FinancialRecord[]
+
+  @@index([parentId])
+}
+
+model LedgerAccount {
+  id               String            @id @default(cuid())
+  code             String            @unique
+  name             String
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  financialRecords FinancialRecord[]
+}
+
+enum RecordLifecycleState {
+  ACTIVE
+  CANCELLED
+  ARCHIVED
+}
+
+enum DocumentState {
+  PENDING
+  ATTACHED
+  REJECTED
+}
+
+enum ExtractionState {
+  NOT_STARTED
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ValidationState {
+  PENDING
+  IN_REVIEW
+  VALIDATED
+  REJECTED
+}
+
+enum ApprovalState {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PaymentState {
+  PENDING
+  SCHEDULED
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum ReceiptState {
+  PENDING
+  ATTACHED
+  VALIDATED
+  REJECTED
+}
+
+enum ReconciliationState {
+  PENDING
+  MATCHED
+  DIVERGENT
+}
+
+enum AllocationState {
+  PENDING
+  COMPLETED
+}
+
+enum AccountingState {
+  PENDING
+  READY
+  EXPORTED
+  ERROR
+}
+
+enum FinancialFileKind {
+  INVOICE
+  TAX_INVOICE
+  BOLETO
+  RECEIPT
+  XML
+  SPREADSHEET
+  SUPPORTING
+  OTHER
+}
+
+enum ExtractionJobState {
+  PENDING
+  PROCESSING
+  SUCCESS
+  PARTIAL
+  FAILED
+  REVIEW_REQUIRED
+}
+
+enum ValidationDecision {
+  VALIDATED
+  REJECTED
+  CORRECTION_REQUESTED
+}
+
+enum ApprovalRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CORRECTION_REQUESTED
+  CANCELLED
+}
+
+enum ApprovalStepStatus {
+  WAITING
+  PENDING
+  APPROVED
+  REJECTED
+  CORRECTION_REQUESTED
+  SKIPPED
+}
+
+enum FoodBatchStatus {
+  UNDER_REVIEW
+  WITH_INCONSISTENCIES
+  READY
+}
+
+model FinancialSequence {
+  year       Int      @id
+  nextNumber Int      @default(1)
+  updatedAt  DateTime @updatedAt
+}
+
+model FinancialRecord {
+  id                     String                     @id @default(cuid())
+  identifier             String                     @unique
+  sequenceYear           Int
+  sequenceNumber         Int
+  companyId              String?
+  branchId               String?
+  supplierId             String?
+  administrativeEntityId String
+  projectId              String?
+  contractId             String?
+  costCenterId           String?
+  departmentId           String?
+  categoryId             String?
+  ledgerAccountId        String?
+  createdByUserId        String
+  documentType           String?
+  documentNumber         String?
+  description            String?
+  issueDate              DateTime?
+  receivedAt             DateTime                   @default(now())
+  dueDate                DateTime?
+  competenceDate         DateTime?
+  grossAmount            Decimal                    @db.Decimal(19, 4)
+  discountAmount         Decimal                    @default(0) @db.Decimal(19, 4)
+  taxAmount              Decimal                    @default(0) @db.Decimal(19, 4)
+  withholdingAmount      Decimal                    @default(0) @db.Decimal(19, 4)
+  netAmount              Decimal?                   @db.Decimal(19, 4)
+  currency               String                     @default("BRL") @db.Char(3)
+  lifecycleState         RecordLifecycleState       @default(ACTIVE)
+  documentState          DocumentState              @default(PENDING)
+  extractionState        ExtractionState            @default(NOT_STARTED)
+  validationState        ValidationState            @default(PENDING)
+  approvalState          ApprovalState              @default(PENDING)
+  paymentState           PaymentState               @default(PENDING)
+  receiptState           ReceiptState               @default(PENDING)
+  reconciliationState    ReconciliationState        @default(PENDING)
+  allocationState        AllocationState            @default(PENDING)
+  accountingState        AccountingState            @default(PENDING)
+  notes                  String?
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+  company                Company?                   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  branch                 Branch?                    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  supplier               Supplier?                  @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  administrativeEntity   AdministrativeEntity       @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  project                Project?                   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  contract               Contract?                  @relation(fields: [contractId], references: [id], onDelete: SetNull)
+  costCenter             CostCenter?                @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  department             Department?                @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  category               Category?                  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  ledgerAccount          LedgerAccount?             @relation(fields: [ledgerAccountId], references: [id], onDelete: SetNull)
+  createdBy              User                       @relation("FinancialRecordCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  files                  FinancialDocumentFile[]
+  validationReviews      DocumentValidationReview[]
+  approvalRequests       ApprovalRequest[]
+  foodBatch              FoodBatch?
+  transitVoucherMap      TransitVoucherMap?
+
+  @@unique([sequenceYear, sequenceNumber])
+  @@index([companyId, dueDate])
+  @@index([supplierId])
+  @@index([administrativeEntityId])
+  @@index([paymentState, dueDate])
+  @@index([approvalState, createdAt])
+}
+
+model FoodUnitPriceConfig {
+  id                     String                @id @default(cuid())
+  unitPrice              Decimal               @db.Decimal(19, 4)
+  locality               String?               @db.VarChar(10)
+  administrativeEntityId String
+  effectiveYear          Int?
+  effectiveMonth         Int?
+  active                 Boolean               @default(true)
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+  administrativeEntity   AdministrativeEntity @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+
+  @@index([active, locality, administrativeEntityId, effectiveYear, effectiveMonth])
+}
+
+model FoodCompetence {
+  id        String      @id @default(cuid())
+  year      Int
+  month     Int
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  batches   FoodBatch[]
+  allocations FoodAllocation[]
+
+  @@unique([year, month])
+  @@index([year, month])
+}
+
+model FoodBatch {
+  id                     String               @id @default(cuid())
+  competenceId           String
+  administrativeEntityId String
+  uploadedByUserId       String
+  financialRecordId      String?              @unique
+  locality               String               @db.VarChar(10)
+  cycle                  Int                  @default(0)
+  version                Int
+  current                Boolean              @default(true)
+  status                 FoodBatchStatus
+  originalName           String
+  storageKey             String               @unique
+  mimeType               String
+  sizeBytes              Int
+  sha256                 String
+  unitPrice              Decimal              @db.Decimal(19, 4)
+  totalRows              Int
+  validRows              Int
+  invalidRows            Int
+  totalAmount            Decimal              @db.Decimal(19, 4)
+  processedAt            DateTime             @default(now())
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  cancelledAt            DateTime?
+  cancelledByUserId      String?
+  cancellationReason     String?
+  competence             FoodCompetence       @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  uploadedBy             User                 @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  cancelledBy            User?                @relation("FoodBatchCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  financialRecord        FinancialRecord?     @relation(fields: [financialRecordId], references: [id], onDelete: Restrict)
+  allocations            FoodAllocation[]
+  mealOccurrences        FoodMealOccurrence[]
+  issues                 FoodBatchIssue[]
+  revisions              FoodBatchRevision[]
+
+  @@unique([competenceId, locality, administrativeEntityId, cycle, version])
+  @@index([competenceId, locality, administrativeEntityId, cycle, current])
+  @@index([administrativeEntityId])
+}
+
+model FoodAllocation {
+  id               String    @id @default(cuid())
+  batchId          String
+  competenceId     String
+  administrativeEntityId String
+  sourceRow        Int
+  sourceIdentifier String?
+  employeeName     String
+  department       String
+  locality         String    @db.VarChar(10)
+  unitPrice        Decimal   @db.Decimal(19, 4)
+  amount           Decimal   @db.Decimal(19, 4)
+  createdAt        DateTime  @default(now())
+  batch            FoodBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  competence       FoodCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity AdministrativeEntity @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+
+  @@index([batchId, department])
+  @@index([batchId, employeeName])
+  @@index([competenceId, locality, administrativeEntityId])
+}
+
+model FoodBatchIssue {
+  id           String    @id @default(cuid())
+  batchId      String
+  sourceRow    Int?
+  employeeName String?
+  code         String
+  message      String
+  createdAt    DateTime  @default(now())
+  batch        FoodBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, sourceRow])
+}
+
+model FoodEmployee {
+  id             String               @id @default(cuid())
+  officialName   String
+  normalizedName String               @unique
+  department     String
+  jobTitle       String               @default("")
+  costCenter     String               @default("")
+  active         Boolean              @default(true)
+  mergedIntoId   String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  aliases        FoodEmployeeAlias[]
+  occurrences    FoodMealOccurrence[]
+  transitAllocations TransitVoucherAllocation[]
+  mergedInto     FoodEmployee?        @relation("FoodEmployeeMerges", fields: [mergedIntoId], references: [id], onDelete: Restrict)
+  mergedEmployees FoodEmployee[]      @relation("FoodEmployeeMerges")
+
+  @@index([department, active])
+  @@index([mergedIntoId])
+}
+
+model FoodEmployeeAlias {
+  id              String       @id @default(cuid())
+  employeeId      String
+  sourceName      String
+  normalizedAlias String       @unique
+  createdAt       DateTime     @default(now())
+  employee        FoodEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+}
+
+enum FoodOccurrenceValidationStatus {
+  PENDING
+  AUTO_MATCHED
+  CONFIRMED
+}
+
+enum FoodOccurrenceMatchMethod {
+  UNMATCHED
+  EXACT
+  NORMALIZED
+  ALIAS
+  FUZZY
+  MANUAL
+}
+
+enum FoodOccurrenceDisposition {
+  VALID
+  DUPLICATE
+  IGNORED
+}
+
+enum EntryOrigin {
+  UPLOAD
+  MANUAL
+}
+
+model FoodMealOccurrence {
+  id                     String                         @id @default(cuid())
+  batchId                String
+  employeeId             String?
+  sourceRow              Int
+  occurredOn             DateTime?                      @db.Date
+  mealQuantity           Int                            @default(1)
+  receivedName           String
+  normalizedReceivedName String
+  officialName           String?
+  receivedDepartment     String
+  confirmedDepartment    String?
+  invoiceEmission        String?
+  restaurantName         String?
+  duplicateCandidate     Boolean                        @default(false)
+  duplicateConfirmed     Boolean                        @default(false)
+  included               Boolean                        @default(true)
+  validationStatus       FoodOccurrenceValidationStatus @default(PENDING)
+  matchMethod            FoodOccurrenceMatchMethod       @default(UNMATCHED)
+  disposition            FoodOccurrenceDisposition       @default(VALID)
+  unitPrice              Decimal                        @db.Decimal(19, 4)
+  amount                 Decimal                        @db.Decimal(19, 4)
+  origin                 EntryOrigin                    @default(UPLOAD)
+  createdByUserId        String?
+  createdAt              DateTime                       @default(now())
+  updatedAt              DateTime                       @updatedAt
+  deletedAt              DateTime?
+  deletedByUserId        String?
+  deletionReason         String?
+  batch                  FoodBatch                      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  employee               FoodEmployee?                  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  deletedBy              User?                          @relation("FoodOccurrenceDeleter", fields: [deletedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([batchId, normalizedReceivedName])
+  @@index([batchId, occurredOn, employeeId])
+  @@index([batchId, deletedAt])
+}
+
+model FoodBatchRevision {
+  id             String    @id @default(cuid())
+  batchId        String
+  editedByUserId String
+  revision       Int
+  previousTotal  Decimal   @db.Decimal(19, 4)
+  newTotal       Decimal   @db.Decimal(19, 4)
+  changes        Json
+  createdAt      DateTime  @default(now())
+  batch          FoodBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  editedBy       User      @relation(fields: [editedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, revision])
+  @@index([batchId, createdAt])
+}
+
+model TransitVoucherCompetence {
+  id          String                    @id @default(cuid())
+  year        Int
+  month       Int
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+  maps        TransitVoucherMap[]
+  allocations TransitVoucherAllocation[]
+
+  @@unique([year, month])
+}
+
+model TransitVoucherMap {
+  id                     String                   @id @default(cuid())
+  competenceId           String
+  administrativeEntityId String
+  uploadedByUserId       String
+  financialRecordId      String?                  @unique
+  locality               String                   @default("MA") @db.VarChar(10)
+  version                Int
+  current                Boolean                  @default(true)
+  status                 FoodBatchStatus
+  originalName           String
+  storageKey             String                   @unique
+  mimeType               String
+  sizeBytes              Int
+  sha256                 String
+  totalRows              Int
+  validRows              Int
+  invalidRows            Int
+  totalAmount            Decimal                  @db.Decimal(19, 4)
+  processedAt            DateTime                 @default(now())
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  cancelledAt            DateTime?
+  cancelledByUserId      String?
+  cancellationReason     String?
+  competence             TransitVoucherCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity     @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  uploadedBy             User                     @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  cancelledBy            User?                    @relation("TransitMapCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  financialRecord        FinancialRecord?         @relation(fields: [financialRecordId], references: [id], onDelete: Restrict)
+  allocations            TransitVoucherAllocation[]
+  issues                 TransitVoucherIssue[]
+
+  @@unique([competenceId, administrativeEntityId, version])
+  @@index([competenceId, administrativeEntityId, current])
+}
+
+model TransitVoucherAllocation {
+  id                     String                   @id @default(cuid())
+  mapId                  String
+  competenceId           String
+  administrativeEntityId String
+  sourceRow              Int
+  sourceIdentifier       String?
+  employeeId             String?
+  company                String                   @default("Não informada")
+  employeeName           String
+  originalEmployeeName   String?
+  department             String?
+  serviceDate            DateTime?
+  service                String?
+  costCenter             String?
+  dailyAmount            Decimal?                 @db.Decimal(19, 4)
+  previousMonthDifference Decimal?                @db.Decimal(19, 4)
+  occasionalDiscounts    Decimal?                 @db.Decimal(19, 4)
+  days                   Decimal?                 @db.Decimal(10, 2)
+  locality               String                   @default("MA") @db.VarChar(10)
+  amount                 Decimal                  @db.Decimal(19, 4)
+  origin                 EntryOrigin              @default(UPLOAD)
+  createdByUserId        String?
+  createdAt              DateTime                 @default(now())
+  deletedAt              DateTime?
+  deletedByUserId        String?
+  deletionReason         String?
+  map                    TransitVoucherMap        @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  competence             TransitVoucherCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity     @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  employee               FoodEmployee?            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  deletedBy              User?                    @relation("TransitAllocationDeleter", fields: [deletedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([mapId, employeeName])
+  @@index([mapId, company, department])
+  @@index([employeeId])
+  @@index([competenceId, administrativeEntityId])
+  @@index([mapId, deletedAt])
+}
+
+model TransitVoucherIssue {
+  id           String            @id @default(cuid())
+  mapId        String
+  sourceRow    Int?
+  employeeName String?
+  code         String
+  message      String
+  rawData      Json?
+  fieldErrors  Json?
+  suggestedData Json?
+  correctedData Json?
+  resolvedAt   DateTime?
+  resolvedByUserId String?
+  createdAt    DateTime          @default(now())
+  map          TransitVoucherMap @relation(fields: [mapId], references: [id], onDelete: Cascade)
+
+  @@index([mapId, sourceRow])
+  @@index([mapId, resolvedAt])
+}
+
+model FinancialDocumentFile {
+  id                String                  @id @default(cuid())
+  financialRecordId String
+  uploadedByUserId  String
+  supersedesFileId  String?
+  kind              FinancialFileKind
+  version           Int
+  originalName      String
+  storageKey        String                  @unique
+  mimeType          String
+  sizeBytes         Int
+  sha256            String
+  active            Boolean                 @default(true)
+  createdAt         DateTime                @default(now())
+  financialRecord   FinancialRecord         @relation(fields: [financialRecordId], references: [id], onDelete: Cascade)
+  uploadedBy        User                    @relation("DocumentUploader", fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  supersedes        FinancialDocumentFile?  @relation("FileVersions", fields: [supersedesFileId], references: [id], onDelete: SetNull)
+  replacements      FinancialDocumentFile[] @relation("FileVersions")
+  extractionJobs    DocumentExtractionJob[]
+  extractions       DocumentExtraction[]
+
+  @@unique([financialRecordId, kind, version])
+  @@index([financialRecordId, active])
+  @@index([sha256])
+}
+
+model DocumentExtractionJob {
+  id             String                @id @default(cuid())
+  fileId         String
+  state          ExtractionJobState    @default(PENDING)
+  attempts       Int                   @default(0)
+  maxAttempts    Int                   @default(3)
+  availableAt    DateTime              @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  lockedBy       String?
+  errorStage     String?
+  errorMessage   String?
+  technicalStack String?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  file           FinancialDocumentFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  extraction     DocumentExtraction?
+
+  @@index([state, availableAt])
+  @@index([fileId, createdAt])
+}
+
+model DocumentExtraction {
+  id                String                     @id @default(cuid())
+  jobId             String                     @unique
+  fileId            String
+  state             ExtractionJobState
+  engine            String
+  engineVersion     String?
+  language          String?
+  documentType      String?
+  rawText           String?
+  structuredData    Json?
+  fieldConfidences  Json?
+  overallConfidence Decimal?                   @db.Decimal(5, 4)
+  validationResult  Json?
+  createdAt         DateTime                   @default(now())
+  job               DocumentExtractionJob      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  file              FinancialDocumentFile      @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  validationReviews DocumentValidationReview[]
+
+  @@index([fileId, createdAt])
+  @@index([state, createdAt])
+}
+
+model DocumentValidationReview {
+  id                        String                    @id @default(cuid())
+  financialRecordId         String
+  extractionId              String
+  reviewerUserId            String
+  decision                  ValidationDecision
+  extractedSnapshot         Json
+  correctedData             Json
+  lowConfidenceAcknowledged Boolean                   @default(false)
+  notes                     String?
+  createdAt                 DateTime                  @default(now())
+  financialRecord           FinancialRecord           @relation(fields: [financialRecordId], references: [id], onDelete: Cascade)
+  extraction                DocumentExtraction        @relation(fields: [extractionId], references: [id], onDelete: Restrict)
+  reviewer                  User                      @relation("ValidationReviewer", fields: [reviewerUserId], references: [id], onDelete: Restrict)
+  fields                    DocumentValidationField[]
+
+  @@index([financialRecordId, createdAt])
+  @@index([reviewerUserId, createdAt])
+}
+
+model DocumentValidationField {
+  id             String                   @id @default(cuid())
+  reviewId       String
+  fieldKey       String
+  extractedValue Json?
+  finalValue     Json?
+  confidence     Decimal?                 @db.Decimal(5, 4)
+  changed        Boolean                  @default(false)
+  review         DocumentValidationReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, fieldKey])
+}
+
+model ApprovalPolicy {
+  id        String               @id @default(cuid())
+  name      String
+  companyId String?
+  currency  String               @default("BRL") @db.Char(3)
+  minAmount Decimal              @default(0) @db.Decimal(19, 4)
+  maxAmount Decimal?             @db.Decimal(19, 4)
+  priority  Int                  @default(100)
+  active    Boolean              @default(true)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  company   Company?             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  steps     ApprovalPolicyStep[]
+  requests  ApprovalRequest[]
+
+  @@index([companyId, currency, active, priority])
+}
+
+model ApprovalPolicyStep {
+  id       String         @id @default(cuid())
+  policyId String
+  sequence Int
+  roleId   String
+  name     String
+  policy   ApprovalPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  role     Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([policyId, sequence])
+  @@index([roleId])
+}
+
+model ApprovalRequest {
+  id                String                 @id @default(cuid())
+  financialRecordId String
+  policyId          String
+  initiatedByUserId String
+  status            ApprovalRequestStatus  @default(PENDING)
+  currentStep       Int                    @default(1)
+  amountSnapshot    Decimal                @db.Decimal(19, 4)
+  currencySnapshot  String                 @db.Char(3)
+  active            Boolean                @default(true)
+  completedAt       DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  financialRecord   FinancialRecord        @relation(fields: [financialRecordId], references: [id], onDelete: Cascade)
+  policy            ApprovalPolicy         @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  initiatedBy       User                   @relation("ApprovalInitiator", fields: [initiatedByUserId], references: [id], onDelete: Restrict)
+  steps             ApprovalStepInstance[]
+
+  @@index([financialRecordId, active])
+  @@index([status, createdAt])
+}
+
+model ApprovalStepInstance {
+  id            String             @id @default(cuid())
+  requestId     String
+  sequence      Int
+  roleId        String
+  name          String
+  status        ApprovalStepStatus @default(WAITING)
+  actedByUserId String?
+  actedAt       DateTime?
+  notes         String?
+  request       ApprovalRequest    @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  role          Role               @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  actedBy       User?              @relation("ApprovalActor", fields: [actedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([requestId, sequence])
+  @@index([roleId, status])
 }

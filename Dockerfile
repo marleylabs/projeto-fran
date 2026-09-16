@@ -1,6 +1,6 @@
 # syntax=docker.io/docker/dockerfile:1
 
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 RUN apk add --no-cache libc6-compat
 
 # --- Dependências ---
@@ -35,28 +35,27 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN addgroup --system --gid 1001 nodejs \
-  && adduser --system --uid 1001 nextjs
+  && adduser --system --uid 1001 nextjs \
+  && apk add --no-cache su-exec
 
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
-COPY --from=builder /app/next.config.ts ./next.config.ts
-COPY --from=builder /app/tsconfig.json ./tsconfig.json
-COPY --from=builder /app/package.json ./package.json
+COPY --chown=nextjs:nodejs --from=builder /app/node_modules ./node_modules
+COPY --chown=nextjs:nodejs --from=builder /app/public ./public
+COPY --chown=nextjs:nodejs --from=builder /app/.next ./.next
+COPY --chown=nextjs:nodejs --from=builder /app/prisma ./prisma
+COPY --chown=nextjs:nodejs --from=builder /app/prisma.config.ts ./prisma.config.ts
+COPY --chown=nextjs:nodejs --from=builder /app/next.config.ts ./next.config.ts
+COPY --chown=nextjs:nodejs --from=builder /app/tsconfig.json ./tsconfig.json
+COPY --chown=nextjs:nodejs --from=builder /app/package.json ./package.json
 # src/ e scripts/ (código-fonte TS, não o build compilado) ficam disponíveis para
 # rodar utilitários como o seed do primeiro usuário via `docker exec ... npx tsx scripts/...`
 # em qualquer ambiente novo, sem depender de rodar isso fora do container.
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/scripts ./scripts
-COPY docker-entrypoint.sh ./
-
-RUN chown -R nextjs:nodejs /app
-USER nextjs
+COPY --chown=nextjs:nodejs --from=builder /app/src ./src
+COPY --chown=nextjs:nodejs --from=builder /app/scripts ./scripts
+COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
 
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
 ENTRYPOINT ["sh", "docker-entrypoint.sh"]
+CMD ["npm", "run", "start"]

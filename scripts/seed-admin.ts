@@ -8,7 +8,7 @@ async function main() {
     process.exit(1);
   }
 
-  const user = await createUser(email, password, name);
+  const user = await createUser(email, password, name, "ADMIN");
   console.log("Usuário criado:", user);
 }
 

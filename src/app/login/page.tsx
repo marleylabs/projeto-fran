@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button, FeedbackAlert } from "@/components/ui";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -38,49 +39,51 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center px-4">
-      <div className="card w-full max-w-sm p-8">
-        <h1 className="text-xl font-bold text-primary text-center">Extrato Mensal</h1>
-        <p className="text-sm text-text-muted text-center mt-1 mb-6">Entre para acessar o sistema</p>
+    <main className="flex min-h-screen items-center justify-center bg-base-200 px-4 py-10 text-neutral">
+      <section className="card w-full max-w-sm border border-base-300 bg-base-100 shadow-sm">
+        <div className="card-body p-6 sm:p-8">
+          <div className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-xl bg-primary text-xs font-extrabold text-white">GA</div><h1 className="text-center text-xl font-bold text-neutral">Gestão Administrativa</h1>
+          <p className="mb-2 mt-1 text-center text-sm text-secondary">
+            Entre para acessar a plataforma
+          </p>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs font-medium text-text-muted">Email</span>
-            <input
-              type="email"
-              required
-              autoComplete="username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-            />
-          </label>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <label className="fieldset">
+              <span className="fieldset-legend text-secondary">Email</span>
+              <input
+                type="email"
+                required
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="input input-bordered w-full border-base-300 bg-base-100"
+              />
+            </label>
 
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs font-medium text-text-muted">Senha</span>
-            <input
-              type="password"
-              required
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-            />
-          </label>
+            <label className="fieldset">
+              <span className="fieldset-legend text-secondary">Senha</span>
+              <input
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="input input-bordered w-full border-base-300 bg-base-100"
+              />
+            </label>
 
-          {error && (
-            <div className="rounded-md bg-red-50 border border-red-200 text-red-800 text-sm px-3 py-2">{error}</div>
-          )}
+            {error && (
+              <FeedbackAlert status="error" title="Não foi possível entrar">
+                {error}
+              </FeedbackAlert>
+            )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="mt-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"
-          >
-            {loading ? "Entrando..." : "Entrar"}
-          </button>
-        </form>
-      </div>
-    </div>
+            <Button type="submit" loading={loading} aura className="mt-2 w-full">
+              {loading ? "Entrando..." : "Entrar"}
+            </Button>
+          </form>
+        </div>
+      </section>
+    </main>
   );
 }

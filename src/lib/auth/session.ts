@@ -38,8 +38,25 @@ export async function getSessionUser() {
   const sessionId = cookieStore.get(COOKIE_NAME)?.value;
   if (!sessionId) return null;
 
-  const session = await prisma.session.findUnique({ where: { id: sessionId }, include: { user: true } });
-  if (!session || session.expiresAt < new Date()) return null;
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    include: {
+      user: {
+        include: {
+          roles: {
+            include: {
+              role: {
+                include: {
+                  permissions: { include: { permission: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!session || session.expiresAt < new Date() || !session.user.active) return null;
 
   return session.user;
 }

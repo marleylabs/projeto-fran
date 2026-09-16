@@ -35,6 +35,28 @@ services:
       # frente) — necessário para o cookie de sessão funcionar, mas a senha e a
       # sessão trafegam sem criptografia. Use HTTPS assim que possível.
       - SECURE_COOKIES=${SECURE_COOKIES:-true}
+      - PRIVATE_STORAGE_ROOT=/app/storage
+    volumes:
+      - financeiro_private_storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  document-worker:
+    container_name: financeiro-document-worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["npx", "tsx", "scripts/document-worker.ts"]
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-extrato}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-extrato_mensal}
+      - PRIVATE_STORAGE_ROOT=/app/storage
+      - OCR_CACHE_PATH=/app/.cache/tesseract
+    volumes:
+      - financeiro_private_storage:/app/storage
+      - financeiro_ocr_cache:/app/.cache/tesseract
     depends_on:
       db:
         condition: service_healthy
@@ -42,3 +64,5 @@ services:
 
 volumes:
   extrato_mensal_db_data:
+  financeiro_private_storage:
+  financeiro_ocr_cache:

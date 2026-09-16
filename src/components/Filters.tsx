@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui";
+
 export interface FiltersState {
   empresa: string;
   nome: string;
@@ -99,12 +101,13 @@ export function Filters({ filters, onChange, empresasDisponiveis, situacoesDispo
       </label>
 
       {hasActiveFilters && (
-        <button
+        <Button
           onClick={() => onChange(EMPTY_FILTERS)}
-          className="text-sm text-primary hover:text-primary-hover font-medium px-2 py-1.5"
+          variant="ghost"
+          size="sm"
         >
           Limpar filtros
-        </button>
+        </Button>
       )}
     </div>
   );

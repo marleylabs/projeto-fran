@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { listUploads } from "@/lib/db/uploads";
-import { requireUser } from "@/lib/auth/session";
+import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  const { response: authResponse } = await requireUser();
+  const { response: authResponse } = await requirePermission(PERMISSIONS.ACCOUNTING_READ);
   if (authResponse) return authResponse;
 
   try {

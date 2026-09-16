@@ -21,6 +21,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Email ou senha inválidos." }, { status: 401 });
   }
 
+  if (!user.active) return NextResponse.json({ error: "Este acesso está inativo. Procure um administrador." }, { status: 403 });
+
   await createSession(user.id);
+  await (await import("@/lib/db/prisma")).prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
   return NextResponse.json({ ok: true, user: { id: user.id, email: user.email, name: user.name } });
 }

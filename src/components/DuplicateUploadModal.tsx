@@ -2,6 +2,7 @@
 
 import { formatBRNumber } from "@/lib/normalize/money";
 import type { DuplicateExisting } from "@/lib/uploadWithProgress";
+import { Button } from "@/components/ui";
 
 interface Props {
   existing: DuplicateExisting;
@@ -32,21 +33,15 @@ export function DuplicateUploadModal({ existing, onReplace, onKeepBoth, onCancel
         </div>
 
         <div className="mt-5 flex flex-col gap-2">
-          <button
-            onClick={onReplace}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-          >
+          <Button onClick={onReplace} aura>
             Substituir extração anterior
-          </button>
-          <button
-            onClick={onKeepBoth}
-            className="rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-surface-soft"
-          >
+          </Button>
+          <Button onClick={onKeepBoth} variant="secondary">
             Manter as duas
-          </button>
-          <button onClick={onCancel} className="rounded-md px-4 py-2 text-sm font-medium text-text-muted hover:text-foreground">
+          </Button>
+          <Button onClick={onCancel} variant="ghost">
             Cancelar
-          </button>
+          </Button>
         </div>
       </div>
     </div>

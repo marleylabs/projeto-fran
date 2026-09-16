@@ -1,36 +1,104 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Plataforma de Gestão Administrativa
 
-## Getting Started
+Aplicação corporativa para o setor Administrativo gerenciar cadastros, contas a pagar e rotinas de apoio, preservando o módulo contábil de importação e conferência da folha.
 
-First, run the development server:
+## Stack
+
+- Next.js 16, React 19 e TypeScript
+- PostgreSQL 16 e Prisma 7
+- Docker Compose
+- PDF.js, ExcelJS e TanStack Table
+
+## Ambiente local com Docker
+
+1. Copie `.env.example` para `.env`.
+2. Defina uma senha forte em `POSTGRES_PASSWORD`.
+3. Em desenvolvimento HTTP local, mantenha `SECURE_COOKIES=false`.
+4. Construa e inicie os serviços:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+docker compose up -d --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+O Compose inicia:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- aplicação em `http://localhost:3000`;
+- PostgreSQL somente em `127.0.0.1:5433`;
+- volume persistente `extrato-mensal_extrato_mensal_db_data`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+O container web executa `prisma migrate deploy` antes de iniciar o Next.js.
 
-## Learn More
+## Primeiro usuário
 
-To learn more about Next.js, take a look at the following resources:
+Em um banco novo, crie a primeira conta explicitamente:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+docker exec -it extrato-mensal-web npx tsx scripts/seed-admin.ts usuario@empresa.com "senha-forte" "Nome"
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Não existe cadastro público nem seed automático de credenciais.
 
-## Deploy on Vercel
+## Desenvolvimento sem container web
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Com um PostgreSQL acessível e `DATABASE_URL` definida:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm ci
+npx prisma generate
+npm run dev
+```
+
+## Verificações
+
+```bash
+npm test
+npm run lint
+npm run typecheck
+npm run build
+```
+
+Ou execute a verificação completa:
+
+```bash
+npm run check
+```
+
+Os scripts antigos em `scripts/` são diagnósticos manuais. Alguns dependem do arquivo externo `../FOLHAD_2.PDF`. A suíte em `tests/` não depende de documentos privados.
+
+## Banco e migrations
+
+O schema atual possui `Upload`, `User` e `Session`. As migrations ficam em `prisma/migrations`.
+
+Verifique o estado sem modificar o banco:
+
+```bash
+docker exec extrato-mensal-web npx prisma migrate status
+```
+
+Não use `prisma migrate dev` no container de produção e não apague o volume para corrigir divergências.
+
+## Backup e recuperação
+
+O Git não contém dados do PostgreSQL, `.env`, PDFs privados ou o conteúdo de volumes Docker. Antes de trocar de computador ou recriar o ambiente, faça backup do banco:
+
+```bash
+docker exec extrato-mensal-db pg_dump -U extrato -d extrato_mensal -Fc -f /tmp/extrato-mensal.dump
+docker cp extrato-mensal-db:/tmp/extrato-mensal.dump ./extrato-mensal.dump
+```
+
+Guarde o dump em local seguro; ele pode conter dados pessoais e financeiros. A restauração deve ser testada primeiro em banco separado.
+
+## Arquitetura atual
+
+```text
+Browser
+  → páginas e componentes React
+  → Route Handlers /api
+  → parser de PDFs e regras de folha
+  → Prisma
+  → PostgreSQL
+```
+
+O módulo atual será incorporado gradualmente em `Contabilidade > Importações de folha`. Nenhuma tabela existente será removida ou renomeada sem migration compatível, backup e teste de regressão.
+
+Durante a transição, a funcionalidade permanece disponível em `/` e possui a rota canônica `/contabilidade/folha`. O registro de módulos do shell fica em `src/modules/core/navigation/moduleRegistry.ts`.

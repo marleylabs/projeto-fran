@@ -1,0 +1,4 @@
+import { NextResponse } from "next/server";
+import { PERMISSIONS,requirePermission } from "@/lib/auth/permissions";
+import { AccountsPayableDeletionError,cancelFoodBatch } from "@/modules/accounts-payable/deletion-server";
+export async function DELETE(request:Request,context:{params:Promise<{batchId:string}>}){const{user,response}=await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_DELETE);if(response||!user)return response;const{batchId}=await context.params;const body=await request.json().catch(()=>null) as {reason?:string;confirmation?:string}|null;if(body?.confirmation!=="EXCLUIR")return NextResponse.json({error:"Digite EXCLUIR para confirmar."},{status:400});try{return NextResponse.json(await cancelFoodBatch({batchId,reason:body?.reason??"",userId:user.id}));}catch(error){if(error instanceof AccountsPayableDeletionError)return NextResponse.json({error:error.message},{status:409});throw error;}}

@@ -1,0 +1,24 @@
+import "server-only";
+import ExcelJS from "exceljs";
+import { Prisma } from "@/generated/prisma";
+import { comparePtBr } from "@/lib/sorting/ptBr";
+
+type MapData = Prisma.TransitVoucherMapGetPayload<{ include: { competence: true; administrativeEntity: true; allocations: true; issues: true } }>;
+const MONEY = 'R$ #,##0.00';
+function header(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAF1B1B" } }; }
+const employeeKey = (row: MapData["allocations"][number]) => row.employeeId ?? `${row.company}|${row.department}|${row.employeeName}`.toLocaleLowerCase("pt-BR");
+
+export async function exportTransitVoucherMap(map: MapData) {
+  const workbook = new ExcelJS.Workbook(); workbook.creator = "Gestão Administrativa";
+  const byCompany = new Map<string, { employees: Set<string>; departments: Set<string>; total: Prisma.Decimal }>();
+  const byDepartment = new Map<string, { company: string; department: string; employees: Set<string>; total: Prisma.Decimal }>();
+  for (const row of map.allocations) { const employee = employeeKey(row); const company = byCompany.get(row.company) ?? { employees: new Set(), departments: new Set(), total: new Prisma.Decimal(0) }; company.employees.add(employee); company.departments.add(row.department ?? "Não informado"); company.total = company.total.add(row.amount); byCompany.set(row.company, company); const key = `${row.company}\u0000${row.department ?? "Não informado"}`; const department = byDepartment.get(key) ?? { company: row.company, department: row.department ?? "Não informado", employees: new Set(), total: new Prisma.Decimal(0) }; department.employees.add(employee); department.total = department.total.add(row.amount); byDepartment.set(key, department); }
+  const companies = workbook.addWorksheet("Resumo por Empresa"); companies.addRow(["Empresa", "Colaboradores", "Departamentos", "Valor Total"]); header(companies.getRow(1)); for (const [name, value] of [...byCompany].sort(([a],[b])=>comparePtBr(a,b))) companies.addRow([name, value.employees.size, value.departments.size, Number(value.total)]); companies.columns = [{ width: 30 }, { width: 18 }, { width: 18 }, { width: 20 }]; companies.getColumn(4).numFmt = MONEY;
+  const departments = workbook.addWorksheet("Resumo por Departamento"); departments.addRow(["Empresa", "Departamento", "Colaboradores", "Valor Total"]); header(departments.getRow(1)); for (const value of [...byDepartment.values()].sort((a,b)=>comparePtBr(a.company,b.company)||comparePtBr(a.department,b.department))) departments.addRow([value.company, value.department, value.employees.size, Number(value.total)]); departments.columns = [{ width: 28 }, { width: 28 }, { width: 18 }, { width: 20 }]; departments.getColumn(4).numFmt = MONEY;
+  const detail = workbook.addWorksheet("Rateio por Colaborador"); detail.addRow(["Empresa", "Departamento", "Colaborador", "Nome recebido", "Data", "Serviço", "CC", "Dias", "Valor Dia", "Dif. Mês Anterior", "Descontos", "Valor Total", "colaborador_id", "Origem"]); header(detail.getRow(1));
+  for (const row of [...map.allocations].sort((a,b)=>comparePtBr(a.company,b.company)||comparePtBr(a.department,b.department)||comparePtBr(a.employeeName,b.employeeName)||comparePtBr(a.id,b.id))) detail.addRow([row.company, row.department ?? "", row.employeeName, row.originalEmployeeName ?? row.employeeName, row.serviceDate ?? "", row.service ?? "", row.costCenter ?? "", row.days ? Number(row.days) : "", row.dailyAmount ? Number(row.dailyAmount) : "", row.previousMonthDifference ? Number(row.previousMonthDifference) : "", row.occasionalDiscounts ? Number(row.occasionalDiscounts) : "", Number(row.amount), row.employeeId ?? "", row.origin]);
+  detail.columns = [28, 28, 32, 32, 16, 24, 18, 10, 16, 20, 16, 18, 28, 12].map((width) => ({ width })); [9, 10, 11, 12].forEach((column) => { detail.getColumn(column).numFmt = MONEY; });
+  const audit = workbook.addWorksheet("Auditoria"); audit.addRows([["Competência", `${String(map.competence.month).padStart(2, "0")}/${map.competence.year}`], ["Arquivo original", map.originalName], ["SHA-256", map.sha256], ["Versão", map.version], ["Processado em", map.processedAt], ["Fornecedor / cadastro_id", `${map.administrativeEntity.tradeName} / ${map.administrativeEntityId}`], ["Valor total", Number(map.totalAmount)]]); audit.getColumn(1).font = { bold: true }; audit.getColumn(1).width = 28; audit.getColumn(2).width = 70; audit.getCell("B7").numFmt = MONEY;
+  const issues = workbook.addWorksheet("Pendências"); issues.addRow(["Linha", "Colaborador", "Código", "Problema"]); header(issues.getRow(1)); for (const issue of map.issues) issues.addRow([issue.sourceRow ?? "", issue.employeeName ?? "", issue.code, issue.message]); issues.columns = [{ width: 10 }, { width: 30 }, { width: 24 }, { width: 70 }];
+  return workbook.xlsx.writeBuffer();
+}

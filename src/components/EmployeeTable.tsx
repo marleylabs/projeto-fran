@@ -12,6 +12,7 @@ import {
 import type { Colaborador } from "@/lib/types/payroll";
 import { formatBRNumber } from "@/lib/normalize/money";
 import { StatusBadge } from "./StatusBadge";
+import { Button } from "@/components/ui";
 
 const columnHelper = createColumnHelper<Colaborador>();
 
@@ -56,12 +57,14 @@ export function EmployeeTable({ colaboradores, onVerDetalhes }: Props) {
         id: "acoes",
         header: "",
         cell: (info) => (
-          <button
+          <Button
             onClick={() => onVerDetalhes(info.row.original.id)}
-            className="text-sm font-medium text-primary hover:text-primary-hover whitespace-nowrap"
+            variant="ghost"
+            size="sm"
+            className="whitespace-nowrap"
           >
             Ver detalhes
-          </button>
+          </Button>
         ),
       }),
     ],

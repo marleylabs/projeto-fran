@@ -1,174 +1,58 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { CorporateHeader } from "@/components/CorporateHeader";
+import { Button, FeedbackAlert, FloatingActionMenu, useToast } from "@/components/ui";
 
-interface UserRow {
-  id: string;
-  email: string;
-  name: string | null;
-  createdAt: string;
+type Role = { id: string; key: string; name: string; description: string | null };
+type UserRow = { id: string; email: string; name: string | null; active: boolean; lastLoginAt: string | null; createdAt: string; roles: { role: Role }[] };
+type DialogProps = { open: boolean; title: string; children: ReactNode; onClose: () => void };
+
+function Dialog({ open, title, children, onClose }: DialogProps) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (open && !ref.current?.open) ref.current?.showModal(); if (!open && ref.current?.open) ref.current.close(); }, [open]);
+  return <dialog ref={ref} className="modal" onCancel={onClose} onClose={onClose}><div className="modal-box max-w-lg border border-base-300 bg-base-100 p-5"><div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-bold">{title}</h2><button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Fechar">×</button></div>{children}</div><form method="dialog" className="modal-backdrop"><button aria-label="Fechar modal">Fechar</button></form></dialog>;
 }
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
-}
+const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const formatDate = (iso: string | null) => iso ? new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "Nunca";
+async function request(url: string, init?: RequestInit) { const response = await fetch(url, init); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error ?? "Não foi possível concluir a operação."); return body; }
 
 export default function UsuariosPage() {
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [email, setEmail] = useState("");
-  const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const router = useRouter(), toast = useToast();
+  const [users, setUsers] = useState<UserRow[]>([]), [roles, setRoles] = useState<Role[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null), [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [query, setQuery] = useState(""), [roleFilter, setRoleFilter] = useState(""), [statusFilter, setStatusFilter] = useState("active");
+  const [openMenu, setOpenMenu] = useState<string | null>(null), [editing, setEditing] = useState<UserRow | null>(null), [resetting, setResetting] = useState<UserRow | null>(null);
+  const [editName, setEditName] = useState(""), [editRole, setEditRole] = useState(""), [editActive, setEditActive] = useState(true);
+  const [tempPassword, setTempPassword] = useState(""), [tempConfirmation, setTempConfirmation] = useState("");
+  const [recoveryEmailConfigured, setRecoveryEmailConfigured] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false), [email, setEmail] = useState(""), [name, setName] = useState(""), [password, setPassword] = useState(""), [newRole, setNewRole] = useState("REQUESTER");
 
-  const loadUsers = () => {
-    fetch("/api/users")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((json) => setUsers(json.users ?? []))
-      .catch(() => {});
-  };
-
+  async function load() { const body = await request("/api/users"); setUsers(body.users ?? []); setRoles(body.roles ?? []); setRecoveryEmailConfigured(Boolean(body.recoveryEmailConfigured)); }
   useEffect(() => {
-    loadUsers();
-    fetch("/api/auth/me")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((me) => setCurrentUserId(me.id))
-      .catch(() => {});
+    void request("/api/users").then(body => { setUsers(body.users ?? []); setRoles(body.roles ?? []); setRecoveryEmailConfigured(Boolean(body.recoveryEmailConfigured)); }).catch(()=>{});
+    void fetch("/api/auth/me").then(r=>r.json()).then(me=>{setCurrentUserId(me.id);setCurrentUserEmail(me.email)}).catch(()=>{});
   }, []);
+  const filtered = useMemo(() => users.filter(user => (!query || normalize(`${user.name ?? ""} ${user.email}`).includes(normalize(query))) && (!roleFilter || user.roles.some(item => item.role.key === roleFilter)) && (statusFilter === "all" || user.active === (statusFilter === "active"))), [users, query, roleFilter, statusFilter]);
+  const closeDialogs = () => { setEditing(null); setResetting(null); setError(null); setTempPassword(""); setTempConfirmation(""); };
+  function openEdit(user: UserRow) { setEditing(user); setEditName(user.name ?? ""); setEditRole(user.roles[0]?.role.key ?? ""); setEditActive(user.active); setError(null); }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSaving(true);
+  async function create(event: React.FormEvent) { event.preventDefault(); setBusy(true); setError(null); try { await request("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, name, password, roleKey: newRole }) }); toast.success("Usuário criado com sucesso."); setCreateOpen(false); setEmail(""); setName(""); setPassword(""); await load(); } catch(cause) { setError(cause instanceof Error ? cause.message : "Não foi possível criar o usuário."); } finally { setBusy(false); } }
+  async function saveEdit() { if (!editing) return; setBusy(true); setError(null); try { const body = await request(`/api/users/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: editName, roleKey: editRole, active: editActive }) }); setUsers(current => current.map(item => item.id === editing.id ? body.user : item)); toast.success(`Acesso de ${body.user.name || body.user.email} atualizado.`); closeDialogs(); } catch(cause) { setError(cause instanceof Error ? cause.message : "Não foi possível alterar o usuário."); } finally { setBusy(false); } }
+  async function sendReset() { if (!resetting) return; setBusy(true); setError(null); try { await request(`/api/users/${resetting.id}/password-reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ strategy: "email" }) }); toast.success(`Link de redefinição enviado para ${resetting.email}.`); closeDialogs(); } catch(cause) { setError(cause instanceof Error ? cause.message : "Não foi possível enviar a redefinição."); } finally { setBusy(false); } }
+  async function setTemporary() { if (!resetting) return; setBusy(true); setError(null); try { await request(`/api/users/${resetting.id}/password-reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ strategy: "temporary", password: tempPassword, confirmation: tempConfirmation }) }); toast.success(`Senha temporária de ${resetting.name || resetting.email} atualizada.`); closeDialogs(); } catch(cause) { setError(cause instanceof Error ? cause.message : "Não foi possível redefinir a senha."); } finally { setBusy(false); } }
+  async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.push("/login"); router.refresh(); }
 
-    try {
-      const res = await fetch("/api/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, name: name || undefined, password }),
-      });
-      const body = await res.json();
+  return <div className="flex flex-1 flex-col"><CorporateHeader currentUserEmail={currentUserEmail} onLogout={logout}/><main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-6 sm:px-6"><header className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[.16em] text-primary">Administração / Acessos</p><h1 className="text-2xl font-bold">Usuários</h1><p className="text-sm text-secondary">Perfis, status e segurança das contas de login.</p></div><Button size="sm" aura onClick={()=>{setCreateOpen(true);setError(null)}}>Novo usuário</Button></header>
+    <section className="card grid gap-3 p-3 sm:grid-cols-3"><input className="input input-bordered w-full" placeholder="Buscar por nome ou e-mail..." value={query} onChange={event=>setQuery(event.target.value)}/><select className="select select-bordered w-full" value={roleFilter} onChange={event=>setRoleFilter(event.target.value)}><option value="">Todos os perfis</option>{roles.map(role=><option key={role.key} value={role.key}>{role.name}</option>)}</select><select className="select select-bordered w-full" value={statusFilter} onChange={event=>setStatusFilter(event.target.value)}><option value="all">Todos os status</option><option value="active">Ativos</option><option value="inactive">Inativos</option></select></section>
+    <section className="card"><div className="overflow-x-auto"><table className="table min-w-[800px]"><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Status</th><th>Último acesso</th><th className="text-right">Ações</th></tr></thead><tbody>{filtered.map(user=><tr key={user.id}><td className="font-semibold">{user.name || "Sem nome"}{user.id===currentUserId&&<span className="ml-2 text-xs font-normal text-secondary">Você</span>}</td><td className="font-mono text-xs">{user.email}</td><td><span className="badge badge-ghost">{user.roles.map(item=>item.role.name).join(", ") || "Sem perfil"}</span></td><td><span className={`badge border-0 ${user.active?"bg-emerald-100 text-emerald-800":"bg-base-300 text-secondary"}`}>{user.active?"Ativo":"Inativo"}</span></td><td className="text-xs text-secondary">{formatDate(user.lastLoginAt)}</td><td className="text-right"><FloatingActionMenu open={openMenu===user.id} onOpenChange={open=>setOpenMenu(open?user.id:null)} label={`Ações de ${user.name||user.email}`}><button role="menuitem" className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-base-200" onClick={()=>openEdit(user)}>Editar usuário</button><button role="menuitem" className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-base-200" onClick={()=>{setResetting(user);setError(null)}} disabled={!user.active}>Redefinir senha</button>{user.id!==currentUserId&&<button role="menuitem" className={`w-full rounded-md px-3 py-2 text-left text-sm ${user.active?"text-error hover:bg-error/10":"text-emerald-700 hover:bg-emerald-50"}`} onClick={()=>{openEdit(user);setEditActive(!user.active)}}>{user.active?"Desativar acesso":"Reativar acesso"}</button>}</FloatingActionMenu></td></tr>)}{!filtered.length&&<tr><td colSpan={6} className="py-10 text-center text-secondary">Nenhum usuário encontrado.</td></tr>}</tbody></table></div></section></main>
 
-      if (!res.ok) {
-        setError(body.error ?? "Não foi possível criar o usuário.");
-        return;
-      }
+    <Dialog open={createOpen} title="Novo usuário" onClose={()=>!busy&&setCreateOpen(false)}><form onSubmit={create} className="grid gap-3"><label className="fieldset"><span className="fieldset-legend">Nome</span><input className="input input-bordered w-full" value={name} onChange={event=>setName(event.target.value)}/></label><label className="fieldset"><span className="fieldset-legend">E-mail *</span><input type="email" required className="input input-bordered w-full" value={email} onChange={event=>setEmail(event.target.value)}/></label><label className="fieldset"><span className="fieldset-legend">Perfil *</span><select required className="select select-bordered w-full" value={newRole} onChange={event=>setNewRole(event.target.value)}>{roles.map(role=><option key={role.key} value={role.key}>{role.name}</option>)}</select></label><label className="fieldset"><span className="fieldset-legend">Senha inicial *</span><input type="password" minLength={8} required className="input input-bordered w-full" value={password} onChange={event=>setPassword(event.target.value)}/></label>{error&&<FeedbackAlert status="error">{error}</FeedbackAlert>}<div className="modal-action"><Button variant="secondary" type="button" onClick={()=>setCreateOpen(false)} disabled={busy}>Cancelar</Button><Button type="submit" loading={busy}>{busy?"Criando...":"Criar usuário"}</Button></div></form></Dialog>
 
-      setEmail("");
-      setName("");
-      setPassword("");
-      loadUsers();
-    } catch {
-      setError("Falha de conexão. Tente novamente.");
-    } finally {
-      setSaving(false);
-    }
-  };
+    <Dialog open={Boolean(editing)} title="Gerenciar usuário" onClose={()=>!busy&&closeDialogs()}>{editing&&<div className="grid gap-3"><label className="fieldset"><span className="fieldset-legend">Nome</span><input className="input input-bordered w-full" value={editName} onChange={event=>setEditName(event.target.value)}/></label><label className="fieldset"><span className="fieldset-legend">E-mail</span><input readOnly className="input input-bordered w-full bg-base-200 font-mono text-xs" value={editing.email}/></label><label className="fieldset"><span className="fieldset-legend">Perfil *</span><select className="select select-bordered w-full" value={editRole} onChange={event=>setEditRole(event.target.value)}>{roles.map(role=><option key={role.key} value={role.key}>{role.name}</option>)}</select></label><label className="flex items-center justify-between rounded-md border border-base-300 px-3 py-2 text-sm"><span><strong className="block">Acesso ativo</strong><small className="text-secondary">Contas inativas não podem autenticar.</small></span><input type="checkbox" className="toggle toggle-sm toggle-error" checked={editActive} disabled={editing.id===currentUserId} onChange={event=>setEditActive(event.target.checked)}/></label>{editRole==="ADMIN"&&editing.roles[0]?.role.key!=="ADMIN"&&<FeedbackAlert status="warning" title="Elevação de privilégio">Este usuário receberá acesso administrativo integral.</FeedbackAlert>}{error&&<FeedbackAlert status="error">{error}</FeedbackAlert>}<div className="modal-action"><Button variant="secondary" onClick={closeDialogs} disabled={busy}>Cancelar</Button><Button onClick={saveEdit} loading={busy}>{busy?"Salvando...":"Salvar alterações"}</Button></div></div>}</Dialog>
 
-  const handleDelete = async (id: string) => {
-    const res = await fetch(`/api/users/${id}`, { method: "DELETE" });
-    if (res.ok) loadUsers();
-  };
-
-  return (
-    <div className="flex-1 flex flex-col">
-      <header className="bg-surface border-b border-border">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-bold text-primary">Usuários</h1>
-            <p className="text-xs text-text-muted">Gerenciar quem pode acessar o sistema</p>
-          </div>
-          <Link href="/" className="text-sm font-medium text-text-muted hover:text-primary">
-            Voltar
-          </Link>
-        </div>
-      </header>
-
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col gap-6">
-        <div className="card p-5">
-          <h2 className="text-sm font-semibold text-text-muted uppercase tracking-wide mb-4">Novo usuário</h2>
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs font-medium text-text-muted">Email</span>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="rounded-md border border-border px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs font-medium text-text-muted">Nome (opcional)</span>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="rounded-md border border-border px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs font-medium text-text-muted">Senha (mín. 8 caracteres)</span>
-              <input
-                type="password"
-                required
-                minLength={8}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="rounded-md border border-border px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-              />
-            </label>
-            <div className="sm:col-span-3 flex items-center justify-between gap-3">
-              {error && <p className="text-sm text-red-700">{error}</p>}
-              <button
-                type="submit"
-                disabled={saving}
-                className="ml-auto rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"
-              >
-                {saving ? "Criando..." : "Criar usuário"}
-              </button>
-            </div>
-          </form>
-        </div>
-
-        <div className="card overflow-x-auto scrollbar-thin">
-          <table className="w-full text-sm border-collapse min-w-[520px]">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left px-4 py-3 text-xs font-semibold text-text-muted uppercase">Email</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-text-muted uppercase">Nome</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-text-muted uppercase">Criado em</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-2.5">{u.email}</td>
-                  <td className="px-4 py-2.5">{u.name || "—"}</td>
-                  <td className="px-4 py-2.5">{formatDate(u.createdAt)}</td>
-                  <td className="px-4 py-2.5 text-right">
-                    {u.id !== currentUserId && (
-                      <button onClick={() => handleDelete(u.id)} className="text-sm font-medium text-red-700 hover:text-red-900">
-                        Remover
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {users.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-text-muted">
-                    Nenhum usuário cadastrado.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </main>
-    </div>
-  );
+    <Dialog open={Boolean(resetting)} title="Redefinir senha" onClose={()=>!busy&&closeDialogs()}>{resetting&&<div className="grid gap-4"><div className="rounded-md bg-base-200 p-3 text-sm"><strong>{resetting.name||"Sem nome"}</strong><span className="block font-mono text-xs text-secondary">{resetting.email}</span></div><section className="grid gap-2"><h3 className="text-sm font-semibold">Enviar link seguro</h3><p className="text-xs text-secondary">O usuário receberá um link de uso único, válido por uma hora.</p>{!recoveryEmailConfigured&&<FeedbackAlert status="warning">Envio indisponível: configure as variáveis SMTP no servidor.</FeedbackAlert>}<Button size="sm" onClick={sendReset} loading={busy} disabled={!recoveryEmailConfigured}>{busy?"Enviando...":"Enviar redefinição por e-mail"}</Button></section><div className="divider my-0 text-xs">OU</div><section className="grid gap-2"><h3 className="text-sm font-semibold">Definir senha temporária</h3><input type="password" minLength={8} className="input input-bordered w-full" placeholder="Nova senha temporária" value={tempPassword} onChange={event=>setTempPassword(event.target.value)}/><input type="password" minLength={8} className="input input-bordered w-full" placeholder="Confirmar senha" value={tempConfirmation} onChange={event=>setTempConfirmation(event.target.value)}/><Button size="sm" variant="secondary" onClick={setTemporary} loading={busy} disabled={tempPassword.length<8||tempPassword!==tempConfirmation}>{busy?"Atualizando...":"Atualizar senha"}</Button></section>{error&&<FeedbackAlert status="error">{error}</FeedbackAlert>}</div>}</Dialog>
+  </div>;
 }

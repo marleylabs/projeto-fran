@@ -7,9 +7,7 @@ import { exportExcel } from "@/lib/export/excel";
 import { exportCsv } from "@/lib/export/csv";
 import { exportJson } from "@/lib/export/json";
 import { exportSinteticoExcel, exportSinteticoCsv, exportSinteticoJson } from "@/lib/export/sinteticoExport";
-
-const BUTTON_CLASS =
-  "inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-foreground hover:bg-surface-soft disabled:opacity-50 disabled:cursor-not-allowed";
+import { Button } from "@/components/ui";
 
 export function ExportButtons({ result }: { result: ExtractionResult | SinteticoResult }) {
   const [exportingExcel, setExportingExcel] = useState(false);
@@ -27,15 +25,15 @@ export function ExportButtons({ result }: { result: ExtractionResult | Sintetico
 
   return (
     <div className="flex flex-wrap gap-2">
-      <button className={BUTTON_CLASS} onClick={handleExcel} disabled={exportingExcel}>
-        {exportingExcel ? "Gerando..." : "Exportar Excel"}
-      </button>
-      <button className={BUTTON_CLASS} onClick={() => (isSintetico ? exportSinteticoCsv(result) : exportCsv(result.colaboradores))}>
+      <Button variant="secondary" onClick={handleExcel} loading={exportingExcel}>
+        Exportar Excel
+      </Button>
+      <Button variant="secondary" onClick={() => (isSintetico ? exportSinteticoCsv(result) : exportCsv(result.colaboradores))}>
         Exportar CSV
-      </button>
-      <button className={BUTTON_CLASS} onClick={() => (isSintetico ? exportSinteticoJson(result) : exportJson(result))}>
+      </Button>
+      <Button variant="secondary" onClick={() => (isSintetico ? exportSinteticoJson(result) : exportJson(result))}>
         Exportar JSON
-      </button>
+      </Button>
     </div>
   );
 }

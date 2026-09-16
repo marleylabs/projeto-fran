@@ -1,0 +1,2 @@
+import { NextResponse } from "next/server";import { PERMISSIONS,requirePermission } from "@/lib/auth/permissions";import { collaboratorReferenceCounts } from "@/modules/collaborators/server";
+export async function GET(_request:Request,context:{params:Promise<{id:string}>}){const{response}=await requirePermission(PERMISSIONS.MASTER_DATA_READ);if(response)return response;const{id}=await context.params;return NextResponse.json(await collaboratorReferenceCounts(id));}

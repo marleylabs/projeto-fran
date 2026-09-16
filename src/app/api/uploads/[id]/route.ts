@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { getCombinedUploadById } from "@/lib/db/uploads";
-import { requireUser } from "@/lib/auth/session";
+import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 
 export const runtime = "nodejs";
 
 export async function GET(_req: Request, ctx: RouteContext<"/api/uploads/[id]">) {
-  const { response: authResponse } = await requireUser();
+  const { response: authResponse } = await requirePermission(PERMISSIONS.ACCOUNTING_READ);
   if (authResponse) return authResponse;
 
   const { id } = await ctx.params;

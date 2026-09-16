@@ -1,0 +1,24 @@
+export const TRANSIT_VOUCHER_SHEET_NAME = "VALE TRANSPORTE";
+export const TRANSIT_VOUCHER_TABLE_NAME = "ValeTransporteOficial";
+
+export const TRANSIT_VOUCHER_COLUMNS = [
+  "EMPRESA",
+  "NOME",
+  "DATA",
+  "DEPARTAMENTO",
+  "SERVIÇO",
+  "CC",
+  "VALOR DIA",
+  "DIF MÊS ANTERIOR",
+  "DESCONTOS EVENTUAIS",
+  "DIAS",
+  "VALOR TOTAL",
+] as const;
+
+export const TRANSIT_VOUCHER_REQUIRED_COLUMNS = [
+  "EMPRESA",
+  "NOME",
+  "DATA",
+  "DEPARTAMENTO",
+  "VALOR TOTAL",
+] as const;
