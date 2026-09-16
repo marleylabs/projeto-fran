@@ -532,7 +532,7 @@ test("shell corporativo centraliza identidade, navegação, sessão e responsivi
     readFile(new URL("../src/components/CorporateHeader.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(layout, /Manrope/);assert.doesNotMatch(layout,/Cause/);assert.match(layout,/<AppShell>/);
-  for(const token of ["--color-sidebar: #0a0a0a","--color-background: #f7f7f5","--color-surface: #ffffff","--color-primary: #af1b1b"])assert.ok(styles.toLowerCase().includes(token));
+  for(const token of ["--color-sidebar: #0a0a0a","--color-background: #f5f5f5","--color-surface: #ffffff","--color-primary: #af1b1b"])assert.ok(styles.toLowerCase().includes(token));
   assert.match(styles,/\.app-sidebar/);assert.match(styles,/@media \(min-width: 1024px\)/);assert.match(styles,/width: 15\.5rem/);
   assert.match(shell,/NAVIGATION_MODULES/);assert.match(shell,/\/api\/auth\/me/);assert.match(shell,/\/api\/auth\/logout/);assert.match(shell,/app-drawer/);
   assert.doesNotMatch(header,/Módulos da plataforma/);
