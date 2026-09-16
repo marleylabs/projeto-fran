@@ -2,7 +2,9 @@
 
 > Este documento substitui `AUDITORIA-COMPLETA-PROJETO.md` e `PLANO-RETOMADA-FASE-2.md` como referência principal. Aqueles documentos não foram apagados (ficam preservados no histórico, na branch `claude/modest-mccarthy-s7gkqc`), mas descrevem uma versão do sistema muito mais limitada do que a que realmente estava em produção. Ver seção 27.
 
-Branch auditada: **`recuperacao/codigo-completo`** (HEAD `3d96eb4`)
+Branch auditada: **`recuperacao/codigo-completo`** (HEAD `8535f61`)
+
+> **Atualização — Fase 5 (2026-09-16):** PR #1 (`ajuste/vale-transporte-resumo` → `recuperacao/codigo-completo`, mover `<Summary maps={maps}/>` para o final da página de Vale Transporte) foi mesclado via commit `8535f61`. Suíte de validação completa (lint, typecheck, build, testes) re-executada após o merge — todas PASS. Auditoria de dependências (`npm audit`) atualizada na seção 25. Validação de banco de dados real e smoke tests em ambiente com Docker/PostgreSQL **não puderam ser executados nesta sessão remota** (sem acesso a Docker/`DATABASE_URL` de produção) — ver seção 28 para os comandos exatos a rodar localmente.
 
 ---
 
@@ -203,30 +205,52 @@ Novas em `.env.example` frente à versão antiga: `PRIVATE_STORAGE_ROOT`, `APP_U
 
 ## 23. Testes
 
-`tests/baseline.test.ts` — **não existia em `master`**. 38 testes, 0 falhas, cobrindo RBAC, autenticação, Alimentação (MA/PA, consolidado, rateio XLSX), Vale Transporte, colaboradores, design system e shell corporativo. Rodado nesta sessão: **PASS 38/38**.
+`tests/baseline.test.ts` — **não existia em `master`**. 38 testes, 0 falhas, cobrindo RBAC, autenticação, Alimentação (MA/PA, consolidado, rateio XLSX), Vale Transporte, colaboradores, design system e shell corporativo. Rodado **após o merge do PR #1** (commit `8535f61`): **PASS 38/38**.
 
 ## 24. Build
 
-`npm run build`: **PASS**, 39 rotas geradas (12 estáticas, 27 dinâmicas + proxy), 0 erros, 0 warnings. Rodado duas vezes nesta sessão (Fase 3 e Fase 4), resultado idêntico.
+`npm run build`: **PASS**, 39 rotas geradas (12 estáticas, 27 dinâmicas + proxy), 0 erros, 0 warnings. Rodado novamente após o merge do PR #1 (commit `8535f61`) — resultado idêntico às execuções anteriores (Fase 3 e Fase 4).
+
+Suíte completa pós-merge (Fase 5, Etapa 5): `npm ci` PASS · `prisma validate` PASS · `prisma generate` PASS · `npm run lint` PASS (0 erros, 2 warnings pré-existentes não relacionados ao PR #1, em `EmployeeTable.tsx`/`SinteticoTable.tsx`, incompatibilidade do React Compiler com TanStack Table) · `tsc --noEmit` PASS (0 erros) · `npm run build` PASS · `npm test` PASS (38/38).
 
 ## 25. Segurança
 
 | Item | Situação |
 |---|---|
-| RBAC | Implementado e com enforcement no backend (seção 10) |
+| RBAC | Implementado e com enforcement no backend (seção 10); reconfirmado pós-merge — arquivo não tocado pelo PR #1 |
+| APIs públicas | Reconfirmado (Fase 5, Etapa 15): apenas `/api/auth/login`, `/api/auth/logout`, `/api/auth/password-reset` não fazem checagem de sessão (esperado). `/api/auth/me` checa sessão e retorna 401 se ausente. Todas as demais ~45 rotas de API usam `requirePermission`/`requireUser`/`getSessionUser`. Nenhuma rota ficou acidentalmente pública. |
 | Conta desativável (`active`) | Implementado, checado em login/sessão/proxy |
 | Reset de senha | Implementado (e-mail via nodemailer) |
-| OCR | Implementado (seção 14) |
+| OCR | Implementado (seção 14); revisão de robustez na seção 14 |
 | Segredos versionados | Nenhum encontrado (reconfirmado nesta sessão, ver `RELATORIO-RECUPERACAO-VS-MASTER.md` seção 10) |
 | **Rate limiting no login** | **Ainda ausente** — reconfirmado nesta sessão lendo `src/app/api/auth/login/route.ts` linha a linha. Continua sendo um achado válido, não obsoleto. |
-| `npm audit` | 13 vulnerabilidades (1 crítica, 9 altas, 3 moderadas) — mesmo padrão já visto antes, majoritariamente toolchain (Prisma CLI), não runtime de produção |
+
+### `npm audit` (Fase 5, Etapa 6 — reexecutado pós-merge)
+
+**Total geral** (`npm audit`, inclui devDependencies): 1 crítica, 9 altas, 3 moderadas, 13 total.
+**Runtime de produção** (`npm audit --omit=dev`): 1 crítica, 7 altas, 3 moderadas, 11 total.
+
+| Pacote | Severidade | Direto? | Runtime? | Fix disponível |
+|---|---|---|---|---|
+| `next` | **Crítica** | Sim (direto) | Sim | Sim, sem major bump — RCE não autenticado em servidores Windows e na API de otimização de imagem (AVIF) para `next` `>=16.0.0 <16.3.3` |
+| `nodemailer` | Alta | Sim (direto) | Sim | Sim, sem major bump — DoS (complexidade O(n²) no parser de endereço) e bypasses de validação de domínio |
+| `fast-uri` (via Prisma) | Alta | Não (transitivo) | Sim | Sim, sem major bump — SSRF/confusão de host |
+| `sharp` (via `@napi-rs/canvas`/pipeline de imagem) | Alta | Não (transitivo) | Sim | Sim, sem major bump — vulnerabilidades em `libheif` |
+| `mysql2`, `@prisma/config`, `deepmerge-ts`, `prisma` | Alta | `prisma` direto; demais transitivos (toolchain Prisma) | `prisma`/`@prisma/config` não são runtime de produção real (CLI); `mysql2`/`deepmerge-ts` são transitivos do driver Prisma, não usados (o projeto usa `@prisma/adapter-pg`/Postgres) | Só com major bump (`prisma@6.19.3`, downgrade de major — não recomendado às cegas) |
+| `exceljs` | Moderada | Sim (direto) | Sim | Só com major bump (`exceljs@3.4.0`) |
+| `uuid` (via `exceljs`) | Moderada | Não (transitivo) | Sim | Só com major bump (via `exceljs`) |
+| `baseline-browser-mapping` | Moderada | Não (transitivo, toolchain) | Não (build-time) | Sim, sem major bump |
+
+**Conclusão:** a vulnerabilidade crítica está em `next` (dependência direta, runtime de produção) e tem fix disponível sem breaking change — atualizar para `>=16.3.3` é recomendado antes de produção, mas **não foi aplicado nesta sessão** (alteração de dependências fora do escopo autorizado da Fase 5). As vulnerabilidades altas em `nodemailer`, `fast-uri` e `sharp` também têm fix sem major bump. As relacionadas a `prisma`/`mysql2`/`@prisma/config`/`deepmerge-ts`/`exceljs`/`uuid` exigem bump de major version — não corrigidas automaticamente por decisão de escopo (proibição de alterar dependências nesta fase).
 
 ## 26. Problemas conhecidos
 
 1. Rate limiting de login ainda não implementado (P1 herdado da auditoria antiga, ainda válido).
 2. Dois fluxos de upload/extração paralelos com arquiteturas diferentes (síncrono antigo vs. fila assíncrona nova) — ver seção 16.
-3. `npm audit`: 13 vulnerabilidades, revisão específica recomendada antes de produção (majoritariamente não-bloqueante).
+3. `npm audit`: vulnerabilidade crítica em `next` (runtime, direto, fix sem major disponível) — recomenda-se atualizar antes de produção. Ver tabela da seção 25.
 4. Migrations nunca validadas contra o banco real a partir desta sessão remota (seção 28) — bloqueador para decidir integração final.
+5. `scripts/document-worker.ts`: `terminateOcrWorker()` só é chamado no encerramento gracioso do loop principal (`SIGTERM`/`SIGINT`); se `main()` rejeitar de forma não tratada (linha 82, `.catch`), o processo Tesseract iniciado por `getWorker()` não é finalizado explicitamente antes do `process.exitCode = 1` — potencial worker órfão em caso de crash fatal do processo Node (não de um job individual, que já tem tratamento de erro próprio). Não corrigido nesta fase (fora do escopo — nenhuma alteração de código de OCR foi autorizada).
+6. `scripts/document-worker.ts`: não há timeout explícito por chamada de `worker.recognize()`/OCR — uma chamada travada só é recuperada pelo mecanismo de lease de 10 minutos (linha 77), que devolve o job para a fila, mas não interrompe o processo OCR em execução. Documentado como observação de robustez, não como bug ativo.
 
 ## 27. Conclusões obsoletas das auditorias anteriores
 
@@ -245,33 +269,57 @@ Novas em `.env.example` frente à versão antiga: `PRIVATE_STORAGE_ROOT`, `APP_U
 
 Os dois documentos antigos continuam preservados (não apagados), na branch `claude/modest-mccarthy-s7gkqc`, como registro histórico de quando a análise foi feita sobre a versão incompleta.
 
-## 28. Estado do banco real
+## 28. Estado do banco real e smoke tests (COMANDOS PARA EXECUÇÃO LOCAL)
 
-**Não validado nesta sessão.** Esta é uma sessão remota (sandbox isolada) sem acesso à `DATABASE_URL` do ambiente Docker real onde a aplicação roda. Os seguintes itens pedidos (seções 4-8 da solicitação) **não puderam ser executados a partir daqui**:
+**Não validado nesta sessão, em nenhuma das duas fases (4 e 5).** Esta é uma sessão remota (sandbox isolada), sem daemon Docker (`/var/run/docker.sock` inexistente, reconfirmado na Fase 5) e sem acesso à `DATABASE_URL` real de produção. Por instrução explícita do usuário: **nenhum resultado de banco/smoke test foi inventado ou inferido** — os itens abaixo continuam **NÃO VALIDADO** / **NÃO EXECUTADO**, com os comandos exatos, somente leitura, para você rodar localmente.
 
-- `npx prisma migrate status`
-- Comparação schema × banco real (tabelas/colunas/tipos/PK/FK/unique/index/enum/default/nullable/cascade)
-- Estado da tabela `_prisma_migrations` (aplicadas/pendentes/divergentes/hash incompatível)
-- Smoke test funcional contra ambiente real
-
-**Comando exato para você rodar localmente** (na máquina onde o Docker roda, dentro do container ou com a `DATABASE_URL` do ambiente exportada), só leitura, nada destrutivo:
+### 28.1 Migrations e integridade (`_prisma_migrations`)
 
 ```cmd
 docker exec -it extrato-mensal-web npx prisma migrate status
 ```
 
-ou, fora do container, com a mesma `DATABASE_URL` de produção exportada no shell:
+ou, fora do container, com a `DATABASE_URL` real exportada no shell:
 
 ```cmd
 npx prisma migrate status
 ```
 
-Isso vai dizer exatamente:
-- se as 28 migrations novas já estão aplicadas no banco real (esperado, já que foi de lá que o container rodando foi construído — mas **isso é inferência, não confirmação**);
-- se há qualquer divergência de hash;
-- se há migration "não encontrada no diretório" (aplicada no banco mas ausente no `prisma/migrations` local, o que não deveria acontecer já que recuperamos tudo do mesmo checkout, mas vale confirmar).
+Consulta somente leitura direto na tabela de controle (rodar via `psql` ou cliente equivalente, apontando para o banco real):
 
-Me cola a saída assim que rodar, e eu sigo com a análise (seções 6/7/8/10 da sua solicitação) a partir do resultado real, sem supor nada.
+```sql
+SELECT migration_name, started_at, finished_at, rolled_back_at, applied_steps_count
+FROM "_prisma_migrations"
+ORDER BY started_at;
+```
+
+Isso confirma: se as 28 migrations novas estão aplicadas; se há divergência de hash/checksum (migration alterada depois de aplicada); se há migration "não encontrada no diretório" (aplicada no banco, ausente em `prisma/migrations` local); se há `rolled_back_at` preenchido (rollback parcial) ou `applied_steps_count` divergente do esperado.
+
+### 28.2 Comparação schema × banco real
+
+Sem alterar nada, gerar um diff somente leitura entre o schema Prisma e a estrutura real do banco:
+
+```cmd
+npx prisma migrate diff --from-url "%DATABASE_URL%" --to-schema-datamodel prisma/schema.prisma --script
+```
+
+(o `--script` gera apenas o SQL que *seria* necessário para igualar o banco ao schema — não executa nada. Se a saída vier vazia, banco e schema estão idênticos.) Priorizar na leitura manual do resultado, se houver diferenças: `User`, `Session`, `Role`, `Permission`, tabelas de `pagamentos`/`fornecedores`, `alimentação`, Vale Transporte, aprovação, OCR (`DocumentExtractionJob`, `DocumentExtraction`), rateio, uploads/documentos.
+
+### 28.3 Smoke tests (Etapas 17-28) — roteiro local, sem dados reais
+
+Rodar com o ambiente Docker local do usuário, **nunca contra produção real com dados reais de colaboradores**:
+
+1. **Login/Logout/RBAC/rota protegida:** logar com um usuário de cada papel (ADMIN/REQUESTER/ANALYST/APPROVER/FINANCE/CONTROLLER); confirmar redirecionamento para `/login` ao acessar rota protegida sem sessão; confirmar `/api/*` retorna 401/403 (não HTML) para chamadas sem sessão/sem permissão.
+2. **Usuários:** tentar operações de `/api/users` com um usuário sem `users.create`/`users.delete`/`roles.manage` — confirmar 403 no backend, não apenas item de menu escondido no frontend.
+3. **Contas a Pagar / Alimentação:** usar apenas fixtures sintéticas (nunca arquivo real de colaboradores) — reaproveitar `tests/fixtures/Mascara_Vale_Transporte.xlsx` (já confirmado sintético) para os testes de Vale Transporte; para Alimentação, gerar uma planilha sintética equivalente antes de testar upload/lote/competência/resumo/download de máscara.
+4. **Vale Transporte:** confirmar em `/pagamentos/vale-transporte` que o `Summary` não aparece mais no topo (efeito do PR #1); estado vazio deve mostrar "Nenhum arquivo processado nesta competência." com Empresas:0/Colaboradores:0/Departamentos:0/Valor total:R$0,00; com a fixture sintética carregada, confirmar números reais recalculados e `Summary` no final da página, após a seção "Rateio".
+5. **Aprovação:** criação → pendente → aprovação/rejeição/correção → conclusão, validando RBAC em cada transição de estado.
+6. **Fornecedores:** leitura, filtros, CRUD com permissão adequada; **nunca excluir um fornecedor real**.
+7. **Exportações:** conferir que os dados exportados batem com os dados exibidos na UI, e que os filtros aplicados na tela são respeitados no arquivo exportado; se houver divergência, documentar, não corrigir automaticamente.
+8. **Logs/console:** observar durante todo o roteiro acima por 500/401/403/404 inesperados, erros de hidratação, warnings do React, exceções do Prisma, erros do worker de OCR, promise rejections não tratadas, stack traces expostos na resposta HTTP (nenhuma API deveria devolver `technicalStack` ao cliente — conferir especificamente as respostas de erro do fluxo de extração de documentos, já que `errorMessage`/`technicalStack` são persistidos no banco pelo `document-worker.ts`, seção 26 item 5/6).
+9. **Integridade pós-teste:** verificar registros órfãos, FKs quebradas, sessões expiradas não limpas, uploads incompletos, duplicatas, transações parciais — **apenas relatar, nunca limpar automaticamente**.
+
+Me cole a saída de cada comando/roteiro assim que rodar, e eu sigo a análise a partir do resultado real, sem supor nada.
 
 ## 29. Plano para integração com master
 
@@ -285,11 +333,37 @@ Me cola a saída assim que rodar, e eu sigo com a análise (seções 6/7/8/10 da
 ### Estratégia recomendada
 **Concordo com sua preferência**: manter como **um único PR de recuperação** (`recuperacao/codigo-completo` → `master`), não fatiar em dezenas de PRs. Os módulos são interdependentes de verdade (RBAC é pré-requisito de tudo; Contas a Pagar depende de entidades administrativas e colaboradores; OCR depende do storage privado) — decompor artificialmente aumentaria o risco de deixar o sistema num estado inconsistente entre PRs, sem ganhar nada em segurança real, já que não há conflito de merge a resolver.
 
-Ordem recomendada antes de abrir esse PR:
-1. Você mescla o PR #1 (`ajuste/vale-transporte-resumo` → `recuperacao/codigo-completo`) depois de revisar.
-2. Você roda `prisma migrate status` no ambiente real (seção 28) e me passa o resultado.
-3. Só então abrimos o PR único `recuperacao/codigo-completo` → `master`, com este documento e o `RELATORIO-RECUPERACAO-VS-MASTER.md` linkados na descrição.
+### Gate de prontidão para master (Fase 5, Etapa 32)
+
+| Gate | Critério | Status |
+|---|---|---|
+| Lint | PASS | ✅ **PASS** |
+| TypeScript | PASS | ✅ **PASS** |
+| Build | PASS | ✅ **PASS** |
+| Testes | PASS | ✅ **PASS** (38/38) |
+| Prisma validate | PASS | ✅ **PASS** |
+| Migrations íntegras | Confirmado contra o banco real | ⛔ **NÃO VALIDADO** (sem acesso a Docker/DB nesta sessão — seção 28.1) |
+| Banco × schema compatível | Confirmado contra o banco real | ⛔ **NÃO VALIDADO** (seção 28.2) |
+| Smoke test | PASS | ⛔ **NÃO EXECUTADO** (seção 28.3) |
+| RBAC validado | Backend, não só frontend | ✅ **VALIDADO** (código-fonte, seção 10 e 25) |
+| Nenhum segredo versionado | Confirmado | ✅ **CONFIRMADO** |
+| Nenhuma regressão crítica encontrada | Confirmado | ✅ **NENHUMA ENCONTRADA** (no que pôde ser validado por código/build/testes automatizados) |
+
+**Veredito: gate NÃO totalmente satisfeito.** 3 dos 11 critérios (migrations íntegras, banco×schema compatível, smoke test) dependem de acesso ao banco de dados e ambiente real, que esta sessão remota não tem. Por essa razão, **o PR único `recuperacao/codigo-completo` → `master` não foi aberto nesta fase**, conforme a própria regra da solicitação: só abrir se todos os gates estiverem aprovados.
+
+### Ordem para destravar o PR final
+1. ~~Mesclar PR #1~~ — **feito** (commit `8535f61`, Fase 5 Etapa 4).
+2. Rodar os comandos da seção 28.1/28.2 (`prisma migrate status`, diff schema×banco, query em `_prisma_migrations`) no ambiente real e colar a saída aqui.
+3. Rodar o roteiro de smoke test da seção 28.3 no ambiente real (com fixtures sintéticas) e colar os resultados.
+4. Com os 3 gates restantes fechados, abro o PR único `recuperacao/codigo-completo` → `master`, com este documento e o `RELATORIO-RECUPERACAO-VS-MASTER.md` linkados na descrição — e paro ali, aguardando sua revisão (sem merge automático, sem deploy).
 
 ### Possibilidade de rollback
-- A tag `recovery-baseline-2026-09` (seção 3 da solicitação anterior) marca o commit exato do estado recuperado — serve como ponto de retorno caso algo dê errado depois do merge. **Ainda preciso que você rode o push dela** (ver observação abaixo — o push de tag foi bloqueado nesta sessão).
-- `master` atual também continua intacto e recuperável a qualquer momento (`git checkout master`), já que nada foi mesclado nele ainda.
+- A tag `recovery-baseline-2026-09` marca o commit `762fd08` (estado recuperado antes do merge do PR #1) — serve como ponto de retorno caso algo dê errado. **O push da tag para o remoto continua bloqueado nesta sessão (HTTP 403, reconfirmado na Fase 5)** — não é um problema do projeto, é uma restrição desta sessão remota. Comando exato para você rodar localmente:
+  ```
+  git fetch origin recuperacao/codigo-completo
+  git tag -a recovery-baseline-2026-09 762fd08801ea9133554d85376ff570ebec8685ad -m "Baseline de recuperação antes do merge do PR #1"
+  git push origin recovery-baseline-2026-09
+  ```
+  (a tag já existe localmente nesta sessão apontando para o commit correto — não foi recriada em outro commit para contornar o bloqueio, conforme instruído.)
+- Se for necessário reverter depois do merge do PR #1: `git revert -m 1 8535f61` em `recuperacao/codigo-completo`, ou `git reset --hard 762fd08` seguido de force-push **somente com autorização explícita sua**, já que é uma operação destrutiva.
+- `master` atual continua intacto e recuperável a qualquer momento (`git checkout master`), já que nada foi mesclado nele ainda.
