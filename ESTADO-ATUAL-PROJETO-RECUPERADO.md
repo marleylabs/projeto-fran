@@ -2,9 +2,11 @@
 
 > Este documento substitui `AUDITORIA-COMPLETA-PROJETO.md` e `PLANO-RETOMADA-FASE-2.md` como referência principal. Aqueles documentos não foram apagados (ficam preservados no histórico, na branch `claude/modest-mccarthy-s7gkqc`), mas descrevem uma versão do sistema muito mais limitada do que a que realmente estava em produção. Ver seção 27.
 
-Branch auditada: **`recuperacao/codigo-completo`** (HEAD `8535f61`)
+Branch auditada: **`recuperacao/codigo-completo`** (HEAD `0b352c7`)
 
 > **Atualização — Fase 5 (2026-09-16):** PR #1 (`ajuste/vale-transporte-resumo` → `recuperacao/codigo-completo`, mover `<Summary maps={maps}/>` para o final da página de Vale Transporte) foi mesclado via commit `8535f61`. Suíte de validação completa (lint, typecheck, build, testes) re-executada após o merge — todas PASS. Auditoria de dependências (`npm audit`) atualizada na seção 25. Validação de banco de dados real e smoke tests em ambiente com Docker/PostgreSQL **não puderam ser executados nesta sessão remota** (sem acesso a Docker/`DATABASE_URL` de produção) — ver seção 28 para os comandos exatos a rodar localmente.
+>
+> **Atualização — Fase 6 (2026-09-16), homologação:** contagem exata de models/migrations corrigida por leitura estática do schema/repositório: **43 models, 20 enums** (estimativa anterior de "~37/19" era aproximada) e **31 migrations** no repositório (estimativa anterior de "~28" era aproximada) — lista completa em `RELATORIO-HOMOLOGACAO-AMBIENTE-REAL.md`, seção 6. Suíte de validação (lint/typecheck/build/test/prisma validate) re-executada novamente sobre o HEAD atual — todas PASS. Tentativa de publicar a tag `recovery-baseline-2026-09` no remoto **repetida e novamente bloqueada** (HTTP 403 — restrição desta sessão remota, tag continua correta localmente no SHA `762fd08`). Banco real, migrations aplicadas e smoke tests **continuam NÃO VALIDADOS** — relatório dedicado em `RELATORIO-HOMOLOGACAO-AMBIENTE-REAL.md` com os comandos exatos. **Decisão desta fase: PR `recuperacao/codigo-completo → master` NÃO foi aberto** (gates de banco/smoke ainda pendentes). Plano de correção de dependências runtime documentado separadamente na seção 25.1, propositalmente **não** executado nesta branch/fase.
 
 ---
 
@@ -243,6 +245,28 @@ Suíte completa pós-merge (Fase 5, Etapa 5): `npm ci` PASS · `prisma validate`
 
 **Conclusão:** a vulnerabilidade crítica está em `next` (dependência direta, runtime de produção) e tem fix disponível sem breaking change — atualizar para `>=16.3.3` é recomendado antes de produção, mas **não foi aplicado nesta sessão** (alteração de dependências fora do escopo autorizado da Fase 5). As vulnerabilidades altas em `nodemailer`, `fast-uri` e `sharp` também têm fix sem major bump. As relacionadas a `prisma`/`mysql2`/`@prisma/config`/`deepmerge-ts`/`exceljs`/`uuid` exigem bump de major version — não corrigidas automaticamente por decisão de escopo (proibição de alterar dependências nesta fase).
 
+### 25.1 Plano separado — `fix/security-runtime-deps` (Fase 6, Etapa 29)
+
+**Decisão explícita da Fase 6: pronto-para-master (integridade do código recuperado) e pronto-para-deploy (ausência de vulnerabilidade runtime conhecida) são gates independentes.** Esta seção documenta o plano; **nenhuma dependência foi alterada nesta fase/branch** para não misturar a atualização de segurança com o baseline de recuperação.
+
+**Versões atuais instaladas** (confirmado via `npm ls` nesta sessão): `next@16.3.1`, `nodemailer@9.0.5`, `fast-uri@3.1.5` (transitivo de `nodemailer`), `sharp@0.35.3` (transitivo de `next`).
+
+Quando autorizado, criar a branch `fix/security-runtime-deps` a partir de `recuperacao/codigo-completo` (ou de `master`, depois que o PR de recuperação for mesclado — a decidir no momento) e, nessa ordem:
+
+1. **Sem major bump** (prioridade, resolve a crítica e as altas de maior exposição):
+   - `next` → `>=16.3.3` (corrige RCE não autenticado em servidores Windows e na API de otimização de imagem AVIF — **crítica**).
+   - `nodemailer` → `>=9.1.0` ou superior compatível (corrige DoS O(n²) no parser de endereço e bypasses de validação de domínio — **alta/moderada**).
+   - `fast-uri` (via `nodemailer`) → `>=3.1.6` (corrige SSRF/confusão de host — **alta**; deve resolver automaticamente ao atualizar `nodemailer`, confirmar após).
+   - `sharp` (via `next`, otimização de imagem) → `>=0.35.4` (corrige vulnerabilidades em `libheif` — **alta**; deve resolver automaticamente ao atualizar `next`, confirmar após).
+   - Validar com `npm audit --omit=dev` que a crítica e essas altas somem zero após o bump.
+2. **Com major bump, tratar separadamente e com mais cautela** (não incluir no mesmo PR do item 1, para isolar risco de regressão):
+   - `prisma`/`@prisma/config`/`mysql2`/`deepmerge-ts`: downgrade major (`prisma@6.19.3`) não é aceitável (perderia funcionalidades da v7 já em uso pelo schema atual de 43 models); a alternativa correta é aguardar um patch da Prisma 7.x que resolva a árvore de dependência do `mysql2`/`deepmerge-ts` sem downgrade, ou avaliar se `mysql2` é de fato necessário em runtime (o projeto usa `@prisma/adapter-pg`, não MySQL — investigar se essa dependência pode ser tornada opcional/removida do bundle de produção).
+   - `exceljs`/`uuid`: bump major de `exceljs` para `3.4.0` — exige teste de regressão manual nos fluxos de exportação/importação XLSX (Alimentação, Vale Transporte, template de máscara) antes de aceitar, pelo risco de mudança de API entre majors.
+3. Cada etapa acima: `npm audit --omit=dev` antes/depois, mais a suíte completa (`lint`/`typecheck`/`build`/`test`) e, no mínimo, smoke test manual dos fluxos de exportação/e-mail (reset de senha) e upload/OCR, já que são as áreas tocadas pelos pacotes atualizados.
+4. **Nunca usar `npm audit fix --force`** — cada bump deve ser deliberado e testado individualmente, não em lote.
+
+Esse plano só deve virar branch/PR de fato quando a recuperação (`recuperacao/codigo-completo → master`) estiver resolvida, para não competir por atenção de revisão com o baseline. Enquanto a vulnerabilidade crítica em `next` não for corrigida, **o sistema permanece "pronto para master" possivelmente SIM, mas "pronto para deploy" sempre NÃO.**
+
 ## 26. Problemas conhecidos
 
 1. Rate limiting de login ainda não implementado (P1 herdado da auditoria antiga, ainda válido).
@@ -328,7 +352,7 @@ Me cole a saída de cada comando/roteiro assim que rodar, e eu sigo a análise a
 
 ### Riscos
 - Nenhum conflito de merge esperado a nível de Git: `master` não recebeu nenhum commit desde que `recuperacao/codigo-completo` foi criada a partir dele, então o merge/PR deve ser "fast-forward-like" (sem divergência real para resolver).
-- O risco real não é o merge do Git — é o **banco de dados**: 28 migrations precisam ser aplicadas onde quer que `master` vá rodar depois. Isso só é seguro depois da confirmação pedida na seção 28.
+- O risco real não é o merge do Git — é o **banco de dados**: 31 migrations (contagem exata, ver `RELATORIO-HOMOLOGACAO-AMBIENTE-REAL.md` seção 6) precisam ser aplicadas onde quer que `master` vá rodar depois. Isso só é seguro depois da confirmação pedida na seção 28 e no relatório de homologação da Fase 6.
 
 ### Estratégia recomendada
 **Concordo com sua preferência**: manter como **um único PR de recuperação** (`recuperacao/codigo-completo` → `master`), não fatiar em dezenas de PRs. Os módulos são interdependentes de verdade (RBAC é pré-requisito de tudo; Contas a Pagar depende de entidades administrativas e colaboradores; OCR depende do storage privado) — decompor artificialmente aumentaria o risco de deixar o sistema num estado inconsistente entre PRs, sem ganhar nada em segurança real, já que não há conflito de merge a resolver.
@@ -351,11 +375,18 @@ Me cole a saída de cada comando/roteiro assim que rodar, e eu sigo a análise a
 
 **Veredito: gate NÃO totalmente satisfeito.** 3 dos 11 critérios (migrations íntegras, banco×schema compatível, smoke test) dependem de acesso ao banco de dados e ambiente real, que esta sessão remota não tem. Por essa razão, **o PR único `recuperacao/codigo-completo` → `master` não foi aberto nesta fase**, conforme a própria regra da solicitação: só abrir se todos os gates estiverem aprovados.
 
+### Fase 6 — reconfirmação (2026-09-16)
+
+Os mesmos 3 gates foram testados novamente e continuam bloqueados pela mesma causa (sessão remota sem Docker/`DATABASE_URL`): `prisma migrate status`, `_prisma_migrations` e o smoke test funcional não puderam ser executados. Suíte de código (lint/typecheck/build/test/prisma validate) re-executada com sucesso sobre o HEAD `0b352c7`. Relatório dedicado com todos os comandos exatos e o detalhamento por área: **`RELATORIO-HOMOLOGACAO-AMBIENTE-REAL.md`**. Decisão mantida: **PR para master não aberto.**
+
+Distinção explícita desta fase, que não existia formalmente antes: **"pronto para master" (código recuperado íntegro) e "pronto para deploy" (sem vulnerabilidade runtime crítica conhecida) são gates separados.** Mesmo quando os 3 bloqueios de banco/smoke forem resolvidos e o PR para master puder ser aberto e mesclado, o deploy continua bloqueado até a vulnerabilidade crítica em `next` (e as altas em runtime) serem corrigidas — plano em separado na seção 25.1, propositalmente não executado nesta fase para não misturar as duas frentes.
+
 ### Ordem para destravar o PR final
 1. ~~Mesclar PR #1~~ — **feito** (commit `8535f61`, Fase 5 Etapa 4).
-2. Rodar os comandos da seção 28.1/28.2 (`prisma migrate status`, diff schema×banco, query em `_prisma_migrations`) no ambiente real e colar a saída aqui.
-3. Rodar o roteiro de smoke test da seção 28.3 no ambiente real (com fixtures sintéticas) e colar os resultados.
-4. Com os 3 gates restantes fechados, abro o PR único `recuperacao/codigo-completo` → `master`, com este documento e o `RELATORIO-RECUPERACAO-VS-MASTER.md` linkados na descrição — e paro ali, aguardando sua revisão (sem merge automático, sem deploy).
+2. Rodar os comandos de `RELATORIO-HOMOLOGACAO-AMBIENTE-REAL.md` (seções 3-5: `prisma migrate status`, `_prisma_migrations`, diff schema×banco) no ambiente real e colar a saída.
+3. Rodar o roteiro de smoke test do mesmo relatório (seções 7-17) no ambiente real (com fixtures sintéticas) e colar os resultados.
+4. Com os 3 gates restantes fechados, abro o PR único `recuperacao/codigo-completo` → `master`, com este documento, o `RELATORIO-RECUPERACAO-VS-MASTER.md` e o `RELATORIO-HOMOLOGACAO-AMBIENTE-REAL.md` linkados na descrição — e paro ali, aguardando sua revisão (sem merge automático, sem deploy).
+5. Deploy continua bloqueado até o plano da seção 25.1 (dependências runtime) ser executado e validado separadamente, independentemente do resultado do passo 4.
 
 ### Possibilidade de rollback
 - A tag `recovery-baseline-2026-09` marca o commit `762fd08` (estado recuperado antes do merge do PR #1) — serve como ponto de retorno caso algo dê errado. **O push da tag para o remoto continua bloqueado nesta sessão (HTTP 403, reconfirmado na Fase 5)** — não é um problema do projeto, é uma restrição desta sessão remota. Comando exato para você rodar localmente:
