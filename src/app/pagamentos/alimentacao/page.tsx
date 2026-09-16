@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CorporateHeader } from "@/components/CorporateHeader";
@@ -7,6 +6,7 @@ import {
   Button,
   DeletionModal,
   FileInput,
+  PageHeader,
   buttonClassName,
   useToast,
   type FileInputStatus,
@@ -1614,21 +1614,12 @@ export default function FoodAccountsPayablePage() {
     <div className="flex flex-1 flex-col">
       <CorporateHeader currentUserEmail={email} onLogout={logout} />
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
-        <div>
-          <Link
-            href="/pagamentos"
-            className="text-sm font-semibold text-primary"
-          >
-            ← Contas a pagar
-          </Link>
-          <h1 className="mt-4 text-2xl font-bold">
-            Alimentação por fornecedor
-          </h1>
-          <p className="text-sm text-text-muted">
-            Competência → estado → fornecedor → colaboradores → obrigação
-            individual.
-          </p>
-        </div>
+        <PageHeader
+          backHref="/pagamentos"
+          backLabel="Contas a pagar"
+          title="Alimentação por fornecedor"
+          description="Competência → estado → fornecedor → colaboradores → obrigação individual."
+        />
         <section className="card p-5">
           <label className="flex max-w-sm flex-col gap-1 text-sm">
             <span>Competência</span>

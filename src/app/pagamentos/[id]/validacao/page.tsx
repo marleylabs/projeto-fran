@@ -1,8 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Button } from "@/components/ui";
+import { Badge, Button, EmptyState, PageHeader } from "@/components/ui";
 
 type Payload = {
   record: {
@@ -105,29 +104,23 @@ export default function ValidationPage() {
   const low = confidence < 0.8;
   return (
     <main className="max-w-[1500px] mx-auto p-4 sm:p-6 flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <Link href={`/pagamentos/${id}`} className="text-sm text-primary">
-            ← Voltar ao registro
-          </Link>
-          <h1 className="text-2xl font-bold">
-            Validação · {data?.record.identifier}
-          </h1>
-          <p className="text-sm text-text-muted">{data?.record.description}</p>
-        </div>
-        {data?.current && (
-          <span
-            className={`rounded-full px-3 py-1 text-sm font-semibold ${low ? "bg-warning/15 text-warning" : "bg-success/15 text-success"}`}
-          >
+      <PageHeader
+        backHref={`/pagamentos/${id}`}
+        backLabel="Voltar ao registro"
+        eyebrow="Validação"
+        title={data?.record.identifier ?? "Carregando…"}
+        description={data?.record.description}
+        actions={data?.current && (
+          <Badge tone={low ? "warning" : "success"}>
             Confiança {Math.round(confidence * 100)}%
-          </span>
+          </Badge>
         )}
-      </div>
+      />
       {!data?.current ? (
-        <div className="card p-10 text-center text-text-muted">
-          Nenhuma extração disponível. Aguarde o worker ou reprocese o
-          documento.
-        </div>
+        <EmptyState
+          title="Nenhuma extração disponível"
+          description="Aguarde o worker de OCR concluir o processamento, ou reprocese o documento a partir do registro."
+        />
       ) : (
         <div className="grid lg:grid-cols-2 gap-4 min-h-[70vh]">
           <section className="card overflow-hidden flex flex-col">
@@ -230,7 +223,7 @@ export default function ValidationPage() {
                 </span>
               </label>
             )}
-            {error && <p className="text-sm text-danger">{error}</p>}
+            {error && <p className="rounded-md border border-error/30 bg-error/5 p-3 text-sm text-error">{error}</p>}
             <div className="mt-auto flex flex-wrap justify-end gap-2">
               <Button
                 type="button"

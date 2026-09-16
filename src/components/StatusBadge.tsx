@@ -1,16 +1,11 @@
-import clsx from "clsx";
+import { Badge, type BadgeTone } from "@/components/ui";
 
-const STYLES: Record<string, string> = {
-  Trabalhando: "bg-green-100 text-green-800 border-green-300",
-  Férias: "bg-blue-100 text-blue-800 border-blue-300",
-  Afastado: "bg-amber-100 text-amber-800 border-amber-300",
+const TONES: Record<string, BadgeTone> = {
+  Trabalhando: "success",
+  Férias: "info",
+  Afastado: "warning",
 };
 
 export function StatusBadge({ situacao }: { situacao: string }) {
-  const style = STYLES[situacao] ?? "bg-surface-soft text-text border-border";
-  return (
-    <span className={clsx("inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap", style)}>
-      {situacao || "—"}
-    </span>
-  );
+  return <Badge tone={TONES[situacao] ?? "neutral"}>{situacao || "—"}</Badge>;
 }

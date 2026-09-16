@@ -18,6 +18,7 @@ import { ExportButtons } from "@/components/ExportButtons";
 import { RecentUploads, type UploadSummary } from "@/components/RecentUploads";
 import { DuplicateUploadModal } from "@/components/DuplicateUploadModal";
 import { CorporateHeader } from "@/components/CorporateHeader";
+import { PageHeader } from "@/components/ui";
 
 type Stage = "idle" | "uploading" | "processing" | "error";
 
@@ -233,11 +234,7 @@ export function PayrollWorkspace() {
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col gap-6">
-        <div className="flex flex-col gap-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Contabilidade / Importações de folha</p>
-          <h1 className="text-2xl font-bold text-foreground">Extrato mensal</h1>
-          <p className="text-sm text-text-muted">Extração, conferência e consolidação de relatórios de folha de pagamento.</p>
-        </div>
+        <PageHeader eyebrow="Contabilidade / Importações de folha" title="Extrato mensal" description="Extração, conferência e consolidação de relatórios de folha de pagamento."/>
         {restoring && (
           <div className="flex-1 flex items-center justify-center py-16 text-sm text-text-muted">Carregando...</div>
         )}
@@ -260,7 +257,7 @@ export function PayrollWorkspace() {
             )}
 
             {stage === "error" && errorMessage && (
-              <div className="max-w-md rounded-md bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3">
+              <div className="max-w-md rounded-md border border-error/30 bg-error/5 text-error text-sm px-4 py-3">
                 {errorMessage}
               </div>
             )}
@@ -272,7 +269,7 @@ export function PayrollWorkspace() {
         {extrato && extrato.colaboradores.length > 0 && (
           <>
             {extrato.avisos.length > 0 && (
-              <details className="card p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200">
+              <details className="card p-4 text-sm text-warning bg-warning-soft border border-warning/30">
                 <summary className="cursor-pointer font-medium">
                   {extrato.avisos.length} aviso(s) de leitura — revisar antes de exportar
                 </summary>
@@ -318,13 +315,13 @@ export function PayrollWorkspace() {
 
         {sintetico && sintetico.linhas.length > 0 && (
           <>
-            <div className="card p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200">
+            <div className="card p-4 text-sm text-warning bg-warning-soft border border-warning/30">
               Formato experimental: o suporte a &quot;Relatório Sintético&quot; ainda não foi validado contra um PDF real deste
               layout. Revise os valores com atenção antes de usar para folha oficial.
             </div>
 
             {sintetico.avisos.length > 1 && (
-              <details className="card p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200">
+              <details className="card p-4 text-sm text-warning bg-warning-soft border border-warning/30">
                 <summary className="cursor-pointer font-medium">
                   {sintetico.avisos.length} aviso(s) de leitura — revisar antes de exportar
                 </summary>
@@ -354,7 +351,7 @@ export function PayrollWorkspace() {
                     value={sinteticoBusca}
                     onChange={(e) => setSinteticoBusca(e.target.value)}
                     placeholder="Buscar colaborador"
-                    className="rounded-md border border-border px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                    className="input input-bordered input-sm"
                   />
                 </label>
               </div>
