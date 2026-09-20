@@ -20,8 +20,8 @@ export const NAVIGATION_MODULES: NavigationModule[] = [
   },
   {
     id: "accounts-payable",
-    label: "Contas a pagar",
-    description: "Documentos e pagamentos",
+    label: "Despesas",
+    description: "Alimentação, Vale Transporte e Treinamentos",
     href: "/pagamentos",
     matchPaths: ["/pagamentos"],
     availability: "available",
@@ -40,6 +40,14 @@ export const NAVIGATION_MODULES: NavigationModule[] = [
     description: "Entidades e favorecidos administrativos",
     href: "/cadastros",
     matchPaths: ["/cadastros"],
+    availability: "available",
+  },
+  {
+    id: "trainings",
+    label: "Treinamentos",
+    description: "Catálogo de treinamentos por fornecedor",
+    href: "/treinamentos",
+    matchPaths: ["/treinamentos"],
     availability: "available",
   },
   {

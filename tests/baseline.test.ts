@@ -743,9 +743,10 @@ test("Contas a Pagar usa cards laterais compactos, acessíveis e responsivos", a
     readFile(new URL("../src/app/pagamentos/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/components/ExpenseSectionCard.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(page, /UtensilsCrossed/); assert.match(page, /BusFront/); assert.match(page, /PackagePlus/);
-  assert.match(page, /lg:grid-cols-2/); assert.match(page, /\/pagamentos\/alimentacao/); assert.match(page, /\/pagamentos\/vale-transporte/);
+  assert.match(page, /UtensilsCrossed/); assert.match(page, /BusFront/); assert.match(page, /GraduationCap/);
+  assert.match(page, /lg:grid-cols-2/); assert.match(page, /\/pagamentos\/alimentacao/); assert.match(page, /\/pagamentos\/vale-transporte/); assert.match(page, /\/pagamentos\/treinamentos/);
   assert.match(card, /card card-side/); assert.match(card, /sm:flex-row/); assert.match(card, /h-20 w-full/); assert.match(card, /sm:w-\[7\.5rem\]/);
   assert.match(card, /hover:-translate-y-px/); assert.match(card, /focus-visible:ring-2/); assert.match(card, /aria-disabled="true"/);
   assert.doesNotMatch(`${page}\n${card}`, /🍽️|🚌|https?:\/\//);
 });
+

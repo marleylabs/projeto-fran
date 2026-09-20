@@ -4,11 +4,11 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import clsx from "clsx";
-import { LayoutDashboard, Wallet, Calculator, Building2, Settings, Menu, LogOut, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, Wallet, Calculator, Building2, Settings, Menu, LogOut, GraduationCap, type LucideIcon } from "lucide-react";
 import { NAVIGATION_MODULES } from "@/modules/core/navigation/moduleRegistry";
 
 type SessionUser = { email: string; name: string; roles: string[] };
-const glyphs: Record<string, LucideIcon> = { "accounts-payable": Wallet, accounting: Calculator, "master-data": Building2, administration: Settings, dashboard: LayoutDashboard };
+const glyphs: Record<string, LucideIcon> = { "accounts-payable": Wallet, accounting: Calculator, "master-data": Building2, administration: Settings, dashboard: LayoutDashboard, trainings: GraduationCap };
 const isActive=(pathname:string,paths:string[]=[])=>paths.some(path=>pathname===path||(path!=="/"&&pathname.startsWith(`${path}/`)));
 const initials=(value:string)=>value.split(/\s+/).filter(Boolean).slice(0,2).map(part=>part[0]?.toLocaleUpperCase("pt-BR")).join("")||"U";
 

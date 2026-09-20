@@ -16,6 +16,7 @@ import { FoodMaReview } from "@/modules/accounts-payable/food/ui/FoodMaReview";
 import { FoodMaEditor } from "@/modules/accounts-payable/food/ui/FoodMaEditor";
 import type { CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { ManualEntrySection } from "@/components/ManualEntryLayout";
+import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList } from "@/components/allocation/AllocationCard";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { MultiDatePicker } from "@/components/MultiDatePicker";
 import { compareDateThenId, comparePtBr, sortedPtBr } from "@/lib/sorting/ptBr";
@@ -373,112 +374,56 @@ function MaRateio({
     sectors.set(sector, [...(sectors.get(sector) ?? []), row]);
   }
   return (
-    <article className="rounded-lg border border-border p-4">
-      <div className="flex flex-wrap justify-between gap-2">
-        <div>
-          <h3 className="font-bold">{batch.administrativeEntity.tradeName}</h3>
-          <p className="text-xs text-text-muted">
-            cadastro_id: {batch.administrativeEntity.id} · v{batch.version}
-            {batch.revisions?.length
-              ? ` · ${batch.revisions.length} revisão(ões)`
-              : ""}
-          </p>
-        </div>
+    <AllocationCard
+      title={batch.administrativeEntity.tradeName}
+      subtitle={
+        <>
+          cadastro_id: {batch.administrativeEntity.id} · v{batch.version}
+          {batch.revisions?.length ? ` · ${batch.revisions.length} revisão(ões)` : ""}
+        </>
+      }
+      badge={
         <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
           Pronto · Aguardando Financeiro
         </span>
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <div>
-          <span className="block text-xs text-text-muted">
-            Registros importados / válidos
-          </span>
-          <strong>
-            {batch.totalRows} / {batch.validRows}
-          </strong>
-        </div>
-        <div>
-          <span className="block text-xs text-text-muted">
-            Colaboradores únicos / setores
-          </span>
-          <strong>
-            {batch.allocations.length} / {sectors.size}
-          </strong>
-        </div>
-        <div>
-          <span className="block text-xs text-text-muted">
-            Refeições · valor unitário
-          </span>
-          <strong>
-            {batch.validRows} · {money(batch.unitPrice)}
-          </strong>
-        </div>
-        <div>
-          <span className="block text-xs text-text-muted">
-            Total {batch.locality} · obrigação
-          </span>
-          <strong>
-            {money(batch.totalAmount)} · {batch.financialRecord?.identifier}
-          </strong>
-        </div>
-      </div>
-      <div className="mt-4 grid gap-3">
+      }
+      indicators={[
+        { label: "Registros importados / válidos", value: `${batch.totalRows} / ${batch.validRows}` },
+        { label: "Colaboradores únicos / setores", value: `${batch.allocations.length} / ${sectors.size}` },
+        { label: "Refeições · valor unitário", value: `${batch.validRows} · ${money(batch.unitPrice)}` },
+        { label: `Total ${batch.locality} · obrigação`, value: `${money(batch.totalAmount)} · ${batch.financialRecord?.identifier}` },
+      ]}
+    >
+      <AllocationDepartmentList>
         {[...sectors.entries()]
           .sort(([a], [b]) => comparePtBr(a, b))
           .map(([sector, rows]) => {
-            const meals = rows.reduce(
-              (sum, row) => sum + Number(row.amount) / Number(row.unitPrice),
-              0,
-            );
-            const amount = rows.reduce(
-              (sum, row) => sum + Number(row.amount),
-              0,
-            );
+            const meals = rows.reduce((sum, row) => sum + Number(row.amount) / Number(row.unitPrice), 0);
+            const amount = rows.reduce((sum, row) => sum + Number(row.amount), 0);
             return (
-              <details key={sector} className="rounded-md border border-border">
-                <summary className="cursor-pointer list-none p-4">
-                  <strong>{sector}</strong>
-                  <span className="ml-3 text-sm text-text-muted">
-                    {
-                      new Set(
-                        rows.map(
-                          (row) => row.sourceIdentifier ?? row.employeeName,
-                        ),
-                      ).size
-                    }{" "}
-                    colaboradores · {meals} refeições · {money(amount)}
-                  </span>
-                </summary>
-                <div className="border-t border-border p-3">
-                  {sortedPtBr(
-                    rows,
-                    (row) => row.employeeName,
-                    (a, b) => comparePtBr(a.id, b.id),
-                  ).map((row) => (
-                    <div
-                      key={row.id}
-                      className="flex justify-between border-b py-2 text-sm"
-                    >
-                      <span>{row.employeeName}</span>
-                      <span>
-                        {Number(row.amount) / Number(row.unitPrice)} refeições ·{" "}
-                        {money(row.amount)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </details>
+              <AllocationDepartmentAccordion
+                key={sector}
+                name={sector}
+                summary={`${new Set(rows.map((row) => row.sourceIdentifier ?? row.employeeName)).size} colaboradores · ${meals} refeições · ${money(amount)}`}
+              >
+                {sortedPtBr(
+                  rows,
+                  (row) => row.employeeName,
+                  (a, b) => comparePtBr(a.id, b.id),
+                ).map((row) => (
+                  <div key={row.id} className="flex justify-between border-b py-2 text-sm">
+                    <span>{row.employeeName}</span>
+                    <span>
+                      {Number(row.amount) / Number(row.unitPrice)} refeições · {money(row.amount)}
+                    </span>
+                  </div>
+                ))}
+              </AllocationDepartmentAccordion>
             );
           })}
-      </div>
+      </AllocationDepartmentList>
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button
-          type="button"
-          onClick={beginEditing}
-          loading={loadingEditor}
-          variant="secondary"
-          size="sm"
-        >
+        <Button type="button" onClick={beginEditing} loading={loadingEditor} variant="secondary" size="sm">
           Editar rateio
         </Button>
         <a
@@ -498,7 +443,7 @@ function MaRateio({
         />
       )}
       <FoodDeletionControls batch={batch} reload={reload} />
-    </article>
+    </AllocationCard>
   );
 }
 
@@ -1616,7 +1561,7 @@ export default function FoodAccountsPayablePage() {
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
         <PageHeader
           backHref="/pagamentos"
-          backLabel="Contas a pagar"
+          backLabel="Despesas"
           title="Alimentação por fornecedor"
           description="Competência → estado → fornecedor → colaboradores → obrigação individual."
         />

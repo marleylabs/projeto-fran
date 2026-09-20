@@ -17,6 +17,8 @@ export const PERMISSIONS = {
   FINANCIAL_RECORDS_DELETE: "financial-records.delete",
   DOCUMENT_VALIDATION_READ: "document-validation.read",
   DOCUMENT_VALIDATION_MANAGE: "document-validation.manage",
+  TRAINING_READ: "training.read",
+  TRAINING_MANAGE: "training.manage",
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
