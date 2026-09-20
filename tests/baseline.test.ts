@@ -14,6 +14,10 @@ import { localityAllows, parseFoodCsv } from "../src/modules/accounts-payable/fo
 import { normalizeTransitVoucherCorrection, parseTransitVoucherCsv, parseTransitVoucherXlsx } from "../src/modules/accounts-payable/transit-voucher/processing";
 import { TRANSIT_VOUCHER_COLUMNS, TRANSIT_VOUCHER_SHEET_NAME, TRANSIT_VOUCHER_TABLE_NAME } from "../src/modules/accounts-payable/transit-voucher/columns";
 import { generateTransitVoucherTemplate } from "../src/modules/accounts-payable/transit-voucher/templates";
+import {
+  assertPassagesToReceive, calculatePassagesToReceive, calculateTransitVoucherEmployeeTotal, calculateWorkingDays,
+  centsToDecimalString, formatTransitObservation, parseFareToCents, summarizeCompetenceDays,
+} from "../src/modules/accounts-payable/transit-voucher/calculations";
 import { normalizeFoodName, parseFoodMealCsv, parseFoodMealXlsx } from "../src/modules/accounts-payable/food/ma-processing";
 import { matchCollaborator, matchFoodEmployee } from "../src/modules/accounts-payable/food/matching";
 import { parseFoodPaXlsx, parsePaDate, parsePaMoney } from "../src/modules/accounts-payable/food/pa-processing";
@@ -750,3 +754,90 @@ test("Contas a Pagar usa cards laterais compactos, acessíveis e responsivos", a
   assert.doesNotMatch(`${page}\n${card}`, /🍽️|🚌|https?:\/\//);
 });
 
+test("dias úteis: segunda a sexta menos feriados que caem em dia útil", () => {
+  // Setembro/2026 tem 22 dias entre segunda e sexta (01/09 é terça).
+  assert.equal(calculateWorkingDays(2026, 9, []), 22);
+  assert.equal(calculateWorkingDays(2026, 9, ["2026-09-02"]), 21); // quarta
+  assert.equal(calculateWorkingDays(2026, 9, ["2026-09-05"]), 22); // sábado não reduz de novo
+  assert.equal(calculateWorkingDays(2026, 9, ["2026-09-06"]), 22); // domingo
+  assert.equal(calculateWorkingDays(2026, 9, ["2026-09-02", "2026-09-07", "2026-09-05"]), 20);
+  const summary = summarizeCompetenceDays(2026, 9, ["2026-09-02", "2026-09-05"]);
+  assert.deepEqual(summary, { weekdays: 22, holidaysInMonth: 2, holidaysOnWeekdays: 1, workingDays: 21 });
+  // remover o feriado recalcula
+  assert.equal(calculateWorkingDays(2026, 9, ["2026-09-02"].filter((day) => day !== "2026-09-02")), 22);
+});
+
+test("vale transporte: passagens a receber e valor total (sem float e sem clamp)", () => {
+  const fare = parseFareToCents("4,20");
+  assert.equal(fare, 420);
+  assert.equal(centsToDecimalString(calculateTransitVoucherEmployeeTotal(fare, 2, 21)), "176.40");
+  assert.equal(centsToDecimalString(calculateTransitVoucherEmployeeTotal(fare, 3, 21)), "264.60");
+  const receivable = calculatePassagesToReceive(21, 2, 5);
+  assert.equal(receivable, 18);
+  assert.equal(centsToDecimalString(calculateTransitVoucherEmployeeTotal(fare, 2, receivable)), "151.20");
+  const negative = calculatePassagesToReceive(21, 0, 25);
+  assert.equal(negative, -4);
+  assert.throws(() => assertPassagesToReceive(negative, "João"), /negativo/);
+  assert.throws(() => calculateTransitVoucherEmployeeTotal(fare, 2, negative));
+  assert.throws(() => calculatePassagesToReceive(21.5, 0, 0));
+  assert.throws(() => parseFareToCents("0"));
+  assert.throws(() => parseFareToCents("4.201"));
+});
+
+test("observação do vale transporte: férias com prefixo e outros sem prefixo", () => {
+  assert.equal(formatTransitObservation("VACATION", "24/08 a 22/09"), "Férias: 24/08 a 22/09");
+  assert.equal(formatTransitObservation("OTHER", "Pagamento complementar"), "Pagamento complementar");
+  assert.equal(formatTransitObservation(null, null), "");
+});
+
+test("vale transporte manual: sem upload na interface e cálculo/validação no backend", async () => {
+  const [page, server, route] = await Promise.all([
+    readFile(new URL("../src/app/pagamentos/vale-transporte/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/transit-voucher/manual-server.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/api/accounts-payable/transit-voucher/entries/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.doesNotMatch(page, /Upload de arquivo|FileInput|3\. Benefício|4\. Financeiro/);
+  assert.match(page, /1\. Dados necessários/); assert.match(page, /Salvar \/ Gerar Rateio/);
+  assert.match(server, /calculateTransitVoucherEmployeeTotal/); assert.match(server, /assertPassagesToReceive/); assert.match(server, /createFinancialRecordInTransaction/);
+  assert.match(route, /FINANCIAL_RECORDS_CREATE/); assert.doesNotMatch(server, /entry\.amount|entries\[\d\]\.amount/);
+});
+
+test("novembro/2026: cenários de feriado isolados (21 dias úteis base)", () => {
+  // 02/11 é segunda-feira; 15/11 é domingo.
+  assert.equal(calculateWorkingDays(2026, 11, []), 21); // A
+  assert.equal(calculateWorkingDays(2026, 11, ["2026-11-15"]), 21); // B: só domingo
+  assert.equal(calculateWorkingDays(2026, 11, ["2026-11-02"]), 20); // C: só segunda
+  assert.equal(calculateWorkingDays(2026, 11, ["2026-11-02", "2026-11-15"]), 20); // D: segunda + domingo
+  // feriado de fim de semana continua marcado como feriado no calendário sem reduzir o total
+  const summary = summarizeCompetenceDays(2026, 11, ["2026-11-15"]);
+  assert.equal(summary.holidaysInMonth, 1); assert.equal(summary.holidaysOnWeekdays, 0);
+  // 21 dias com 1 feriado útil × 2 passagens × R$ 4,20 = R$ 168,00
+  assert.equal(centsToDecimalString(calculateTransitVoucherEmployeeTotal(420, 2, calculateWorkingDays(2026, 11, ["2026-11-02"]))), "168.00");
+});
+
+test("feriados nacionais automáticos (Vale Transporte): regras, móveis e pontos facultativos", async () => {
+  const { getBrazilianNationalHolidays, getEffectiveTransitVoucherHolidays, toHolidaySnapshot } = await import("../src/modules/accounts-payable/transit-voucher/holidays");
+  const dates = (year: number) => getBrazilianNationalHolidays(year).map((holiday) => holiday.date);
+  // 2026: fixos + Sexta-feira Santa (Páscoa em 05/04/2026 → 03/04); Zumbi/Consciência Negra 20/11 (Lei 14.759/2023)
+  assert.deepEqual(dates(2026), ["2026-01-01", "2026-04-03", "2026-04-21", "2026-05-01", "2026-09-07", "2026-10-12", "2026-11-02", "2026-11-15", "2026-11-20", "2026-12-25"]);
+  assert.equal(getBrazilianNationalHolidays(2026).find((holiday) => holiday.date === "2026-11-20")?.name, "Dia Nacional de Zumbi e da Consciência Negra");
+  assert.ok(!dates(2023).includes("2023-11-20"));
+  assert.ok(dates(2027).includes("2027-03-26") && dates(2028).includes("2028-04-14")); // Páscoa 28/03/2027 e 16/04/2028
+  // Carnaval (17/02/2026) e Corpus Christi (04/06/2026) são pontos facultativos: nunca automáticos
+  assert.ok(!dates(2026).includes("2026-02-17") && !dates(2026).includes("2026-06-04"));
+  const days = (year: number, month: number, manual: { date: string; name: string }[] = []) => calculateWorkingDays(year, month, getEffectiveTransitVoucherHolidays(year, month, manual).map((holiday) => holiday.date));
+  assert.equal(days(2026, 2), 20); assert.equal(days(2026, 6), 22);
+  // nacional em dia útil (07/09/2026, segunda): reduz 1; sem feriados a competência teria 22
+  assert.equal(days(2026, 9), 21);
+  // nacional no domingo (15/11/2026): aparece como feriado e não reduz; 02/11 (segunda) e 20/11 (sexta) reduzem
+  assert.equal(days(2026, 11), 19);
+  assert.ok(getEffectiveTransitVoucherHolidays(2026, 11, []).some((holiday) => holiday.date === "2026-11-15"));
+  // manual reduz normalmente
+  assert.equal(days(2026, 9, [{ date: "2026-09-08", name: "Feriado municipal" }]), 20);
+  // nacional + manual na mesma data: uma data, um dia
+  assert.equal(days(2026, 9, [{ date: "2026-09-07", name: "Outro nome" }]), 21);
+  const merged = getEffectiveTransitVoucherHolidays(2026, 9, [{ date: "2026-09-07", name: "Outro nome" }, { date: "2026-09-08", name: "Feriado municipal" }]);
+  assert.equal(merged.length, 2); assert.equal(merged[0].source, "NATIONAL"); assert.equal(merged[0].manualName, "Outro nome"); assert.equal(merged[1].source, "MANUAL");
+  // snapshot guarda nacionais + manuais
+  assert.deepEqual(toHolidaySnapshot(merged).map((holiday) => holiday.source), ["NATIONAL", "MANUAL"]);
+});

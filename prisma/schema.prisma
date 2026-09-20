@@ -59,6 +59,7 @@ model User {
   trainingExpensesCreated TrainingExpense[] @relation("TrainingExpenseCreator")
   trainingExpensesCancelled TrainingExpense[] @relation("TrainingExpenseCanceller")
   trainingExpenseRevisions TrainingExpenseRevision[] @relation("TrainingExpenseRevisionEditor")
+  transitHolidays TransitVoucherHoliday[] @relation("TransitHolidayCreator")
 }
 
 model PasswordResetToken {
@@ -159,6 +160,8 @@ model Company {
   departments      Department[]
   financialRecords FinancialRecord[]
   approvalPolicies ApprovalPolicy[]
+  transitVoucherAllocations TransitVoucherAllocation[]
+  transitVoucherEmployeeConfigs TransitVoucherEmployeeConfig[]
 }
 
 model Branch {
@@ -629,6 +632,7 @@ model FoodEmployee {
   occurrences    FoodMealOccurrence[]
   transitAllocations TransitVoucherAllocation[]
   trainingExpenseParticipations TrainingExpenseParticipant[]
+  transitConfig  TransitVoucherEmployeeConfig?
   mergedInto     FoodEmployee?        @relation("FoodEmployeeMerges", fields: [mergedIntoId], references: [id], onDelete: Restrict)
   mergedEmployees FoodEmployee[]      @relation("FoodEmployeeMerges")
 
@@ -731,6 +735,8 @@ model TransitVoucherCompetence {
   id          String                    @id @default(cuid())
   year        Int
   month       Int
+  fareUnitPrice Decimal?                @db.Decimal(19, 4)
+  holidays    TransitVoucherHoliday[]
   createdAt   DateTime                  @default(now())
   updatedAt   DateTime                  @updatedAt
   maps        TransitVoucherMap[]
@@ -761,6 +767,7 @@ model TransitVoucherMap {
   processedAt            DateTime                 @default(now())
   createdAt              DateTime                 @default(now())
   updatedAt              DateTime                 @updatedAt
+  holidaysSnapshot       Json?
   cancelledAt            DateTime?
   cancelledByUserId      String?
   cancellationReason     String?
@@ -803,6 +810,16 @@ model TransitVoucherAllocation {
   deletedAt              DateTime?
   deletedByUserId        String?
   deletionReason         String?
+  companyId              String?
+  dailyPassageQuantity   Int?
+  previousPassageDifference Int?
+  passageDiscount        Int?
+  workingDays            Int?
+  passagesToReceive      Int?
+  fareUnitPrice          Decimal?                 @db.Decimal(19, 4)
+  observationType        TransitObservationType?
+  observationDetails     String?
+  companyRef             Company?                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
   map                    TransitVoucherMap        @relation(fields: [mapId], references: [id], onDelete: Cascade)
   competence             TransitVoucherCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
   administrativeEntity   AdministrativeEntity     @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
@@ -814,6 +831,42 @@ model TransitVoucherAllocation {
   @@index([employeeId])
   @@index([competenceId, administrativeEntityId])
   @@index([mapId, deletedAt])
+}
+
+enum TransitObservationType {
+  VACATION
+  OTHER
+}
+
+// Feriados marcados manualmente por competência (sem API externa) — só
+// reduzem dias úteis quando caem de segunda a sexta.
+model TransitVoucherHoliday {
+  id              String                   @id @default(cuid())
+  competenceId    String
+  date            DateTime                 @db.Date
+  name            String
+  createdByUserId String
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  competence      TransitVoucherCompetence @relation(fields: [competenceId], references: [id], onDelete: Cascade)
+  createdBy       User                     @relation("TransitHolidayCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([competenceId, date])
+}
+
+// Padrão atual do colaborador para novos lançamentos — NUNCA é lido para
+// recalcular lançamentos antigos (cada linha guarda seu próprio snapshot).
+model TransitVoucherEmployeeConfig {
+  id                   String       @id @default(cuid())
+  employeeId           String       @unique
+  dailyPassageQuantity Int
+  defaultCompanyId     String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  employee             FoodEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  defaultCompany       Company?     @relation(fields: [defaultCompanyId], references: [id], onDelete: SetNull)
+
+  @@index([defaultCompanyId])
 }
 
 model TransitVoucherIssue {

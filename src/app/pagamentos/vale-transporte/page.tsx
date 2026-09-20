@@ -1,250 +1,414 @@
 "use client";
-/* eslint-disable react-hooks/set-state-in-effect, react-hooks/preserve-manual-memoization -- competence changes load a persisted server snapshot */
-import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+/* eslint-disable react-hooks/set-state-in-effect -- competence changes load a persisted server snapshot */
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CorporateHeader } from "@/components/CorporateHeader";
-import { Button, DeletionModal, EmptyState, FileInput, PageHeader, buttonClassName, useToast, type FileInputStatus } from "@/components/ui";
+import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList } from "@/components/allocation/AllocationCard";
+import { Badge, Button, DeletionModal, EmptyState, MetricCard, PageHeader, buttonClassName, useToast } from "@/components/ui";
 import { type CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { ManualEntrySection } from "@/components/ManualEntryLayout";
-import { formatCnpj } from "@/modules/administrative-entities/schema";
-import { comparePtBr, sortedPtBr } from "@/lib/sorting/ptBr";
-type Entity = {
-    id: string;
-    cnpj: string | null;
-    tradeName: string;
-    legalName: string;
-    locality: string;
-};
+import { formatCnpj, isValidCnpj } from "@/modules/administrative-entities/schema";
+import {
+  assertPassagesToReceive, buildCompetenceCalendar, calculatePassagesToReceive, calculateTransitVoucherEmployeeTotal,
+  formatTransitObservation, parseFareToCents, type TransitObservationKind,
+} from "@/modules/accounts-payable/transit-voucher/calculations";
+import { comparePtBr } from "@/lib/sorting/ptBr";
+
+type Entity = { id: string; cnpj: string | null; tradeName: string; legalName: string; locality: string };
+type Company = { id: string; legalName: string; tradeName: string | null; active: boolean };
+type Holiday = { date: string; name: string; source: "NATIONAL" | "MANUAL"; editable: boolean; manualName: string | null };
+type Context = { year: number; month: number; fareUnitPrice: string; fareDefined: boolean; holidays: Holiday[]; weekdays: number; holidaysInMonth: number; holidaysOnWeekdays: number; workingDays: number };
 type Allocation = {
-    id: string;
-    employeeId: string | null;
-    company: string;
-    sourceIdentifier: string | null;
-    employeeName: string;
-    originalEmployeeName: string | null;
-    department: string | null;
-    serviceDate: string | null;
-    service: string | null;
-    costCenter: string | null;
-    dailyAmount: string | null;
-    previousMonthDifference: string | null;
-    occasionalDiscounts: string | null;
-    days: string | null;
-    amount: string;
+  id: string; employeeId: string | null; company: string; employeeName: string; department: string | null; costCenter: string | null;
+  amount: string; previousPassageDifference: number | null; passageDiscount: number | null; dailyPassageQuantity: number | null; passagesToReceive: number | null; days: string | null; workingDays: number | null; fareUnitPrice: string | null;
+  observationType: TransitObservationKind | null; observationDetails: string | null;
 };
-type Issue = {
-    id: string;
-    sourceRow: number | null;
-    message: string;
-    rawData: Record<string, string | number | null> | null;
-    fieldErrors: Array<{ field: string; label: string; reason: string; message: string }> | null;
-    suggestedData: Record<string, string | null> | null;
-    resolvedAt: string | null;
-};
-type MapData = {
-    id: string;
-    version: number;
-    status: "READY" | "WITH_INCONSISTENCIES";
-    originalName: string;
-    validRows: number;
-    totalRows: number;
-    invalidRows: number;
-    totalAmount: string;
-    administrativeEntity: Entity;
-    financialRecord: {
-        identifier: string;
-    } | null;
-    allocations: Allocation[];
-    issues: Issue[];
-};
+type MapData = { id: string; version: number; status: string; totalAmount: string; administrativeEntity: Entity; financialRecord: { identifier: string } | null; allocations: Allocation[] };
+type EntryValue = { companyText: string; companyId: string; qty: string; diff: string; discount: string; obsType: "" | TransitObservationKind; obsDetails: string };
+
 const money = (value: string | number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value));
-const normalize = (value: string) => value.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-const employeeKey = (row: Allocation) => row.employeeId ?? normalize(`${row.company}|${row.department}|${row.employeeName}`);
+const cents = (value: string | number) => Math.round(Number(value) * 100);
+// O mapa é a fonte histórica: tarifa e dias úteis vêm dos registros do próprio mapa, nunca da competência atual.
+const mapBase = (map: MapData | undefined) => { const row = map?.allocations.find((item) => item.workingDays !== null && item.fareUnitPrice !== null); return row ? { workingDays: row.workingDays as number, fareUnitPrice: Number(row.fareUnitPrice).toFixed(2) } : null; };
+const normalize = (value: string) => value.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
 const acceptsMA = (value: string) => value.toUpperCase().split(/[\/,;]/).map((part) => part.trim()).includes("MA");
-function Icon({ type }: {
-    type: "company" | "users" | "departments" | "total";
-}) { const paths = { company: <>
-<path d="M3 21h18M6 21V7l6-4 6 4v14M9 10h.01M15 10h.01"/>
-</>, users: <>
-<circle cx="9" cy="7" r="4"/>
-<path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2M17 3a4 4 0 0 1 0 8M22 21v-2a5 5 0 0 0-3-4.6"/>
-</>, departments: <>
-<rect x="3" y="3" width="7" height="7" rx="1"/>
-<rect x="14" y="3" width="7" height="7" rx="1"/>
-<rect x="8.5" y="14" width="7" height="7" rx="1"/>
-<path d="M6.5 10v2h11v-2M12 12v2"/>
-</>, total: <>
-<circle cx="12" cy="12" r="9"/>
-<path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8M12 6v12"/>
-</> }; return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6" aria-hidden="true">{paths[type]}</svg>; }
-function Summary({ maps }: {
-    maps: MapData[];
-}) { const rows = maps.flatMap((map) => map.allocations); const stats = [{ label: "Empresas", value: new Set(rows.map((row) => normalize(row.company))).size, description: "Empresas no rateio", icon: "company" as const }, { label: "Colaboradores", value: new Set(rows.map(employeeKey)).size, description: "Colaboradores únicos", icon: "users" as const }, { label: "Departamentos", value: new Set(rows.map((row) => normalize(`${row.company}|${row.department}`))).size, description: "Departamentos", icon: "departments" as const }, { label: "Valor total", value: money(rows.reduce((sum, row) => sum + Number(row.amount), 0)), description: "Competência atual", icon: "total" as const }]; return <section aria-label="Resumo do Vale Transporte" className="stats grid w-full grid-cols-1 overflow-hidden border border-base-300 bg-base-100 shadow-sm sm:grid-cols-2 xl:grid-cols-4 [grid-auto-flow:row]">{stats.map((stat, index) => <div className="stat min-w-0 border-b border-base-300 px-4 py-5 sm:odd:border-r sm:[&:nth-last-child(-n+2)]:border-b-0 xl:border-b-0 xl:border-r xl:last:border-r-0" key={stat.label}>
-<div className="stat-figure text-primary">
-<Icon type={stat.icon}/>
-</div>
-<div className="stat-title text-secondary">{stat.label}</div>
-<div className={`stat-value break-words ${index === 3 ? "text-2xl text-primary sm:text-3xl xl:text-2xl 2xl:text-3xl" : "text-3xl text-neutral"}`}>{stat.value}</div>
-<div className="stat-desc text-secondary">{stat.description}</div>
-</div>)}</section>; }
-function EmployeeDetails({ row,selected,onToggle,onDelete }: {
-    row: Allocation;selected:boolean;onToggle:()=>void;onDelete:()=>void;
-}) { return <details className="rounded-lg border border-base-300 bg-base-100">
-<summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3 font-semibold">
-<span className="flex min-w-0 items-center gap-3"><input type="checkbox" className="checkbox checkbox-sm checkbox-primary" checked={selected} onClick={event=>event.stopPropagation()} onChange={onToggle} aria-label={`Selecionar ${row.employeeName}`}/><span className="truncate">{row.employeeName}</span></span>
-<span className="flex shrink-0 items-center gap-3"><span className="text-primary">{money(row.amount)}</span><button type="button" className="text-xs font-semibold text-error" onClick={event=>{event.preventDefault();event.stopPropagation();onDelete()}}>Excluir</button></span>
-</summary>
-<dl className="grid gap-3 border-t border-base-300 p-3 text-sm sm:grid-cols-2 lg:grid-cols-3">{[["Nome recebido", row.originalEmployeeName], ["Empresa", row.company], ["Departamento", row.department], ["Data", row.serviceDate ? new Date(row.serviceDate).toLocaleDateString("pt-BR", { timeZone: "UTC" }) : null], ["Serviço", row.service], ["CC", row.costCenter], ["Valor dia", row.dailyAmount ? money(row.dailyAmount) : null], ["Dif. mês anterior", row.previousMonthDifference ? money(row.previousMonthDifference) : null], ["Descontos eventuais", row.occasionalDiscounts ? money(row.occasionalDiscounts) : null], ["Dias", row.days], ["Valor total", money(row.amount)]].map(([label, value]) => <div key={label}>
-<dt className="text-xs text-secondary">{label}</dt>
-<dd className="font-medium text-neutral">{value || "—"}</dd>
-</div>)}</dl>
-</details>; }
-const reviewFields = [
-    ["company", "EMPRESA", "text"], ["employeeName", "NOME", "text"], ["serviceDate", "DATA", "date"], ["department", "DEPARTAMENTO", "text"], ["service", "SERVIÇO", "text"], ["costCenter", "CC", "text"], ["dailyAmount", "VALOR DIA", "number"], ["previousMonthDifference", "DIF MÊS ANTERIOR", "number"], ["occasionalDiscounts", "DESCONTOS EVENTUAIS", "number"], ["days", "DIAS", "number"], ["amount", "VALOR TOTAL", "number"],
-] as const;
-function PendingItem({ issue, mapId, onSaved }: { issue: Issue; mapId: string; onSaved: () => Promise<void> }) {
-    const initial = Object.fromEntries(reviewFields.map(([field]) => [field, String(issue.rawData?.[field] ?? "")])) as Record<string, string>;
-    const [data, setData] = useState(initial); const [saving, setSaving] = useState(false); const [error, setError] = useState<string | null>(null);
-    const errorFor = (field: string) => issue.fieldErrors?.find((item) => item.field === field);
-    function applySuggestion() { if (!issue.suggestedData) return; setData((current) => ({ ...current, ...Object.fromEntries(Object.entries(issue.suggestedData ?? {}).filter(([key, value]) => key in current && value !== null).map(([key, value]) => [key, String(value)])) })); }
-    async function save() { setSaving(true); setError(null); try { const response = await fetch(`/api/accounts-payable/transit-voucher/${mapId}/issues/${issue.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); await onSaved(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao salvar correção."); } finally { setSaving(false); } }
-    return <article className="rounded-xl border border-warning/40 bg-base-100 p-4"><header className="mb-4"><p className="text-xs font-bold uppercase text-warning">Linha {issue.sourceRow ?? "—"}</p><h5 className="font-bold text-neutral">{String(issue.rawData?.employeeName ?? "Colaborador não identificado")}</h5><p className="text-sm text-secondary">{String(issue.rawData?.company ?? "Empresa não informada")}</p></header>{issue.suggestedData && <div className="mb-4 rounded-lg bg-info/10 p-3 text-sm"><strong>Sugestão — {issue.suggestedData.source}</strong><p>{issue.suggestedData.department ? `Departamento: ${issue.suggestedData.department}` : "Dados anteriores encontrados"}</p><Button size="sm" variant="secondary" className="mt-2" onClick={applySuggestion}>Aplicar sugestão</Button></div>}<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{reviewFields.map(([field, label, type]) => { const fieldError = errorFor(field); const received = issue.rawData?.[field]; return <label key={field} className="form-control"><span className={`label-text mb-1 ${fieldError ? "font-semibold text-warning" : ""}`}>{label}{fieldError?.reason === "required" ? " *" : ""}</span><input type={type} step={type === "number" ? "0.01" : undefined} className={`input input-bordered w-full ${fieldError ? "input-warning" : ""}`} value={data[field]} onChange={(event) => setData((current) => ({ ...current, [field]: event.target.value }))} />{fieldError && <span className="mt-1 text-xs text-warning">{fieldError.message}</span>}{received !== null && received !== undefined && String(received) !== data[field] && <span className="mt-1 text-xs text-secondary">Valor recebido: {String(received)}</span>}</label>; })}</div>{error && <div className="alert alert-error mt-3 text-sm">{error}</div>}<Button className="mt-4" onClick={save} loading={saving} aura>Salvar correção</Button></article>;
+const companyLabel = (company: Company) => company.tradeName?.trim() || company.legalName;
+const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+const people = (count: number) => `${count} ${count === 1 ? "colaborador" : "colaboradores"}`;
+const isInt = (value: string) => /^-?\d+$/.test(value.trim());
+const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+function CompetenceCalendar({ year, month, holidays, onSelect }: { year: number; month: number; holidays: Holiday[]; onSelect: (date: string) => void }) {
+  const days = useMemo(() => buildCompetenceCalendar(year, month, holidays.map((holiday) => holiday.date)), [year, month, holidays]);
+  const names = new Map(holidays.map((holiday) => [holiday.date, holiday.name]));
+  const sources = new Map(holidays.map((holiday) => [holiday.date, holiday.source]));
+  const offset = days[0]?.weekday ?? 0;
+  return (
+    <div>
+      <div className="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-secondary" aria-hidden="true">{WEEKDAYS.map((label) => <span key={label}>{label}</span>)}</div>
+      <div className="mt-1 grid grid-cols-7 gap-1" role="grid" aria-label="Calendário da competência">
+        {Array.from({ length: offset }, (_, index) => <span key={`blank-${index}`} />)}
+        {days.map((day) => (
+          <button
+            key={day.date} type="button" role="gridcell" onClick={() => onSelect(day.date)}
+            title={day.holiday ? `${names.get(day.date) ?? "Feriado"} · ${sources.get(day.date) === "NATIONAL" ? "Feriado nacional" : "Feriado cadastrado manualmente"}${day.weekend ? " (final de semana — não reduz dias úteis)" : ""}` : day.weekend ? "Final de semana" : "Dia útil"}
+            aria-label={`${day.day}: ${day.holiday ? `feriado${names.get(day.date) ? ` — ${names.get(day.date)}` : ""}${day.weekend ? " (final de semana)" : ""}` : day.weekend ? "final de semana" : "dia útil"}`}
+            className={`flex h-10 flex-col items-center justify-center rounded-md border text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${day.holiday ? `border-emerald-500 bg-emerald-100 font-bold text-emerald-900 hover:bg-emerald-200${day.weekend ? " ring-2 ring-inset ring-orange-300" : ""}` : day.weekend ? "border-orange-200 bg-orange-50 text-orange-900 hover:bg-orange-100" : "border-base-300 bg-base-100 hover:bg-base-200"}`}
+          >
+            {day.day}
+          </button>
+        ))}
+      </div>
+      <ul className="mt-3 flex flex-wrap gap-4 text-xs text-secondary" aria-label="Legenda">
+        <li className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border border-base-300 bg-base-100" />Dia útil</li>
+        <li className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border border-orange-200 bg-orange-50" />Final de semana</li>
+        <li className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border border-emerald-500 bg-emerald-100" />Feriado</li>
+        <li className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border border-emerald-500 bg-emerald-100 ring-2 ring-inset ring-orange-300" />Feriado em final de semana</li>
+      </ul>
+    </div>
+  );
 }
-function PendingReview({ map, onSaved }: { map: MapData; onSaved: () => Promise<void> }) { const [query, setQuery] = useState(""); const pending = map.issues.filter((issue) => !issue.resolvedAt).filter((issue) => normalize(`${issue.sourceRow} ${issue.rawData?.employeeName ?? ""} ${issue.rawData?.company ?? ""} ${issue.rawData?.department ?? ""}`).includes(normalize(query))); return <section className="mt-4 rounded-xl border border-warning/40 bg-warning/5 p-4"><div className="mb-4"><h4 className="font-bold text-neutral">PENDÊNCIAS DO UPLOAD</h4><p className="text-sm text-secondary">{map.invalidRows} registro(s) precisam de revisão</p></div><input className="input input-bordered mb-4 w-full" placeholder="Buscar por colaborador, empresa, departamento ou linha" value={query} onChange={(event) => setQuery(event.target.value)} /><div className="grid gap-4">{pending.map((issue) => <PendingItem key={issue.id} issue={issue} mapId={map.id} onSaved={onSaved} />)}</div></section>; }
-function MapCard({ map, onReload }: {
-    map: MapData;
-    onReload: () => Promise<void>;
-}) {
-    const [open, setOpen] = useState(true);
-    const [reviewing, setReviewing] = useState(false);
-    const [query, setQuery] = useState("");
-    const [companyFilter, setCompanyFilter] = useState("");
-    const [departmentFilter, setDepartmentFilter] = useState("");
-    const [selected,setSelected]=useState<string[]>([]);const [deleteTarget,setDeleteTarget]=useState<"records"|"map"|null>(null);const [pendingIds,setPendingIds]=useState<string[]>([]);const [deleting,setDeleting]=useState(false);const [deleteError,setDeleteError]=useState<string|null>(null);
-    const companies = useMemo(() => [...new Set(map.allocations.map((row) => row.company))].sort(comparePtBr), [map]);
-    const departments = useMemo(() => [...new Set(map.allocations.filter((row) => !companyFilter || row.company === companyFilter).map((row) => row.department ?? "Não informado"))].sort(comparePtBr), [map, companyFilter]);
-    const filtered = useMemo(() => map.allocations.filter((row) => { const haystack = normalize([row.employeeName, row.company, row.department, row.service, row.costCenter].filter(Boolean).join(" ")); return (!query || haystack.includes(normalize(query))) && (!companyFilter || row.company === companyFilter) && (!departmentFilter || (row.department ?? "Não informado") === departmentFilter); }).sort((a,b)=>comparePtBr(a.company,b.company)||comparePtBr(a.department,b.department)||comparePtBr(a.employeeName,b.employeeName)||comparePtBr(a.id,b.id)), [map, query, companyFilter, departmentFilter]);
-    const groups = useMemo(() => { const result = new Map<string, Map<string, Allocation[]>>(); for (const row of filtered) {
-        const departments = result.get(row.company) ?? new Map();
-        const department = row.department ?? "Não informado";
-        departments.set(department, [...(departments.get(department) ?? []), row]);
-        result.set(row.company, departments);
-    } return result; }, [filtered]);
-    const unique = new Set(map.allocations.map(employeeKey)).size;
-    const requestDelete=(ids:string[])=>{setPendingIds(ids);setDeleteTarget("records");setDeleteError(null)};async function confirmDelete(reason:string){setDeleting(true);setDeleteError(null);try{const url=deleteTarget==="map"?`/api/accounts-payable/transit-voucher/${map.id}`:`/api/accounts-payable/transit-voucher/${map.id}/records`;const response=await fetch(url,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify(deleteTarget==="map"?{reason,confirmation:"EXCLUIR"}:{ids:pendingIds,reason})});const body=await response.json();if(!response.ok)throw new Error(body.error);setSelected([]);setPendingIds([]);setDeleteTarget(null);await onReload();}catch(cause){setDeleteError(cause instanceof Error?cause.message:"Não foi possível excluir o registro.")}finally{setDeleting(false)}}
-    return <article className="rounded-xl border border-base-300 bg-base-100 p-4 shadow-sm">
-<div className="flex flex-wrap justify-between gap-3">
-<div>
-<h3 className="font-bold text-neutral">{map.originalName}</h3>
-<p className="text-xs text-secondary">v{map.version} · {map.administrativeEntity.tradeName} · {map.validRows} registros · {unique} colaboradores únicos</p>
-</div>
-<span className={`badge h-auto py-2 font-semibold ${map.status === "READY" ? "badge-success" : "badge-warning"}`}>{map.status === "READY" ? "✓ Processamento validado" : `⚠ ${map.invalidRows} pendência(s) de revisão`}</span>
-</div>
-<div className="mt-4 flex flex-wrap gap-2">
-<Button size="sm" variant="secondary" onClick={() => setOpen(!open)}>{open ? "Ocultar rateio" : "Ver rateio"}</Button>
-{map.invalidRows > 0 && <Button size="sm" variant="warning" onClick={() => setReviewing(!reviewing)}>{reviewing ? "Fechar pendências" : "Revisar pendências"}</Button>}
-<a href={`/api/accounts-payable/transit-voucher/${map.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}>Download do Rateio XLSX</a>
-<Button size="sm" variant="error" onClick={()=>setDeleteTarget("map")}>Excluir processamento</Button>
-</div>{reviewing && <PendingReview map={map} onSaved={onReload} />}{open && <div className="mt-5">
-<div className="grid gap-3 md:grid-cols-3">
-<input className="input input-bordered w-full" placeholder="Buscar colaborador, empresa, serviço ou CC" value={query} onChange={(event) => setQuery(event.target.value)}/>
-<select className="select select-bordered w-full" value={companyFilter} onChange={(event) => { setCompanyFilter(event.target.value); setDepartmentFilter(""); }}>
-<option value="">Todas as empresas</option>{companies.map((company) => <option key={company}>{company}</option>)}</select>
-<select className="select select-bordered w-full" value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}>
-<option value="">Todos os departamentos</option>{departments.map((department) => <option key={department}>{department}</option>)}</select>
-</div>
-<div className="mt-3 flex flex-wrap items-center gap-3 text-sm"><button type="button" className="font-semibold text-primary" onClick={()=>setSelected([...new Set([...selected,...filtered.map(row=>row.id)])])}>Selecionar todos os resultados ({filtered.length})</button>{selected.length>0&&<><span>{selected.length} selecionado(s)</span><button type="button" className="text-secondary" onClick={()=>setSelected([])}>Limpar seleção</button><Button size="sm" variant="error" onClick={()=>requestDelete(selected)}>Excluir selecionados</Button></>}</div>
-<div className="mt-4 grid gap-3">{[...groups].map(([company, departmentGroups]) => { const rows = [...departmentGroups.values()].flat(); return <details open key={company} className="collapse-arrow collapse border border-base-300 bg-base-200">
-<summary className="collapse-title">
-<span className="font-bold text-neutral">{company}</span>
-<span className="ml-2 text-sm text-secondary">{new Set(rows.map(employeeKey)).size} colaboradores · {money(rows.reduce((sum, row) => sum + Number(row.amount), 0))}</span>
-</summary>
-<div className="collapse-content grid gap-3">{[...departmentGroups].map(([department, departmentRows]) => <details open key={department} className="collapse-arrow collapse border border-base-300 bg-base-100">
-<summary className="collapse-title py-3">
-<span className="font-semibold">{department}</span>
-<span className="ml-2 text-sm text-secondary">{new Set(departmentRows.map(employeeKey)).size} colaboradores · {money(departmentRows.reduce((sum, row) => sum + Number(row.amount), 0))}</span>
-</summary>
-<div className="collapse-content grid gap-2">{departmentRows.map((row) => <EmployeeDetails key={row.id} row={row} selected={selected.includes(row.id)} onToggle={()=>setSelected(current=>current.includes(row.id)?current.filter(id=>id!==row.id):[...current,row.id])} onDelete={()=>requestDelete([row.id])}/>)}</div>
-</details>)}</div>
-</details>; })}{!filtered.length && <p className="py-8 text-center text-sm text-secondary">Nenhum registro encontrado para os filtros.</p>}</div></div>}{deleteError&&<div role="alert" className="alert alert-error mt-4 text-sm">{deleteError}</div>}<DeletionModal open={deleteTarget!==null} title={deleteTarget==="map"?"Excluir todo o processamento?":`Excluir ${pendingIds.length>1?`${pendingIds.length} registros`:"registro"}?`} description={deleteTarget==="map"?<><strong>{map.originalName} · {map.administrativeEntity.tradeName}</strong><br/>{map.validRows} registros · {unique} colaboradores · {money(map.totalAmount)}<br/>O processamento e a obrigação serão cancelados; o arquivo original será preservado.</>:"Essa ação cancelará os registros e recalculará departamento, empresa, total, obrigação e download."} count={deleteTarget==="map"?1:pendingIds.length} requireKeyword={deleteTarget==="map"} busy={deleting} onClose={()=>{if(!deleting){setDeleteTarget(null);setPendingIds([])}}} onConfirm={confirmDelete}/></article>;
+
+function HolidayModal({ date, holiday, onClose, onSave, onRemove }: { date: string | null; holiday: Holiday | null; onClose: () => void; onSave: (name: string) => Promise<void>; onRemove: () => Promise<void> }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const dialog = dialogRef.current; if (!dialog) return;
+    if (date && !dialog.open) dialog.showModal();
+    if (!date && dialog.open) dialog.close();
+    setName(holiday?.name ?? "");
+  }, [date, holiday]);
+  const run = async (action: () => Promise<void>) => { setBusy(true); try { await action(); } finally { setBusy(false); } };
+  return (
+    <dialog ref={dialogRef} className="modal" onCancel={onClose} onClose={onClose}>
+      <form className="modal-box max-w-md border border-base-300 bg-base-100" onSubmit={(event) => { event.preventDefault(); void run(() => onSave(name)); }}>
+        <h2 className="text-lg font-bold text-neutral">{holiday && !holiday.editable ? "Feriado nacional" : holiday ? "Editar feriado" : "Marcar feriado"}</h2>
+        <p className="mt-1 text-sm text-secondary">{date ? new Date(`${date}T00:00:00Z`).toLocaleDateString("pt-BR", { timeZone: "UTC", weekday: "long", day: "2-digit", month: "long", year: "numeric" }) : ""}</p>
+        {holiday && !holiday.editable ? <div className="mt-4 rounded-lg border border-base-300 bg-base-200/60 p-3 text-sm"><strong>{holiday.name}</strong><p className="mt-1 text-xs text-secondary">Feriado nacional automático: não pode ser editado nem removido. Feriados estaduais, municipais ou internos devem ser cadastrados nas demais datas.</p>{holiday.manualName && <p className="mt-1 text-xs text-secondary">Também cadastrado manualmente como “{holiday.manualName}” (a data conta uma única vez).</p>}</div> : <>
+        {holiday && <p className="mt-1 text-xs text-secondary">Feriado cadastrado manualmente</p>}
+        <label className="form-control mt-4"><span className="label-text mb-1">Nome do feriado</span><input required autoFocus className="input input-bordered w-full" value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Aniversário da cidade" /></label></>}
+        <div className="modal-action">
+          {holiday?.editable && <Button type="button" variant="error" onClick={() => void run(onRemove)} disabled={busy}>Remover feriado</Button>}
+          <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>{holiday && !holiday.editable ? "Fechar" : "Cancelar"}</Button>
+          {!(holiday && !holiday.editable) && <Button type="submit" loading={busy} disabled={busy || !name.trim()}>Salvar feriado</Button>}
+        </div>
+      </form>
+      <form method="dialog" className="modal-backdrop"><button aria-label="Fechar">Fechar</button></form>
+    </dialog>
+  );
 }
+
+function CompanyModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (company: Company) => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [legalName, setLegalName] = useState(""); const [tradeName, setTradeName] = useState(""); const [taxId, setTaxId] = useState("");
+  const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
+  useEffect(() => { const dialog = dialogRef.current; if (!dialog) return; if (open && !dialog.open) dialog.showModal(); if (!open && dialog.open) dialog.close(); if (open) { setLegalName(""); setTradeName(""); setTaxId(""); setError(null); } }, [open]);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); const digits = taxId.replace(/\D/g, "");
+    if (!isValidCnpj(digits)) return setError("Informe um CNPJ válido.");
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch("/api/master-data/companies", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ legalName, tradeName, taxId: digits }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Não foi possível cadastrar a empresa.");
+      onCreated(body.item); onClose();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível cadastrar a empresa."); } finally { setBusy(false); }
+  }
+  return (
+    <dialog ref={dialogRef} className="modal" onCancel={onClose} onClose={onClose}>
+      <form onSubmit={submit} className="modal-box max-w-md border border-base-300 bg-base-100">
+        <h2 className="text-lg font-bold text-neutral">Cadastrar empresa</h2>
+        {error && <p className="mt-3 rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">{error}</p>}
+        <div className="mt-4 grid gap-3">
+          <label className="form-control"><span className="label-text mb-1">Razão social *</span><input required className="input input-bordered w-full" value={legalName} onChange={(event) => setLegalName(event.target.value)} /></label>
+          <label className="form-control"><span className="label-text mb-1">Nome fantasia (exibido) *</span><input required className="input input-bordered w-full" value={tradeName} onChange={(event) => setTradeName(event.target.value)} placeholder="PROJETA" /></label>
+          <label className="form-control"><span className="label-text mb-1">CNPJ *</span><input required inputMode="numeric" className="input input-bordered w-full" value={taxId.length === 14 ? formatCnpj(taxId) : taxId} onChange={(event) => setTaxId(event.target.value.replace(/\D/g, "").slice(0, 14))} placeholder="Somente números" /></label>
+        </div>
+        <div className="modal-action"><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>Cancelar</Button><Button type="submit" loading={busy} disabled={busy}>Cadastrar</Button></div>
+      </form>
+      <form method="dialog" className="modal-backdrop"><button aria-label="Fechar">Fechar</button></form>
+    </dialog>
+  );
+}
+
+function CorrectionModal({ target, companies, onClose, onSaved }: { target: { mapId: string; row: Allocation } | null; companies: Company[]; onClose: () => void; onSaved: () => Promise<void> }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [form, setForm] = useState({ companyText: "", qty: "", diff: "0", discount: "0", obsType: "" as "" | TransitObservationKind, obsDetails: "", reason: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current; if (!dialog) return;
+    if (target && !dialog.open) dialog.showModal();
+    if (!target && dialog.open) dialog.close();
+    if (target) { const row = target.row; setError(null); setForm({ companyText: row.company, qty: String(row.dailyPassageQuantity ?? ""), diff: String(row.previousPassageDifference ?? 0), discount: String(row.passageDiscount ?? 0), obsType: row.observationType ?? "", obsDetails: row.observationDetails ?? "", reason: "" }); }
+  }, [target]);
+  const company = companies.find((item) => normalize(companyLabel(item)) === normalize(form.companyText) || normalize(item.legalName) === normalize(form.companyText));
+  async function submit(event: FormEvent) {
+    event.preventDefault(); if (!target?.row.employeeId) return;
+    if (!company) return setError("Selecione uma empresa cadastrada.");
+    if (!isInt(form.qty) || !isInt(form.diff) || !isInt(form.discount)) return setError("Passagem por dia, diferença e descontos devem ser números inteiros.");
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch(`/api/accounts-payable/transit-voucher/${target.mapId}/entries/${target.row.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: form.reason, entry: { employeeId: target.row.employeeId, companyId: company.id, dailyPassageQuantity: Number(form.qty), previousPassageDifference: Number(form.diff), passageDiscount: Number(form.discount), observationType: form.obsType || null, observationDetails: form.obsDetails.trim() || null } }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Falha ao corrigir.");
+      await onSaved(); onClose();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao corrigir."); } finally { setBusy(false); }
+  }
+  return (
+    <dialog ref={dialogRef} className="modal" onCancel={onClose} onClose={onClose}>
+      <form onSubmit={submit} className="modal-box max-w-lg border border-base-300 bg-base-100">
+        <h2 className="text-lg font-bold text-neutral">Corrigir lançamento</h2>
+        <p className="mt-1 text-sm text-secondary">{target?.row.employeeName} · o registro atual é cancelado (com histórico) e um novo é gerado, preservando a base histórica do lançamento; só os campos que você alterar mudam o resultado.</p>
+        {target && <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg border border-base-300 bg-base-200/60 p-3 text-xs sm:grid-cols-4" aria-label="Base histórica preservada"><div><dt className="text-secondary">Tarifa</dt><dd className="font-semibold">{target.row.fareUnitPrice ? money(target.row.fareUnitPrice) : "—"}</dd></div><div><dt className="text-secondary">Dias úteis</dt><dd className="font-semibold">{target.row.workingDays ?? "—"}</dd></div><div><dt className="text-secondary">Departamento</dt><dd className="font-semibold">{target.row.department ?? "—"}</dd></div><div><dt className="text-secondary">Centro de custo</dt><dd className="font-semibold">{target.row.costCenter ?? "—"}</dd></div></dl>}
+        {error && <p className="mt-3 rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">{error}</p>}
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="form-control sm:col-span-2"><span className="label-text mb-1">Empresa</span><input list="vt-companies-correction" className="input input-bordered w-full" value={form.companyText} onChange={(event) => setForm({ ...form, companyText: event.target.value })} /><datalist id="vt-companies-correction">{companies.map((item) => <option key={item.id} value={companyLabel(item)} />)}</datalist></label>
+          <label className="form-control"><span className="label-text mb-1">Passagem por dia</span><input inputMode="numeric" className="input input-bordered w-full" value={form.qty} onChange={(event) => setForm({ ...form, qty: event.target.value })} /></label>
+          <label className="form-control"><span className="label-text mb-1">Diferença mês anterior</span><input inputMode="numeric" className="input input-bordered w-full" value={form.diff} onChange={(event) => setForm({ ...form, diff: event.target.value })} /></label>
+          <label className="form-control"><span className="label-text mb-1">Descontos</span><input inputMode="numeric" className="input input-bordered w-full" value={form.discount} onChange={(event) => setForm({ ...form, discount: event.target.value })} /></label>
+          <label className="form-control"><span className="label-text mb-1">Observação</span><select className="select select-bordered w-full" value={form.obsType} onChange={(event) => setForm({ ...form, obsType: event.target.value as "" | TransitObservationKind })}><option value="">—</option><option value="VACATION">Férias</option><option value="OTHER">Outros</option></select></label>
+          {form.obsType && <label className="form-control sm:col-span-2"><span className="label-text mb-1">Detalhes</span><input className="input input-bordered w-full" value={form.obsDetails} onChange={(event) => setForm({ ...form, obsDetails: event.target.value })} /></label>}
+          <label className="form-control sm:col-span-2"><span className="label-text mb-1">Motivo da correção *</span><input required className="input input-bordered w-full" value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} /></label>
+        </div>
+        <div className="modal-action"><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>Cancelar</Button><Button type="submit" loading={busy} disabled={busy || !form.reason.trim()}>Salvar correção</Button></div>
+      </form>
+      <form method="dialog" className="modal-backdrop"><button aria-label="Fechar">Fechar</button></form>
+    </dialog>
+  );
+}
+
 export default function TransitVoucherPage() {
-    const router = useRouter();
-    const toast = useToast();
-    const now = new Date();
-    const [competence, setCompetence] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
-    const [year, month] = competence.split("-").map(Number);
-    const [email, setEmail] = useState<string | null>(null);
-    const [entities, setEntities] = useState<Entity[]>([]);
-    const [maps, setMaps] = useState<MapData[]>([]);
-    const [entityId, setEntityId] = useState("");
-    const [file, setFile] = useState<File | null>(null);
-    const [fileName, setFileName] = useState("");
-    const [uploadStatus, setUploadStatus] = useState<FileInputStatus>("normal");
-    const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [lastResult] = useState<MapData | null>(null);
-    const [entryMode,setEntryMode]=useState<"upload"|"manual">("upload"); const [collaborators,setCollaborators]=useState<CollaboratorOption[]>([]); const [manualEmployeeIds,setManualEmployeeIds]=useState<string[]>([]); const [manual,setManual]=useState({company:"",serviceDate:"",service:"",dailyAmount:"",previousMonthDifference:"",occasionalDiscounts:"",days:"",amount:""});
-    const [individualValues,setIndividualValues]=useState<Record<string,Partial<typeof manual>>>({}); const [editingIndividuals,setEditingIndividuals]=useState(false); const [manualSuccess,setManualSuccess]=useState<string|null>(null); const manualReady=Boolean(entityId&&manualEmployeeIds.length&&manual.company.trim()&&manual.serviceDate&&Number(manual.amount)>0&&manualEmployeeIds.every(id=>Number(individualValues[id]?.amount??manual.amount)>0)); const manualHint=!entityId?"Selecione o Cadastro da obrigação para continuar.":!manualEmployeeIds.length?"Selecione ao menos um colaborador para continuar.":!manual.company.trim()?"Informe a empresa para continuar.":!manual.serviceDate?"Informe uma data da competência para continuar.":!manualReady?"Informe um Valor total válido para todos os colaboradores.":null; const manualDateMin=`${year}-${String(month).padStart(2,"0")}-01`;const manualDateMax=`${year}-${String(month).padStart(2,"0")}-${String(new Date(year,month,0).getDate()).padStart(2,"0")}`;
-    const load = useCallback(async () => { const response = await fetch(`/api/accounts-payable/transit-voucher?year=${year}&month=${month}`); const body = await response.json(); if (!response.ok)
-        throw new Error(body.error); setMaps(body.competence?.maps ?? []); }, [year, month]);
-    useEffect(() => { load().catch(() => setError("Falha ao carregar rateios.")); }, [load]);
-    useEffect(() => { Promise.all([fetch("/api/administrative-entities?q=").then((r) => r.json()), fetch("/api/auth/me").then((r) => r.json()),fetch("/api/collaborators?status=active&limit=1000").then(r=>r.json())]).then(([body, me,people]) => { setEntities((body.items ?? []).filter((entity: Entity) => acceptsMA(entity.locality))); setEmail(me.email ?? null);setCollaborators(people.items??[]); }); }, []);
-    async function upload(event: FormEvent) { event.preventDefault(); if (!file)
-        return; setBusy(true); setError(null); const form = new FormData(); form.set("year", String(year)); form.set("month", String(month)); form.set("administrativeEntityId", entityId); form.set("file", file); try {
-        const response = await fetch("/api/accounts-payable/transit-voucher/upload", { method: "POST", body: form });
-        const body = await response.json();
-        if (!response.ok)
-            throw new Error(body.error);
-        toast.success(`${body.map.totalRows} registros importados; ${body.map.invalidRows} pendência(s).`,"Arquivo processado com sucesso");
-        setFile(null);
-        setFileName("");
-        setUploadStatus("success");
-        await load();
-    }
-    catch (cause) {
-        setUploadStatus("error");
-        toast.error(cause instanceof Error ? cause.message : "Falha ao processar Vale Transporte.","Falha no processamento");
-    }
-    finally {
-        setBusy(false);
-    } }
-    async function saveManual(event:FormEvent){event.preventDefault();if(!manualReady)return;setBusy(true);setError(null);try{const entries=manualEmployeeIds.map(employeeId=>({employeeId,dailyAmount:individualValues[employeeId]?.dailyAmount??manual.dailyAmount,previousMonthDifference:individualValues[employeeId]?.previousMonthDifference??manual.previousMonthDifference,occasionalDiscounts:individualValues[employeeId]?.occasionalDiscounts??manual.occasionalDiscounts,days:individualValues[employeeId]?.days??manual.days,amount:individualValues[employeeId]?.amount??manual.amount}));const response=await fetch("/api/accounts-payable/transit-voucher/manual",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({year,month,administrativeEntityId:entityId,company:manual.company,serviceDate:manual.serviceDate,service:manual.service,entries})});const body=await response.json();if(!response.ok)throw new Error(body.error);setManualEmployeeIds([]);setIndividualValues({});setEditingIndividuals(false);setManual({company:"",serviceDate:"",service:"",dailyAmount:"",previousMonthDifference:"",occasionalDiscounts:"",days:"",amount:""});toast.success(body.duplicateCount?`${body.createdCount} lançamento(s) adicionado(s). ${body.duplicateCount} duplicidade(s) ignorada(s): ${body.duplicateNames.join(", ")}.`:`${body.createdCount} lançamento(s) de Vale Transporte adicionado(s).`);await load()}catch(cause){toast.error(cause instanceof Error?cause.message:"Falha ao salvar lançamentos.","Não foi possível salvar")}finally{setBusy(false)}}
-    async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.push("/login"); router.refresh(); }
-    return <div className="flex flex-1 flex-col">
-<CorporateHeader currentUserEmail={email} onLogout={logout}/>
-<main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
-<PageHeader backHref="/pagamentos" backLabel="Contas a pagar" title="Vale Transporte" description="Rateio por Empresa → Departamento → Colaborador · Maranhão (MA)."/>
-<section className="card p-5">
-<div className="mb-5 rounded-lg border border-base-300 bg-base-200/60 p-1"><div role="tablist" aria-label="Forma de entrada do Vale Transporte" className="grid grid-cols-2 gap-1"><Button role="tab" aria-selected={entryMode==="upload"} variant={entryMode==="upload"?"primary":"ghost"} onClick={()=>setEntryMode("upload")}>Upload de arquivo</Button><Button role="tab" aria-selected={entryMode==="manual"} variant={entryMode==="manual"?"primary":"ghost"} onClick={()=>setEntryMode("manual")}>Lançamento manual</Button></div></div>
-{entryMode==="manual"?<form onSubmit={saveManual} className="grid gap-5" aria-describedby={manualHint?"manual-transit-hint":undefined}><ManualEntrySection eyebrow="1. Contexto" title="Dados da obrigação"><div className="grid gap-4 md:grid-cols-2"><label htmlFor="transit-manual-competence" className="form-control"><span className="label-text mb-1">Competência *</span><input id="transit-manual-competence" type="month" className="input input-bordered w-full" value={competence} onChange={e=>setCompetence(e.target.value)}/></label><label htmlFor="transit-manual-entity" className="form-control"><span className="label-text mb-1">Cadastro da obrigação *</span><select id="transit-manual-entity" required className="select select-bordered w-full" value={entityId} onChange={e=>{setEntityId(e.target.value);setManualSuccess(null)}}><option value="">Selecionar cadastro</option>{entities.map(entity=><option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select>{!entityId&&<span className="mt-1 text-xs text-secondary">Selecione o cadastro que receberá a obrigação.</span>}</label></div></ManualEntrySection><ManualEntrySection eyebrow="2. Pessoas" title="Colaboradores"><CollaboratorMultiCombobox value={manualEmployeeIds} options={collaborators} onChange={ids=>{setManualEmployeeIds(ids);setManualSuccess(null)}}/></ManualEntrySection><ManualEntrySection eyebrow="3. Benefício" title="Dados do Vale Transporte"><div className="grid gap-4 md:grid-cols-2"><label htmlFor="transit-manual-company" className="form-control"><span className="label-text mb-1">Empresa *</span><input id="transit-manual-company" required className={`input input-bordered w-full ${manualEmployeeIds.length&&!manual.company.trim()?"input-warning":""}`} value={manual.company} onChange={e=>setManual({...manual,company:e.target.value})}/>{Boolean(manualEmployeeIds.length)&&!manual.company.trim()&&<span className="mt-1 text-xs text-warning">Empresa é obrigatória.</span>}</label><label htmlFor="transit-manual-date" className="form-control"><span className="label-text mb-1">Data *</span><input id="transit-manual-date" required type="date" min={manualDateMin} max={manualDateMax} className="input input-bordered w-full" value={manual.serviceDate} onChange={e=>setManual({...manual,serviceDate:e.target.value})}/></label><label htmlFor="transit-manual-service" className="form-control"><span className="label-text mb-1">Serviço</span><input id="transit-manual-service" className="input input-bordered w-full" value={manual.service} onChange={e=>setManual({...manual,service:e.target.value})}/></label><label htmlFor="transit-manual-days" className="form-control"><span className="label-text mb-1">Dias</span><input id="transit-manual-days" type="number" min="0" step="0.01" className="input input-bordered w-full" value={manual.days} onChange={e=>setManual({...manual,days:e.target.value})}/></label></div></ManualEntrySection><ManualEntrySection eyebrow="4. Financeiro" title="Valores"><div className="grid gap-4 md:grid-cols-2">{[["dailyAmount","Valor dia"],["previousMonthDifference","Dif. mês anterior"],["occasionalDiscounts","Descontos eventuais"]].map(([key,label])=><label key={key} className="form-control"><span className="label-text mb-1">{label}</span><input type="number" min="0" step="0.01" inputMode="decimal" placeholder="R$ 0,00" className="input input-bordered w-full" value={manual[key as keyof typeof manual]} onChange={e=>setManual({...manual,[key]:e.target.value})}/></label>)}<label htmlFor="transit-manual-total" className="form-control rounded-lg border border-primary/20 bg-primary/5 p-3"><span className="label-text mb-1 font-semibold text-primary">Valor total por colaborador *</span><input id="transit-manual-total" required type="number" min="0.01" step="0.01" inputMode="decimal" placeholder="R$ 0,00" className={`input input-bordered w-full bg-base-100 text-lg font-bold ${manualEmployeeIds.length&&!(Number(manual.amount)>0)?"input-warning":""}`} value={manual.amount} onChange={e=>setManual({...manual,amount:e.target.value})}/><span className="mt-1 text-xs text-secondary">Valor padrão; pode ser ajustado individualmente abaixo.</span></label></div>{manualEmployeeIds.length>0&&<div className="mt-4 rounded-lg border border-base-300 bg-base-100"><button type="button" className="flex w-full items-center justify-between gap-3 p-3 text-left font-semibold" onClick={()=>setEditingIndividuals(value=>!value)}><span>Ajustar valores individuais</span><span className="text-primary">{editingIndividuals?"Ocultar":"Revisar"}</span></button>{editingIndividuals&&<div className="grid max-h-[32rem] gap-3 overflow-y-auto border-t border-base-300 p-3">{manualEmployeeIds.map(id=>{const employee=collaborators.find(item=>item.id===id);const values=individualValues[id]??{};return <fieldset key={id} className="rounded-lg border border-base-300 p-3"><legend className="px-1 text-sm font-bold">{employee?.officialName}</legend><p className="mb-3 text-xs text-secondary">{employee?.department} · {employee?.costCenter||"Sem centro de custo"}</p><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{[["days","Dias"],["dailyAmount","Valor dia"],["previousMonthDifference","Dif. mês anterior"],["occasionalDiscounts","Descontos"],["amount","Valor total *"]].map(([key,label])=><label key={key} className="form-control"><span className="label-text mb-1 text-xs">{label}</span><input type="number" min="0" step="0.01" inputMode="decimal" className="input input-bordered input-sm w-full" value={values[key as keyof typeof manual]??manual[key as keyof typeof manual]} onChange={e=>setIndividualValues(current=>({...current,[id]:{...current[id],[key]:e.target.value}}))}/></label>)}</div></fieldset>})}</div>}</div>}</ManualEntrySection>{manualSuccess&&<div role="status" className="alert alert-success text-sm">{manualSuccess}</div>}{error&&<div role="alert" className="alert alert-error text-sm">{error}</div>}<div className="flex flex-col gap-2 md:items-end"><Button type="submit" disabled={busy||!manualReady} loading={busy} aura={manualReady} className="w-full md:w-auto md:min-w-64">{manualEmployeeIds.length<=1?"Salvar lançamento":`Salvar ${manualEmployeeIds.length} lançamentos`}</Button>{manualHint&&<p id="manual-transit-hint" className="text-xs text-secondary">{manualHint}</p>}</div></form>:<><h2 className="mb-4 text-lg font-bold">Upload</h2>
-<div className="mb-5 flex flex-col items-start justify-between gap-3 rounded-xl border border-base-300 bg-base-200 p-4 sm:flex-row sm:items-center">
-<div><p className="font-semibold text-neutral">Ainda não possui o arquivo?</p><p className="text-sm text-secondary">Use a máscara oficial de Vale Transporte, compatível com este importador.</p></div>
-<Link href="/api/accounts-payable/transit-voucher/template" className={buttonClassName({ variant: "secondary" })}>Baixar máscara XLSX</Link>
-</div>
-<form onSubmit={upload} className="grid gap-3 md:grid-cols-2">
-<label className="form-control">
-<span className="label-text mb-1">Competência</span>
-<input type="month" value={competence} disabled={busy} onChange={(event) => setCompetence(event.target.value)} className="input input-bordered w-full"/>
-</label>
-<label className="form-control">
-<span className="label-text mb-1">Cadastro da obrigação *</span>
-<select required value={entityId} disabled={busy} onChange={(event) => setEntityId(event.target.value)} className="select select-bordered w-full">
-<option value="">Selecionar cadastro de MA</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName} — {entity.legalName} — {formatCnpj(entity.cnpj)}</option>)}</select>
-</label>
-<label className="form-control md:col-span-2">
-<span className="label-text mb-1">Arquivo Vale Transporte (CSV/XLSX) *</span>
-<FileInput required accept=".csv,.xlsx" fileName={fileName} loading={busy} status={uploadStatus === "loading" ? "normal" : uploadStatus} onChange={(event) => { const selected = event.target.files?.[0] ?? null; setFile(selected); setFileName(selected?.name ?? ""); setUploadStatus("normal"); setError(null); }}/>
-</label>
-<Button type="submit" disabled={busy || !entityId || !file} loading={busy} aura className="md:col-span-2">{busy ? "Processando..." : maps.some((map) => map.administrativeEntity.id === entityId) ? "Enviar nova versão" : "Processar Vale Transporte"}</Button>
-</form>{error && <div className="alert alert-error mt-4 text-sm">{error}</div>}{lastResult && <div className="alert alert-success mt-4 block text-sm"><strong>Arquivo processado com sucesso.</strong><p>{lastResult.totalRows} registros importados · {lastResult.validRows} válidos · {lastResult.invalidRows} pendências · {new Set(lastResult.allocations.map((row) => normalize(row.company))).size} empresas · {new Set(lastResult.allocations.map(employeeKey)).size} colaboradores únicos · {new Set(lastResult.allocations.map((row) => normalize(`${row.company}|${row.department}`))).size} departamentos · {money(lastResult.totalAmount)}</p></div>}<p className="mt-3 text-xs text-secondary">Obrigatórios: EMPRESA, NOME, DATA, DEPARTAMENTO e VALOR TOTAL. Os demais campos oficiais são preservados para auditoria.</p>
-</>}
-</section>
-<section className="grid gap-4">
-<h2 className="text-lg font-bold">Rateio</h2>{maps.length ? sortedPtBr(maps,map=>map.administrativeEntity.tradeName||map.administrativeEntity.legalName,(a,b)=>comparePtBr(a.id,b.id)).map((map) => <MapCard key={map.id} map={map} onReload={load}/>) : <div className="card"><EmptyState title="Nenhum arquivo processado nesta competência."/></div>}</section>
-<Summary maps={maps}/>
-</main>
-</div>;
+  const router = useRouter();
+  const toast = useToast();
+  const now = new Date();
+  const [competence, setCompetence] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+  const [year, month] = competence.split("-").map(Number);
+  const [tab, setTab] = useState<"preenchimento" | "rateio" | "resumo">("preenchimento");
+  const [email, setEmail] = useState<string | null>(null);
+  const [entities, setEntities] = useState<Entity[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([]);
+  const [configs, setConfigs] = useState<Record<string, { qty: number; companyId: string | null }>>({});
+  const [ctx, setCtx] = useState<Context | null>(null);
+  const [maps, setMaps] = useState<MapData[]>([]);
+  const [entityId, setEntityId] = useState("");
+  const [fareInput, setFareInput] = useState("4.20");
+  const [holidayDate, setHolidayDate] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [values, setValues] = useState<Record<string, EntryValue>>({});
+  const [bulkCompany, setBulkCompany] = useState("");
+  const [companyModal, setCompanyModal] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ mapId: string; ids: string[] | "map" } | null>(null);
+  const [correcting, setCorrecting] = useState<{ mapId: string; row: Allocation } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const loadContext = useCallback(async () => {
+    const response = await fetch(`/api/accounts-payable/transit-voucher/context?year=${year}&month=${month}`); const body = await response.json();
+    if (!response.ok) throw new Error(body.error); setCtx(body); setFareInput(body.fareUnitPrice);
+  }, [year, month]);
+  const loadMaps = useCallback(async () => {
+    const response = await fetch(`/api/accounts-payable/transit-voucher?year=${year}&month=${month}`); const body = await response.json();
+    if (!response.ok) throw new Error(body.error); setMaps(body.competence?.maps ?? []);
+  }, [year, month]);
+  const reload = useCallback(async () => { await Promise.all([loadContext(), loadMaps()]); }, [loadContext, loadMaps]);
+  useEffect(() => { reload().catch(() => setError("Falha ao carregar a competência.")); }, [reload]);
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/administrative-entities?q=").then((r) => r.json()), fetch("/api/auth/me").then((r) => r.json()),
+      fetch("/api/collaborators?status=active&limit=1000").then((r) => r.json()), fetch("/api/master-data/companies").then((r) => r.json()),
+      fetch("/api/accounts-payable/transit-voucher/employee-config").then((r) => r.json()),
+    ]).then(([entitiesBody, me, people, companyBody, configBody]) => {
+      setEntities((entitiesBody.items ?? []).filter((entity: Entity) => acceptsMA(entity.locality))); setEmail(me.email ?? null);
+      setCollaborators(people.items ?? []); setCompanies((companyBody.items ?? []).filter((company: Company) => company.active));
+      setConfigs(Object.fromEntries((configBody.items ?? []).map((item: { employeeId: string; dailyPassageQuantity: number; defaultCompanyId: string | null }) => [item.employeeId, { qty: item.dailyPassageQuantity, companyId: item.defaultCompanyId }])));
+    }).catch(() => undefined);
+  }, []);
+
+  const holidayByDate = useMemo(() => new Map((ctx?.holidays ?? []).map((holiday) => [holiday.date, holiday])), [ctx]);
+  const companyByText = useCallback((text: string) => companies.find((company) => normalize(companyLabel(company)) === normalize(text) || normalize(company.legalName) === normalize(text)), [companies]);
+  const fareDirty = Boolean(ctx) && fareInput.trim().replace(",", ".") !== Number(ctx?.fareUnitPrice).toFixed(2);
+
+  async function post(url: string, method: string, payload: unknown) {
+    const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Falha na operação."); return body;
+  }
+  async function saveFare() {
+    try { setCtx(await post("/api/accounts-payable/transit-voucher/context", "PUT", { year, month, fareUnitPrice: fareInput })); toast.success("Valor da passagem salvo para esta competência."); }
+    catch (cause) { toast.error(cause instanceof Error ? cause.message : "Falha ao salvar o valor.", "Valor da passagem"); }
+  }
+  async function saveHoliday(name: string) { try { setCtx(await post("/api/accounts-payable/transit-voucher/holidays", "POST", { year, month, date: holidayDate, name })); setHolidayDate(null); } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Falha ao salvar o feriado."); } }
+  async function removeHoliday() { try { setCtx(await post("/api/accounts-payable/transit-voucher/holidays", "DELETE", { year, month, date: holidayDate })); setHolidayDate(null); } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Falha ao remover o feriado."); } }
+
+  function changeSelection(ids: string[]) {
+    setSelectedIds(ids);
+    setValues((current) => { const next = { ...current }; for (const id of ids) if (!next[id]) { const preset = companies.find((company) => company.id === configs[id]?.companyId); next[id] = { companyText: preset ? companyLabel(preset) : "", companyId: preset?.id ?? "", qty: configs[id] ? String(configs[id].qty) : "", diff: "0", discount: "0", obsType: "", obsDetails: "" }; } return next; });
+  }
+  const patchValue = (id: string, patch: Partial<EntryValue>) => setValues((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
+  function applyCompany(text: string) { setBulkCompany(text); const company = companyByText(text); if (company) setValues((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, selectedIds.includes(id) ? { ...value, companyText: companyLabel(company), companyId: company.id } : value]))); }
+
+  const entityBase = useMemo(() => mapBase(maps.find((map) => map.administrativeEntity.id === entityId)), [maps, entityId]);
+  const baseFare = entityBase?.fareUnitPrice ?? ctx?.fareUnitPrice;
+  const baseDays = entityBase?.workingDays ?? ctx?.workingDays ?? 0;
+  const fareCents = useMemo(() => { try { return baseFare ? parseFareToCents(baseFare) : 0; } catch { return 0; } }, [baseFare]);
+  const preview = selectedIds.map((id) => {
+    const value = values[id]; const employee = collaborators.find((item) => item.id === id);
+    if (!value || !ctx) return { id, employee, error: "Carregando…", passages: 0, total: 0 };
+    const problems: string[] = [];
+    if (!value.companyId) problems.push("Empresa");
+    if (!isInt(value.qty) || Number(value.qty) < 1) problems.push("Passagem por dia");
+    if (!isInt(value.diff)) problems.push("Diferença");
+    if (!isInt(value.discount) || Number(value.discount) < 0) problems.push("Descontos");
+    if (value.obsType === "OTHER" && !value.obsDetails.trim()) problems.push("Observação");
+    if (problems.length) return { id, employee, error: `Revise: ${problems.join(", ")}`, passages: 0, total: 0 };
+    const passages = calculatePassagesToReceive(baseDays, Number(value.diff), Number(value.discount));
+    try { assertPassagesToReceive(passages); return { id, employee, error: null, passages, total: calculateTransitVoucherEmployeeTotal(fareCents, Number(value.qty), passages) }; }
+    catch { return { id, employee, error: "Passagens a receber negativo", passages, total: 0 }; }
+  });
+  const previewTotal = preview.reduce((sum, row) => sum + row.total, 0);
+  const canSave = Boolean(entityId && selectedIds.length && ctx && !fareDirty && preview.every((row) => !row.error && row.total > 0));
+  const hint = !entityId ? "Selecione o Cadastro da obrigação." : fareDirty ? "Salve o valor da passagem antes de continuar." : !selectedIds.length ? "Selecione ao menos um colaborador." : preview.find((row) => row.error)?.error ?? null;
+
+  async function save(event: FormEvent) {
+    event.preventDefault(); if (!canSave) return; setBusy(true); setError(null);
+    try {
+      const entries = selectedIds.map((id) => { const value = values[id]; return { employeeId: id, companyId: value.companyId, dailyPassageQuantity: Number(value.qty), previousPassageDifference: Number(value.diff), passageDiscount: Number(value.discount), observationType: value.obsType || null, observationDetails: value.obsDetails.trim() || null }; });
+      const body = await post("/api/accounts-payable/transit-voucher/entries", "POST", { year, month, administrativeEntityId: entityId, entries });
+      setConfigs((current) => ({ ...current, ...Object.fromEntries(entries.map((entry) => [entry.employeeId, { qty: entry.dailyPassageQuantity, companyId: entry.companyId }])) }));
+      setSelectedIds([]); setValues({});
+      toast.success(body.duplicateCount ? `${body.createdCount} lançamento(s) salvo(s). ${body.duplicateCount} já lançado(s) nesta competência: ${body.duplicateNames.join(", ")}.` : `${body.createdCount} lançamento(s) de Vale Transporte salvo(s). Rateio gerado.`);
+      await reload(); setTab("rateio");
+    } catch (cause) { const message = cause instanceof Error ? cause.message : "Falha ao salvar lançamentos."; setError(message); toast.error(message, "Não foi possível salvar"); } finally { setBusy(false); }
+  }
+  async function confirmDelete(reason: string) {
+    if (!deleteTarget) return; setDeleting(true); setDeleteError(null);
+    try {
+      const url = deleteTarget.ids === "map" ? `/api/accounts-payable/transit-voucher/${deleteTarget.mapId}` : `/api/accounts-payable/transit-voucher/${deleteTarget.mapId}/records`;
+      await post(url, "DELETE", deleteTarget.ids === "map" ? { reason, confirmation: "EXCLUIR" } : { ids: deleteTarget.ids, reason });
+      setDeleteTarget(null); await reload();
+    } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Não foi possível excluir."); } finally { setDeleting(false); }
+  }
+  async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.push("/login"); router.refresh(); }
+
+  // ---- Agregações de leitura (Empresa → Departamento → Colaborador); nada persistido/duplicado ----
+  const all = maps.flatMap((map) => map.allocations);
+  const tree = useMemo(() => {
+    const companiesMap = new Map<string, Map<string, Allocation[]>>();
+    for (const row of all) { const departments = companiesMap.get(row.company) ?? new Map<string, Allocation[]>(); const key = row.department ?? "Não informado"; departments.set(key, [...(departments.get(key) ?? []), row]); companiesMap.set(row.company, departments); }
+    return companiesMap;
+  }, [all]);
+  const sum = (rows: Allocation[]) => rows.reduce((total, row) => total + cents(row.amount), 0);
+  const grand = sum(all);
+  const byCompanySum = [...tree.values()].reduce((total, departments) => total + [...departments.values()].reduce((inner, rows) => inner + sum(rows), 0), 0);
+  const mapsTotal = maps.reduce((total, map) => total + cents(map.totalAmount), 0);
+  const difference = grand - byCompanySum + (grand - mapsTotal);
+  const uniquePeople = new Set(all.map((row) => row.employeeId ?? normalize(row.employeeName))).size;
+  const sortedTree = [...tree].sort(([a], [b]) => comparePtBr(a, b));
+
+  const tabButton = (id: typeof tab, label: string) => <Button role="tab" aria-selected={tab === id} variant={tab === id ? "primary" : "ghost"} onClick={() => setTab(id)}>{label}</Button>;
+  const monthLabel = `${String(month).padStart(2, "0")}/${year}`;
+
+  return <div className="flex flex-1 flex-col">
+    <CorporateHeader currentUserEmail={email} onLogout={logout} />
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
+      <PageHeader backHref="/pagamentos" backLabel="Despesas" title="Vale Transporte" description="Rateio por Empresa → Departamento → Colaborador · Maranhão (MA)." />
+      <div className="rounded-lg border border-base-300 bg-base-200/60 p-1"><div role="tablist" aria-label="Etapas do Vale Transporte" className="grid grid-cols-3 gap-1">{tabButton("preenchimento", "Preenchimento")}{tabButton("rateio", "Rateio")}{tabButton("resumo", "Resumo")}</div></div>
+
+      {tab === "preenchimento" && <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-5" role="tabpanel">
+        <ManualEntrySection eyebrow="1. Dados necessários" title="Competência, calendário e tarifa">
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="form-control"><span className="label-text mb-1">Competência *</span><input type="month" className="input input-bordered w-full" value={competence} onChange={(event) => setCompetence(event.target.value)} /></label>
+            <label className="form-control"><span className="label-text mb-1">Cadastro da obrigação *</span><select required className="select select-bordered w-full" value={entityId} onChange={(event) => setEntityId(event.target.value)}><option value="">Selecionar cadastro</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select></label>
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,22rem)_1fr]">
+            <div><CompetenceCalendar year={year} month={month} holidays={ctx?.holidays ?? []} onSelect={setHolidayDate} /><p className="mt-2 text-xs text-secondary">Feriados nacionais são automáticos. Clique em uma data para cadastrar feriados estaduais, municipais ou internos (ou para editar/remover os manuais).</p></div>
+            <div className="grid content-start gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2"><MetricCard label="Competência" value={monthLabel} /></div>
+                <MetricCard label="Dias úteis" value={String(ctx?.workingDays ?? "—")} description={ctx ? `${ctx.weekdays} seg–sex − ${ctx.holidaysOnWeekdays} feriado(s)` : undefined} accent />
+                <MetricCard label="Feriados" value={String(ctx?.holidaysInMonth ?? "—")} />
+              </div>
+              <div className="rounded-lg border border-base-300 p-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-secondary">Feriados cadastrados</span>
+                {ctx?.holidays.length ? <ul className="mt-2 grid gap-1 text-sm">{ctx.holidays.map((holiday) => <li key={holiday.date}><button type="button" className="text-left hover:text-primary" onClick={() => setHolidayDate(holiday.date)}><strong>{dayMonth(holiday.date)}</strong> — {holiday.name}<span className="ml-2 text-xs text-secondary">{holiday.source === "NATIONAL" ? "Nacional" : "Manual"}</span></button></li>)}</ul> : <p className="mt-1 text-sm text-secondary">Nenhum feriado marcado.</p>}
+              </div>
+              <div className="flex flex-wrap items-end gap-2 rounded-lg border border-base-300 p-3">
+                <label className="form-control min-w-40 flex-1"><span className="label-text mb-1">Valor unitário da passagem</span><input inputMode="decimal" className="input input-bordered w-full" value={fareInput} onChange={(event) => setFareInput(event.target.value)} /></label>
+                <Button type="button" variant="secondary" onClick={saveFare} disabled={!fareDirty}>Salvar valor</Button>
+                <span className="basis-full text-xs text-secondary">{ctx?.fareDefined ? "Valor salvo nesta competência; lançamentos antigos não mudam se ele for alterado." : "Valor padrão R$ 4,20 (ainda não salvo para esta competência)."}</span>
+              </div>
+            </div>
+          </div>
+        </ManualEntrySection>
+
+        <ManualEntrySection eyebrow="2. Pessoas" title="Colaboradores">
+          {entityBase && <p className="mb-3 rounded-lg border border-base-300 bg-base-100 p-3 text-sm text-secondary" role="note">Este lançamento já possui mapa: novos colaboradores usarão a base histórica do mapa ({entityBase.workingDays} dias úteis · {money(entityBase.fareUnitPrice)} por passagem), mesmo que a competência tenha sido alterada depois.</p>}
+          <CollaboratorMultiCombobox value={selectedIds} options={collaborators} onChange={changeSelection} />
+          {selectedIds.length > 0 && <>
+            <datalist id="vt-companies">{companies.map((company) => <option key={company.id} value={companyLabel(company)} />)}</datalist>
+            <div className="mt-4 flex flex-wrap items-end gap-2">
+              <label className="form-control min-w-56 flex-1"><span className="label-text mb-1">Empresa para todos os selecionados</span><input list="vt-companies" className="input input-bordered w-full" value={bulkCompany} onChange={(event) => applyCompany(event.target.value)} placeholder="Digite para buscar" /></label>
+              <Button type="button" variant="secondary" onClick={() => setCompanyModal(true)}>Cadastrar empresa</Button>
+            </div>
+            <div className="mt-4 overflow-x-auto rounded-lg border border-base-300">
+              <table className="w-full min-w-[1100px] text-sm">
+                <thead><tr className="border-b border-border bg-base-200 text-left text-xs"><th className="p-2">Empresa</th><th className="p-2">Colaborador</th><th className="p-2">Departamento</th><th className="p-2">Passagem por Dia</th><th className="p-2">Diferença Passagem Mês Anterior</th><th className="p-2">Descontos Passagens</th><th className="p-2 text-right">Passagens a Receber</th><th className="p-2 text-right">Valor Total</th><th className="p-2">Observação</th></tr></thead>
+                <tbody>
+                  {preview.map((row) => { const value = values[row.id]; if (!value) return null; const unmatched = value.companyText.trim() && !value.companyId; return <tr key={row.id} className="border-b border-border align-top last:border-0">
+                    <td className="p-2"><input list="vt-companies" aria-label={`Empresa de ${row.employee?.officialName}`} className={`input input-bordered input-sm w-40 ${unmatched || !value.companyId ? "input-warning" : ""}`} value={value.companyText} onChange={(event) => { const company = companyByText(event.target.value); patchValue(row.id, { companyText: event.target.value, companyId: company?.id ?? "" }); }} />{unmatched && <span className="mt-1 block text-xs text-warning">Selecione uma empresa cadastrada.</span>}</td>
+                    <td className="p-2 font-medium">{row.employee?.officialName}</td>
+                    <td className="p-2">{row.employee?.department}<span className="block text-xs text-secondary">{row.employee?.costCenter || "Sem CC"}</span></td>
+                    <td className="p-2"><input aria-label="Passagem por dia" inputMode="numeric" className="input input-bordered input-sm w-20" value={value.qty} onChange={(event) => patchValue(row.id, { qty: event.target.value })} /></td>
+                    <td className="p-2"><input aria-label="Diferença mês anterior" inputMode="numeric" className="input input-bordered input-sm w-20" value={value.diff} onChange={(event) => patchValue(row.id, { diff: event.target.value })} /></td>
+                    <td className="p-2"><input aria-label="Descontos" inputMode="numeric" className="input input-bordered input-sm w-20" value={value.discount} onChange={(event) => patchValue(row.id, { discount: event.target.value })} /></td>
+                    <td className={`p-2 text-right font-semibold ${row.error ? "text-error" : ""}`}>{row.error ? "—" : row.passages}</td>
+                    <td className="whitespace-nowrap p-2 text-right font-semibold text-primary">{row.error ? <span className="text-xs font-normal text-error">{row.error}</span> : money(row.total / 100)}</td>
+                    <td className="p-2"><div className="flex gap-1"><select aria-label="Tipo de observação" className="select select-bordered select-sm w-24" value={value.obsType} onChange={(event) => patchValue(row.id, { obsType: event.target.value as EntryValue["obsType"] })}><option value="">—</option><option value="VACATION">Férias</option><option value="OTHER">Outros</option></select>{value.obsType && <input aria-label="Detalhes da observação" className="input input-bordered input-sm w-36" placeholder={value.obsType === "VACATION" ? "24/08 a 22/09" : "Detalhes"} value={value.obsDetails} onChange={(event) => patchValue(row.id, { obsDetails: event.target.value })} />}</div>{value.obsType && value.obsDetails.trim() && <span className="mt-1 block text-xs text-secondary">{formatTransitObservation(value.obsType, value.obsDetails)}</span>}</td>
+                  </tr>; })}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-sm">Prévia do Total Geral: <strong className="text-primary">{money(previewTotal / 100)}</strong> · {selectedIds.length} colaborador(es) · o servidor recalcula tudo ao salvar.</p>
+          </>}
+        </ManualEntrySection>
+
+        {error && <div role="alert" className="alert alert-error text-sm">{error}</div>}
+        <div className="flex flex-col gap-2 md:items-end"><Button type="submit" disabled={busy || !canSave} loading={busy} aura={canSave} className="w-full md:w-auto md:min-w-64">Salvar / Gerar Rateio</Button>{hint && <p className="text-xs text-secondary">{hint}</p>}</div>
+      </form>}
+
+      {tab === "rateio" && <section role="tabpanel" className="grid gap-4">
+        {maps.length ? maps.map((map) => {
+          const rows = map.allocations; const mapTree = new Map<string, Map<string, Allocation[]>>();
+          for (const row of rows) { const departments = mapTree.get(row.company) ?? new Map<string, Allocation[]>(); const key = row.department ?? "Não informado"; departments.set(key, [...(departments.get(key) ?? []), row]); mapTree.set(row.company, departments); }
+          const mapSum = sum(rows); const diff = mapSum - cents(map.totalAmount);
+          return <AllocationCard key={map.id} title={map.administrativeEntity.tradeName} subtitle={`competência ${String(month).padStart(2, "0")}/${year} · v${map.version}`} badge={<Badge tone="success">Concluído</Badge>}
+            indicators={[{ label: "Empresas / setores", value: `${mapTree.size} / ${[...mapTree.values()].reduce((total, departments) => total + departments.size, 0)}` }, { label: "Colaboradores", value: new Set(rows.map((row) => row.employeeId ?? row.employeeName)).size }, { label: "Dias úteis · passagem", value: `${mapBase(map)?.workingDays ?? ctx?.workingDays ?? "—"} · ${mapBase(map) ? money(mapBase(map)!.fareUnitPrice) : ctx ? money(ctx.fareUnitPrice) : "—"}` }, { label: "Valor total · obrigação", value: `${money(map.totalAmount)}${map.financialRecord ? ` · ${map.financialRecord.identifier}` : ""}` }]}>
+            <AllocationDepartmentList>{[...mapTree].sort(([a], [b]) => comparePtBr(a, b)).map(([company, departments]) => { const companyRows = [...departments.values()].flat(); return <AllocationDepartmentAccordion key={company} name={company} summary={`${people(new Set(companyRows.map((row) => row.employeeId ?? row.employeeName)).size)} · ${money(sum(companyRows) / 100)}`}>
+              <div className="grid gap-3">{[...departments].sort(([a], [b]) => comparePtBr(a, b)).map(([department, deptRows]) => <AllocationDepartmentAccordion key={department} name={department} summary={`${people(deptRows.length)} · ${money(sum(deptRows) / 100)}`}>
+                <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-sm"><thead><tr className="border-b border-border text-left text-xs text-secondary"><th className="py-2 pr-2">Colaborador</th><th className="py-2 pr-2 text-right">Passagens/dia</th><th className="py-2 pr-2 text-right">A receber</th><th className="py-2 pr-2 text-right">Valor</th><th className="py-2 pr-2">Observação</th><th /></tr></thead><tbody>{[...deptRows].sort((a, b) => comparePtBr(a.employeeName, b.employeeName)).map((row) => <tr key={row.id} className="border-b border-border last:border-0"><td className="py-2 pr-2">{row.employeeName}</td><td className="py-2 pr-2 text-right">{row.dailyPassageQuantity ?? "—"}</td><td className="py-2 pr-2 text-right">{row.passagesToReceive ?? "—"}</td><td className="whitespace-nowrap py-2 pr-2 text-right">{money(row.amount)}</td><td className="py-2 pr-2">{formatTransitObservation(row.observationType, row.observationDetails) || "—"}</td><td className="whitespace-nowrap py-2 text-right">{row.passagesToReceive !== null && <button type="button" className="mr-3 text-xs font-semibold text-primary" onClick={() => setCorrecting({ mapId: map.id, row })}>Corrigir</button>}<button type="button" className="text-xs font-semibold text-error" onClick={() => setDeleteTarget({ mapId: map.id, ids: [row.id] })}>Excluir</button></td></tr>)}</tbody></table></div>
+              </AllocationDepartmentAccordion>)}</div>
+            </AllocationDepartmentAccordion>; })}</AllocationDepartmentList>
+            <div className={`mt-4 flex flex-wrap gap-x-6 gap-y-1 rounded-md border px-3 py-2 text-sm ${diff !== 0 ? "border-error/40 bg-error/5 text-error" : "border-border"}`} role={diff !== 0 ? "alert" : undefined}><span>Valor total <strong>{money(map.totalAmount)}</strong></span><span>Rateado <strong>{money(mapSum / 100)}</strong></span><span>Diferença <strong>{money(diff / 100)}</strong></span></div>
+            <div className="mt-4 flex flex-wrap gap-2"><a href={`/api/accounts-payable/transit-voucher/${map.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}>Download do rateio XLSX</a><Button size="sm" variant="error" onClick={() => setDeleteTarget({ mapId: map.id, ids: "map" })}>Cancelar lançamento</Button></div>
+          </AllocationCard>;
+        }) : <div className="card"><EmptyState title="Nenhum lançamento nesta competência." description="Preencha as etapas 1 e 2 para gerar o rateio." /></div>}
+      </section>}
+
+      {tab === "resumo" && <section role="tabpanel" className="grid gap-4">
+        {all.length ? <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5"><MetricCard label="Empresas" value={String(tree.size)} /><MetricCard label="Colaboradores" value={String(uniquePeople)} /><MetricCard label="Dias úteis" value={[...new Set(maps.map((map) => mapBase(map)?.workingDays))].length > 1 ? "Vários" : String(mapBase(maps[0])?.workingDays ?? ctx?.workingDays ?? "—")} /><MetricCard label="Passagem" value={[...new Set(maps.map((map) => mapBase(map)?.fareUnitPrice))].length > 1 ? "Vários" : mapBase(maps[0]) ? money(mapBase(maps[0])!.fareUnitPrice) : ctx ? money(ctx.fareUnitPrice) : "—"} /><MetricCard label="Total Geral" value={money(grand / 100)} accent /></div>
+          <div className="grid gap-3">{sortedTree.map(([company, departments]) => { const companyRows = [...departments.values()].flat(); return <details key={company} open className="rounded-lg border border-border"><summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4"><strong>{company}</strong><span className="font-semibold text-primary">{money(sum(companyRows) / 100)}</span></summary><div className="border-t border-border px-4 py-2">{[...departments].sort(([a], [b]) => comparePtBr(a, b)).map(([department, rows]) => <div key={department} className="flex justify-between border-b border-border py-2 pl-4 text-sm last:border-0"><span>↳ {department} <span className="text-xs text-secondary">({rows.length})</span></span><span>{money(sum(rows) / 100)}</span></div>)}</div></details>; })}</div>
+          <div className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border-2 px-4 py-3 ${difference !== 0 ? "border-error bg-error/5 text-error" : "border-primary/40 bg-primary/5"}`}><strong>Total Geral</strong><strong className="text-xl">{money(grand / 100)}</strong><span className="basis-full text-xs">{difference === 0 ? "Colaboradores = departamentos = empresas = total · diferença R$ 0,00" : `Inconsistência: diferença ${money(difference / 100)}`}</span></div>
+        </> : <div className="card"><EmptyState title="Nenhum lançamento nesta competência." /></div>}
+      </section>}
+    </main>
+    <HolidayModal date={holidayDate} holiday={holidayDate ? holidayByDate.get(holidayDate) ?? null : null} onClose={() => setHolidayDate(null)} onSave={saveHoliday} onRemove={removeHoliday} />
+    <CorrectionModal target={correcting} companies={companies} onClose={() => setCorrecting(null)} onSaved={reload} />
+    <CompanyModal open={companyModal} onClose={() => setCompanyModal(false)} onCreated={(company) => setCompanies((current) => [...current, company])} />
+    <DeletionModal open={deleteTarget !== null} title={deleteTarget?.ids === "map" ? "Cancelar todo o lançamento?" : "Excluir registro?"} description={deleteTarget?.ids === "map" ? "O lançamento e a obrigação serão cancelados." : "Essa ação cancelará o registro e recalculará departamento, empresa, total e obrigação."} count={deleteTarget?.ids === "map" ? 1 : (deleteTarget?.ids.length ?? 1)} requireKeyword={deleteTarget?.ids === "map"} busy={deleting} onClose={() => { if (!deleting) setDeleteTarget(null); }} onConfirm={confirmDelete} />
+    {deleteError && <div role="alert" className="alert alert-error mx-auto max-w-7xl text-sm">{deleteError}</div>}
+  </div>;
 }

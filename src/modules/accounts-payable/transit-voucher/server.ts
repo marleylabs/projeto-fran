@@ -58,6 +58,7 @@ export async function editTransitVoucherMap(mapId: string, rows: Array<{ id: str
   return prisma.$transaction(async (tx) => {
     const map = await tx.transitVoucherMap.findUnique({ where: { id: mapId }, include: { allocations: true } });
     if (!map || !map.current) throw new TransitVoucherValidationError("Rateio atual não encontrado.");
+    if (map.allocations.some((row) => row.passagesToReceive !== null)) throw new TransitVoucherValidationError("Lançamentos calculados pelo sistema são corrigidos pelo fluxo de correção; o servidor recalcula os valores.");
     const expected = new Set(map.allocations.map((row) => row.id));
     if (normalized.length !== expected.size || normalized.some((row) => !expected.has(row.id))) throw new TransitVoucherValidationError("O conjunto de registros editados não corresponde ao rateio atual.");
     for (const row of normalized) await tx.transitVoucherAllocation.update({ where: { id: row.id }, data: { company: row.company, department: row.department, employeeName: row.employeeName, amount: row.amount } });
