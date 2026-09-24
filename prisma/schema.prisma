@@ -60,6 +60,10 @@ model User {
   trainingExpensesCancelled TrainingExpense[] @relation("TrainingExpenseCanceller")
   trainingExpenseRevisions TrainingExpenseRevision[] @relation("TrainingExpenseRevisionEditor")
   transitHolidays TransitVoucherHoliday[] @relation("TransitHolidayCreator")
+  breakfastMaps BreakfastMap[] @relation("BreakfastMapCreator")
+  cancelledBreakfastMaps BreakfastMap[] @relation("BreakfastMapCanceller")
+  deletedBreakfastAllocations BreakfastAllocation[] @relation("BreakfastAllocationDeleter")
+  breakfastHolidays BreakfastHoliday[] @relation("BreakfastHolidayCreator")
 }
 
 model PasswordResetToken {
@@ -162,6 +166,8 @@ model Company {
   approvalPolicies ApprovalPolicy[]
   transitVoucherAllocations TransitVoucherAllocation[]
   transitVoucherEmployeeConfigs TransitVoucherEmployeeConfig[]
+  breakfastAllocations BreakfastAllocation[]
+  breakfastEmployeeConfigs BreakfastEmployeeConfig[]
 }
 
 model Branch {
@@ -215,6 +221,8 @@ model AdministrativeEntity {
   foodAllocations  FoodAllocation[]
   transitVoucherMaps TransitVoucherMap[]
   transitVoucherAllocations TransitVoucherAllocation[]
+  breakfastMaps    BreakfastMap[]
+  breakfastAllocations BreakfastAllocation[]
   trainingProposals TrainingProposal[]
   trainings        Training[]
   trainingExpenses TrainingExpense[]
@@ -502,6 +510,7 @@ model FinancialRecord {
   approvalRequests       ApprovalRequest[]
   foodBatch              FoodBatch?
   transitVoucherMap      TransitVoucherMap?
+  breakfastMap           BreakfastMap?
   trainingExpense        TrainingExpense?
 
   @@unique([sequenceYear, sequenceNumber])
@@ -631,8 +640,10 @@ model FoodEmployee {
   aliases        FoodEmployeeAlias[]
   occurrences    FoodMealOccurrence[]
   transitAllocations TransitVoucherAllocation[]
+  breakfastAllocations BreakfastAllocation[]
   trainingExpenseParticipations TrainingExpenseParticipant[]
   transitConfig  TransitVoucherEmployeeConfig?
+  breakfastConfig BreakfastEmployeeConfig?
   mergedInto     FoodEmployee?        @relation("FoodEmployeeMerges", fields: [mergedIntoId], references: [id], onDelete: Restrict)
   mergedEmployees FoodEmployee[]      @relation("FoodEmployeeMerges")
 
@@ -887,6 +898,131 @@ model TransitVoucherIssue {
 
   @@index([mapId, sourceRow])
   @@index([mapId, resolvedAt])
+}
+
+// ===== Café da Manhã (subseção de Despesas → Alimentação) =====
+// Domínio próprio, sem relação com TransitVoucher* — só reaproveita as funções puras de
+// calendário/feriados nacionais (@/modules/shared) e o kernel financeiro (FinancialRecord),
+// no mesmo espírito do Vale Transporte: Competência (tarifa/feriados) → Map (lançamento por
+// cadastro da obrigação, com holidaysSnapshot) → Allocation (linha por colaborador, com
+// snapshot completo). Café da Manhã tem sua PRÓPRIA lista de feriados manuais (BreakfastHoliday)
+// — não compartilha a tabela do Vale Transporte, decisão registrada no relatório de análise.
+model BreakfastCompetence {
+  id          String               @id @default(cuid())
+  year        Int
+  month       Int
+  unitPrice   Decimal?             @db.Decimal(19, 4)
+  holidays    BreakfastHoliday[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  maps        BreakfastMap[]
+  allocations BreakfastAllocation[]
+
+  @@unique([year, month])
+}
+
+model BreakfastMap {
+  id                     String              @id @default(cuid())
+  competenceId           String
+  administrativeEntityId String
+  createdByUserId        String
+  financialRecordId      String?             @unique
+  version                Int
+  current                Boolean             @default(true)
+  status                 FoodBatchStatus
+  totalRows              Int
+  validRows              Int
+  invalidRows            Int
+  totalAmount            Decimal             @db.Decimal(19, 4)
+  holidaysSnapshot       Json?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  cancelledAt            DateTime?
+  cancelledByUserId      String?
+  cancellationReason     String?
+  competence             BreakfastCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  createdBy              User                @relation("BreakfastMapCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  cancelledBy            User?               @relation("BreakfastMapCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  financialRecord        FinancialRecord?    @relation(fields: [financialRecordId], references: [id], onDelete: Restrict)
+  allocations            BreakfastAllocation[]
+
+  @@unique([competenceId, administrativeEntityId, version])
+  @@index([competenceId, administrativeEntityId, current])
+}
+
+model BreakfastAllocation {
+  id                     String              @id @default(cuid())
+  mapId                  String
+  competenceId           String
+  administrativeEntityId String
+  sourceRow              Int
+  employeeId             String?
+  employeeName           String
+  company                String
+  companyId              String?
+  department             String?
+  costCenter             String?
+  workingDays            Int?
+  baseQuantity           Int?
+  extraQuantity          Int?
+  discountQuantity       Int                 @default(0)
+  finalQuantity          Int?
+  unitPrice              Decimal?            @db.Decimal(19, 4)
+  amount                 Decimal             @db.Decimal(19, 4)
+  observationType        BreakfastObservationType?
+  observationDetails     String?
+  createdByUserId        String
+  createdAt              DateTime            @default(now())
+  deletedAt              DateTime?
+  deletedByUserId        String?
+  deletionReason         String?
+  map                    BreakfastMap        @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  competence             BreakfastCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  employee               FoodEmployee?       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  companyRef             Company?            @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  deletedBy              User?               @relation("BreakfastAllocationDeleter", fields: [deletedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([mapId, deletedAt])
+  @@index([mapId, company, department])
+  @@index([employeeId])
+  @@index([competenceId, administrativeEntityId])
+}
+
+enum BreakfastObservationType {
+  RETROACTIVE
+  OTHER
+}
+
+// Feriados manuais próprios do Café da Manhã (estaduais/municipais/internos) — mesma regra do
+// Vale Transporte (só reduz dia útil de segunda a sexta), mas tabela própria: ver nota acima.
+model BreakfastHoliday {
+  id              String              @id @default(cuid())
+  competenceId    String
+  date            DateTime            @db.Date
+  name            String
+  createdByUserId String
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  competence      BreakfastCompetence @relation(fields: [competenceId], references: [id], onDelete: Cascade)
+  createdBy       User                @relation("BreakfastHolidayCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([competenceId, date])
+}
+
+// Empresa padrão do colaborador para Café da Manhã (preferência atual; NÃO é snapshot
+// histórico) — mesmo padrão do TransitVoucherEmployeeConfig, domínio próprio.
+model BreakfastEmployeeConfig {
+  id               String       @id @default(cuid())
+  employeeId       String       @unique
+  defaultCompanyId String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  employee         FoodEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  defaultCompany   Company?     @relation(fields: [defaultCompanyId], references: [id], onDelete: SetNull)
+
+  @@index([defaultCompanyId])
 }
 
 model FinancialDocumentFile {

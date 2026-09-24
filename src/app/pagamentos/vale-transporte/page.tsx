@@ -4,20 +4,19 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { useRouter } from "next/navigation";
 import { CorporateHeader } from "@/components/CorporateHeader";
 import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList } from "@/components/allocation/AllocationCard";
+import { CompetenceCalendar, HolidayModal, type Holiday } from "@/components/allocation/CompetenceHolidays";
+import { CompanyModal, companyLabel, normalizeText as normalize, type Company } from "@/components/allocation/CompanyPicker";
 import { Badge, Button, DeletionModal, EmptyState, MetricCard, PageHeader, buttonClassName, useToast } from "@/components/ui";
 import { type CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { ManualEntrySection } from "@/components/ManualEntryLayout";
-import { formatCnpj, isValidCnpj } from "@/modules/administrative-entities/schema";
 import {
-  assertPassagesToReceive, buildCompetenceCalendar, calculatePassagesToReceive, calculateTransitVoucherEmployeeTotal,
+  assertPassagesToReceive, calculatePassagesToReceive, calculateTransitVoucherEmployeeTotal,
   formatTransitObservation, parseFareToCents, type TransitObservationKind,
 } from "@/modules/accounts-payable/transit-voucher/calculations";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 
 type Entity = { id: string; cnpj: string | null; tradeName: string; legalName: string; locality: string };
-type Company = { id: string; legalName: string; tradeName: string | null; active: boolean };
-type Holiday = { date: string; name: string; source: "NATIONAL" | "MANUAL"; editable: boolean; manualName: string | null };
 type Context = { year: number; month: number; fareUnitPrice: string; fareDefined: boolean; holidays: Holiday[]; weekdays: number; holidaysInMonth: number; holidaysOnWeekdays: number; workingDays: number };
 type Allocation = {
   id: string; employeeId: string | null; company: string; employeeName: string; department: string | null; costCenter: string | null;
@@ -31,106 +30,10 @@ const money = (value: string | number) => new Intl.NumberFormat("pt-BR", { style
 const cents = (value: string | number) => Math.round(Number(value) * 100);
 // O mapa é a fonte histórica: tarifa e dias úteis vêm dos registros do próprio mapa, nunca da competência atual.
 const mapBase = (map: MapData | undefined) => { const row = map?.allocations.find((item) => item.workingDays !== null && item.fareUnitPrice !== null); return row ? { workingDays: row.workingDays as number, fareUnitPrice: Number(row.fareUnitPrice).toFixed(2) } : null; };
-const normalize = (value: string) => value.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
 const acceptsMA = (value: string) => value.toUpperCase().split(/[\/,;]/).map((part) => part.trim()).includes("MA");
-const companyLabel = (company: Company) => company.tradeName?.trim() || company.legalName;
 const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 const people = (count: number) => `${count} ${count === 1 ? "colaborador" : "colaboradores"}`;
 const isInt = (value: string) => /^-?\d+$/.test(value.trim());
-const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-
-function CompetenceCalendar({ year, month, holidays, onSelect }: { year: number; month: number; holidays: Holiday[]; onSelect: (date: string) => void }) {
-  const days = useMemo(() => buildCompetenceCalendar(year, month, holidays.map((holiday) => holiday.date)), [year, month, holidays]);
-  const names = new Map(holidays.map((holiday) => [holiday.date, holiday.name]));
-  const sources = new Map(holidays.map((holiday) => [holiday.date, holiday.source]));
-  const offset = days[0]?.weekday ?? 0;
-  return (
-    <div>
-      <div className="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-secondary" aria-hidden="true">{WEEKDAYS.map((label) => <span key={label}>{label}</span>)}</div>
-      <div className="mt-1 grid grid-cols-7 gap-1" role="grid" aria-label="Calendário da competência">
-        {Array.from({ length: offset }, (_, index) => <span key={`blank-${index}`} />)}
-        {days.map((day) => (
-          <button
-            key={day.date} type="button" role="gridcell" onClick={() => onSelect(day.date)}
-            title={day.holiday ? `${names.get(day.date) ?? "Feriado"} · ${sources.get(day.date) === "NATIONAL" ? "Feriado nacional" : "Feriado cadastrado manualmente"}${day.weekend ? " (final de semana — não reduz dias úteis)" : ""}` : day.weekend ? "Final de semana" : "Dia útil"}
-            aria-label={`${day.day}: ${day.holiday ? `feriado${names.get(day.date) ? ` — ${names.get(day.date)}` : ""}${day.weekend ? " (final de semana)" : ""}` : day.weekend ? "final de semana" : "dia útil"}`}
-            className={`flex h-10 flex-col items-center justify-center rounded-md border text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${day.holiday ? `border-emerald-500 bg-emerald-100 font-bold text-emerald-900 hover:bg-emerald-200${day.weekend ? " ring-2 ring-inset ring-orange-300" : ""}` : day.weekend ? "border-orange-200 bg-orange-50 text-orange-900 hover:bg-orange-100" : "border-base-300 bg-base-100 hover:bg-base-200"}`}
-          >
-            {day.day}
-          </button>
-        ))}
-      </div>
-      <ul className="mt-3 flex flex-wrap gap-4 text-xs text-secondary" aria-label="Legenda">
-        <li className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border border-base-300 bg-base-100" />Dia útil</li>
-        <li className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border border-orange-200 bg-orange-50" />Final de semana</li>
-        <li className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border border-emerald-500 bg-emerald-100" />Feriado</li>
-        <li className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border border-emerald-500 bg-emerald-100 ring-2 ring-inset ring-orange-300" />Feriado em final de semana</li>
-      </ul>
-    </div>
-  );
-}
-
-function HolidayModal({ date, holiday, onClose, onSave, onRemove }: { date: string | null; holiday: Holiday | null; onClose: () => void; onSave: (name: string) => Promise<void>; onRemove: () => Promise<void> }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    const dialog = dialogRef.current; if (!dialog) return;
-    if (date && !dialog.open) dialog.showModal();
-    if (!date && dialog.open) dialog.close();
-    setName(holiday?.name ?? "");
-  }, [date, holiday]);
-  const run = async (action: () => Promise<void>) => { setBusy(true); try { await action(); } finally { setBusy(false); } };
-  return (
-    <dialog ref={dialogRef} className="modal" onCancel={onClose} onClose={onClose}>
-      <form className="modal-box max-w-md border border-base-300 bg-base-100" onSubmit={(event) => { event.preventDefault(); void run(() => onSave(name)); }}>
-        <h2 className="text-lg font-bold text-neutral">{holiday && !holiday.editable ? "Feriado nacional" : holiday ? "Editar feriado" : "Marcar feriado"}</h2>
-        <p className="mt-1 text-sm text-secondary">{date ? new Date(`${date}T00:00:00Z`).toLocaleDateString("pt-BR", { timeZone: "UTC", weekday: "long", day: "2-digit", month: "long", year: "numeric" }) : ""}</p>
-        {holiday && !holiday.editable ? <div className="mt-4 rounded-lg border border-base-300 bg-base-200/60 p-3 text-sm"><strong>{holiday.name}</strong><p className="mt-1 text-xs text-secondary">Feriado nacional automático: não pode ser editado nem removido. Feriados estaduais, municipais ou internos devem ser cadastrados nas demais datas.</p>{holiday.manualName && <p className="mt-1 text-xs text-secondary">Também cadastrado manualmente como “{holiday.manualName}” (a data conta uma única vez).</p>}</div> : <>
-        {holiday && <p className="mt-1 text-xs text-secondary">Feriado cadastrado manualmente</p>}
-        <label className="form-control mt-4"><span className="label-text mb-1">Nome do feriado</span><input required autoFocus className="input input-bordered w-full" value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Aniversário da cidade" /></label></>}
-        <div className="modal-action">
-          {holiday?.editable && <Button type="button" variant="error" onClick={() => void run(onRemove)} disabled={busy}>Remover feriado</Button>}
-          <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>{holiday && !holiday.editable ? "Fechar" : "Cancelar"}</Button>
-          {!(holiday && !holiday.editable) && <Button type="submit" loading={busy} disabled={busy || !name.trim()}>Salvar feriado</Button>}
-        </div>
-      </form>
-      <form method="dialog" className="modal-backdrop"><button aria-label="Fechar">Fechar</button></form>
-    </dialog>
-  );
-}
-
-function CompanyModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (company: Company) => void }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const [legalName, setLegalName] = useState(""); const [tradeName, setTradeName] = useState(""); const [taxId, setTaxId] = useState("");
-  const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
-  useEffect(() => { const dialog = dialogRef.current; if (!dialog) return; if (open && !dialog.open) dialog.showModal(); if (!open && dialog.open) dialog.close(); if (open) { setLegalName(""); setTradeName(""); setTaxId(""); setError(null); } }, [open]);
-  async function submit(event: FormEvent) {
-    event.preventDefault(); const digits = taxId.replace(/\D/g, "");
-    if (!isValidCnpj(digits)) return setError("Informe um CNPJ válido.");
-    setBusy(true); setError(null);
-    try {
-      const response = await fetch("/api/master-data/companies", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ legalName, tradeName, taxId: digits }) });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Não foi possível cadastrar a empresa.");
-      onCreated(body.item); onClose();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível cadastrar a empresa."); } finally { setBusy(false); }
-  }
-  return (
-    <dialog ref={dialogRef} className="modal" onCancel={onClose} onClose={onClose}>
-      <form onSubmit={submit} className="modal-box max-w-md border border-base-300 bg-base-100">
-        <h2 className="text-lg font-bold text-neutral">Cadastrar empresa</h2>
-        {error && <p className="mt-3 rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">{error}</p>}
-        <div className="mt-4 grid gap-3">
-          <label className="form-control"><span className="label-text mb-1">Razão social *</span><input required className="input input-bordered w-full" value={legalName} onChange={(event) => setLegalName(event.target.value)} /></label>
-          <label className="form-control"><span className="label-text mb-1">Nome fantasia (exibido) *</span><input required className="input input-bordered w-full" value={tradeName} onChange={(event) => setTradeName(event.target.value)} placeholder="PROJETA" /></label>
-          <label className="form-control"><span className="label-text mb-1">CNPJ *</span><input required inputMode="numeric" className="input input-bordered w-full" value={taxId.length === 14 ? formatCnpj(taxId) : taxId} onChange={(event) => setTaxId(event.target.value.replace(/\D/g, "").slice(0, 14))} placeholder="Somente números" /></label>
-        </div>
-        <div className="modal-action"><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>Cancelar</Button><Button type="submit" loading={busy} disabled={busy}>Cadastrar</Button></div>
-      </form>
-      <form method="dialog" className="modal-backdrop"><button aria-label="Fechar">Fechar</button></form>
-    </dialog>
-  );
-}
 
 function CorrectionModal({ target, companies, onClose, onSaved }: { target: { mapId: string; row: Allocation } | null; companies: Company[]; onClose: () => void; onSaved: () => Promise<void> }) {
   const dialogRef = useRef<HTMLDialogElement>(null);

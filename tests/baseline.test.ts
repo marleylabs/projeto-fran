@@ -841,3 +841,63 @@ test("feriados nacionais automáticos (Vale Transporte): regras, móveis e ponto
   // snapshot guarda nacionais + manuais
   assert.deepEqual(toHolidaySnapshot(merged).map((holiday) => holiday.source), ["NATIONAL", "MANUAL"]);
 });
+
+test("café da manhã: quantidade, extras e valor (sem float e sem clamp)", async () => {
+  const { calculateFinalQuantity, calculateBreakfastEmployeeTotal, parseUnitPriceToCents, centsToDecimalString, formatBreakfastObservation, BreakfastCalculationError } = await import("../src/modules/accounts-payable/breakfast/calculations");
+  const unit = parseUnitPriceToCents("12,50");
+  assert.equal(unit, 1250);
+  // Teste 1 — sem desconto: 21 dias úteis, sem extras, sem desconto
+  assert.equal(calculateFinalQuantity(21, 0, 0), 21);
+  assert.equal(centsToDecimalString(calculateBreakfastEmployeeTotal(unit, calculateFinalQuantity(21, 0, 0))), "262.50");
+  // Teste 2 — com desconto: 21 + 0 - 5 = 16
+  assert.equal(calculateFinalQuantity(21, 0, 5), 16);
+  assert.equal(centsToDecimalString(calculateBreakfastEmployeeTotal(unit, calculateFinalQuantity(21, 0, 5))), "200.00");
+  // Teste 3 — extra + desconto: 21 + 2 - 5 = 18
+  assert.equal(calculateFinalQuantity(21, 2, 5), 18);
+  assert.equal(centsToDecimalString(calculateBreakfastEmployeeTotal(unit, calculateFinalQuantity(21, 2, 5))), "225.00");
+  // feriado útil reduz a quantidade base (dias úteis) de 22 para 21
+  const daysWithHoliday = calculateWorkingDays(2026, 9, ["2026-09-02"]); // quarta-feira
+  assert.equal(daysWithHoliday, 21); // setembro/2026 sem feriado tem 22 dias úteis; com 1 reduz a 21
+  assert.equal(calculateFinalQuantity(daysWithHoliday, 0, 0), 21);
+  // feriado no fim de semana não reduz dias úteis
+  assert.equal(calculateWorkingDays(2026, 9, ["2026-09-05"]), 22); // sábado
+  // extras e desconto negativos são rejeitados
+  assert.throws(() => calculateFinalQuantity(21, -1, 0), BreakfastCalculationError);
+  assert.throws(() => calculateFinalQuantity(21, 0, -1), BreakfastCalculationError);
+  assert.throws(() => parseUnitPriceToCents("0"), BreakfastCalculationError);
+  // Teste 6 — desconto maior que a quantidade disponível: erro, nunca clamp em zero
+  assert.throws(() => calculateFinalQuantity(20, 2, 23), /desconto não pode ser maior/i);
+  // observação
+  assert.equal(formatBreakfastObservation("RETROACTIVE", "2 cafés referentes ao mês anterior"), "Retroativo: 2 cafés referentes ao mês anterior");
+  assert.equal(formatBreakfastObservation("OTHER", "Solicitação extraordinária"), "Solicitação extraordinária");
+});
+
+test("café da manhã: domínio próprio (sem TransitVoucher) e feriados/calendário compartilhados", async () => {
+  const [schema, calc, holidays, manualServer, page] = await Promise.all([
+    readFile(new URL("../prisma/schema.prisma", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/breakfast/calculations.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/shared/holidays.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/breakfast/manual-server.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/pagamentos/alimentacao/page.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(schema, /model BreakfastCompetence/); assert.match(schema, /model BreakfastMap/); assert.match(schema, /model BreakfastAllocation/);
+  assert.doesNotMatch(calc, /TransitVoucher/); assert.doesNotMatch(manualServer, /transitVoucher/i);
+  assert.match(manualServer, /getEffectiveHolidays/); assert.match(manualServer, /getBrazilianNationalHolidays/);
+  assert.match(holidays, /getBrazilianNationalHolidays/);
+  assert.match(page, /Café da Manhã/); assert.match(page, /BreakfastSection/);
+});
+
+test("café da manhã: somente colaboradores de TOPOGEO (regra validada no backend)", async () => {
+  const { organizationalComparisonKey } = await import("../src/lib/organizational-label");
+  const { BREAKFAST_ALLOWED_DEPARTMENT } = await import("../src/modules/accounts-payable/breakfast/calculations");
+  assert.equal(BREAKFAST_ALLOWED_DEPARTMENT, "TOPOGEO");
+  // A comparação é robusta a caixa/acentos/espaços, mas não é um "includes" amplo.
+  assert.equal(organizationalComparisonKey("topogeo"), organizationalComparisonKey(BREAKFAST_ALLOWED_DEPARTMENT));
+  assert.equal(organizationalComparisonKey("  Topogeo  "), organizationalComparisonKey(BREAKFAST_ALLOWED_DEPARTMENT));
+  assert.notEqual(organizationalComparisonKey("ADMINISTRATIVO"), organizationalComparisonKey(BREAKFAST_ALLOWED_DEPARTMENT));
+  assert.notEqual(organizationalComparisonKey("TOPOGEOGRAFIA"), organizationalComparisonKey(BREAKFAST_ALLOWED_DEPARTMENT));
+  const manualServer = await readFile(new URL("../src/modules/accounts-payable/breakfast/manual-server.ts", import.meta.url), "utf8");
+  assert.match(manualServer, /BREAKFAST_ALLOWED_DEPARTMENT/);
+  assert.match(manualServer, /organizationalComparisonKey/);
+  assert.match(manualServer, /Apenas colaboradores do departamento \$\{BREAKFAST_ALLOWED_DEPARTMENT\}/);
+});
