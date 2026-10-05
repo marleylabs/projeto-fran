@@ -20,6 +20,7 @@ import {
   parseFoodMealXlsx,
 } from "./ma-processing";
 import { matchFoodEmployee } from "./matching";
+import { foodPaInvoiceLabel, isFoodPaInvoiceCode } from "./invoice-company";
 import { isFoodMaCycle, occurrenceBelongsToMaCycle, type FoodMaCycle } from "./cycles";
 
 function validateCompetence(year: number, month: number) {
@@ -497,6 +498,8 @@ export type FoodMaEdit = {
   disposition: "VALID" | "DUPLICATE" | "IGNORED";
   saveAlias?: boolean;
   mealQuantity?: number;
+  // Somente PA: NF_01/NF_02 (ausente = manter a NF atual da linha). Muda só a empresa do rateio.
+  invoiceEmission?: string;
 };
 
 export async function editFoodMaBatch(
@@ -558,10 +561,14 @@ export async function editFoodMaBatch(
             },
           });
         const included = edit.disposition === "VALID";
+        if (edit.invoiceEmission !== undefined && (batch.locality !== "PA" || !isFoodPaInvoiceCode(edit.invoiceEmission)))
+          throw new FoodBatchValidationError(`Emissão NF inválida na linha ${occurrence.sourceRow}: use NF 01 ou NF 02.`);
+        const invoiceEmission = edit.invoiceEmission !== undefined && isFoodPaInvoiceCode(edit.invoiceEmission) ? foodPaInvoiceLabel(edit.invoiceEmission) : occurrence.invoiceEmission;
         if (
           occurrence.employeeId !== employee.id ||
           occurrence.confirmedDepartment !== normalizeOrganizationalValue(edit.department) ||
-          occurrence.disposition !== edit.disposition || occurrence.mealQuantity !== mealQuantity
+          occurrence.disposition !== edit.disposition || occurrence.mealQuantity !== mealQuantity ||
+          occurrence.invoiceEmission !== invoiceEmission
         )
           audit.push({
             occurrenceId: occurrence.id,
@@ -573,6 +580,7 @@ export async function editFoodMaBatch(
               department: occurrence.confirmedDepartment,
               disposition: occurrence.disposition,
               mealQuantity: occurrence.mealQuantity,
+              invoiceEmission: occurrence.invoiceEmission,
             },
             after: {
               employeeId: employee.id,
@@ -580,6 +588,7 @@ export async function editFoodMaBatch(
               department: normalizeOrganizationalValue(edit.department),
               disposition: edit.disposition,
               mealQuantity,
+              invoiceEmission,
             },
           });
         await tx.foodMealOccurrence.update({
@@ -595,6 +604,7 @@ export async function editFoodMaBatch(
             disposition: edit.disposition,
             mealQuantity,
             amount: occurrence.unitPrice.mul(mealQuantity),
+            invoiceEmission,
           },
         });
       }

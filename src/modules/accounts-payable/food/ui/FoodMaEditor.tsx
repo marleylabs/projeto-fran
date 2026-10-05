@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui";
 import { compareDateThenId, comparePtBr } from "@/lib/sorting/ptBr";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
+import { FOOD_PA_INVOICE_CODES, FOOD_PA_INVOICES, foodInvoiceEmissionToCompany, parseFoodPaInvoice, type FoodPaInvoiceCode } from "../invoice-company";
 
 type Employee = { id: string; officialName: string; department: string };
 type Occurrence = {
@@ -29,6 +30,8 @@ type Value = {
   disposition: Occurrence["disposition"];
   mealQuantity: number;
   saveAlias: boolean;
+  // PA: Emissão NF da linha (NF_01/NF_02; "" = não reconhecida/manter a atual).
+  invoiceCode: FoodPaInvoiceCode | "";
 };
 type StatusFilter = "ALL" | "OK" | "FUZZY" | "ALIAS" | "PENDING" | "DUPLICATE";
 type Sort = "PRIORITY" | "NAME" | "DEPARTMENT" | "DATE";
@@ -200,12 +203,14 @@ function EmployeeCombobox({
 
 export function FoodMaEditor({
   batchId,
+  locality,
   occurrences,
   employees,
   cancel,
   reload,
 }: {
   batchId: string;
+  locality?: string;
   occurrences: Occurrence[];
   employees: Employee[];
   cancel: () => void;
@@ -223,6 +228,7 @@ export function FoodMaEditor({
             disposition: row.disposition ?? "VALID",
             mealQuantity: row.mealQuantity,
             saveAlias: false,
+            invoiceCode: parseFoodPaInvoice(row.invoiceEmission) ?? "",
           } satisfies Value,
         ]),
       ),
@@ -357,10 +363,12 @@ export function FoodMaEditor({
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            edits: occurrences.map((row) => ({
-              occurrenceId: row.id,
-              ...values[row.id],
-            })),
+            edits: occurrences.map((row) => {
+              const { invoiceCode, ...value } = values[row.id];
+              // NF só é enviada quando alterada (PA): muda apenas a empresa; valor/refeições preservados.
+              const changedInvoice = locality === "PA" && invoiceCode && invoiceCode !== parseFoodPaInvoice(row.invoiceEmission);
+              return { occurrenceId: row.id, ...value, ...(changedInvoice ? { invoiceEmission: invoiceCode } : {}) };
+            }),
           }),
         },
       );
@@ -636,6 +644,23 @@ export function FoodMaEditor({
                         <option value="IGNORED">Ignorada</option>
                       </select>
                     </label>
+                    {locality === "PA" && (
+                      <label className="text-sm">
+                        <span className="mb-1 block">Emissão NF</span>
+                        <select
+                          value={value.invoiceCode}
+                          onChange={(event) => update(row.id, { invoiceCode: (parseFoodPaInvoice(event.target.value) ?? "") })}
+                          aria-label={`Emissão NF de ${value.officialName || row.receivedName}`}
+                          className="w-full rounded-md border border-border bg-white px-3 py-2"
+                        >
+                          {!value.invoiceCode && <option value="">{row.invoiceEmission ? `Atual: ${row.invoiceEmission} (manter)` : "Selecione..."}</option>}
+                          {FOOD_PA_INVOICE_CODES.map((code) => (
+                            <option key={code} value={code}>{FOOD_PA_INVOICES[code].label} — {FOOD_PA_INVOICES[code].company}</option>
+                          ))}
+                        </select>
+                        <span className="mt-1 block text-xs text-text-muted">Empresa no rateio: {foodInvoiceEmissionToCompany(value.invoiceCode || row.invoiceEmission) ?? "não identificada"}</span>
+                      </label>
+                    )}
                     {!row.occurredOn && <label className="text-sm"><span className="mb-1 block">Quantidade de refeições</span><input type="number" min="1" step="1" value={value.mealQuantity} onChange={event=>update(row.id,{mealQuantity:Number(event.target.value)})} className="w-full rounded-md border border-border bg-white px-3 py-2" /></label>}
                     <label className="flex items-center gap-2 text-sm">
                       <input

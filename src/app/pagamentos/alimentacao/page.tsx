@@ -28,6 +28,7 @@ import {
 } from "@/modules/accounts-payable/food/ui/FoodLocalitySummary";
 import type { FoodBatchStatus } from "@/modules/accounts-payable/food/batch-state";
 import { parseManualFoodResponse } from "@/modules/accounts-payable/food/manual-contract";
+import { FOOD_PA_INVOICE_CODES, FOOD_PA_INVOICE_REQUIRED_MESSAGE, FOOD_PA_INVOICES, isFoodPaInvoiceCode, type FoodPaInvoiceCode, type FoodPaRateioCompany } from "@/modules/accounts-payable/food/invoice-company";
 
 type Locality = "MA" | "PA";
 type Entity = {
@@ -86,6 +87,8 @@ type Batch = {
   allocations: Allocation[];
   mealOccurrences: MealOccurrence[];
   mealOccurrenceCount: number;
+  // Somente PA: rateio por Empresa derivado da Emissão NF de cada colaborador (calculado no servidor).
+  companyRateio?: { companies: FoodPaRateioCompany[]; totalCents: number; companiesCents: number; consistent: boolean } | null;
   issues: Issue[];
   revisions: { revision: number; createdAt: string }[];
 };
@@ -369,6 +372,8 @@ function MaRateio({
       setLoadingEditor(false);
     }
   }
+  // Empresas (NF) = soma das linhas = total do lote/obrigação.
+  const companyTotalsMatch = Boolean(batch.companyRateio?.consistent && batch.companyRateio.companiesCents === Math.round(Number(batch.totalAmount) * 100));
   const sectors = new Map<string, Allocation[]>();
   for (const row of batch.allocations) {
     const sector = normalizeOrganizationalValue(row.department);
@@ -395,6 +400,37 @@ function MaRateio({
         { label: `Total ${batch.locality} · obrigação`, value: `${money(batch.totalAmount)} · ${batch.financialRecord?.identifier}` },
       ]}
     >
+      {batch.locality === "PA" && batch.companyRateio && (
+        <section aria-label="Rateio por empresa" className="mb-4">
+          <h4 className="mb-2 text-sm font-semibold">Por empresa (Emissão NF)</h4>
+          <AllocationDepartmentList>
+            {batch.companyRateio.companies.map((company) => (
+              <AllocationDepartmentAccordion
+                key={company.company}
+                name={company.company}
+                summary={`${company.collaborators} colaboradores · ${company.meals} refeições · ${money(company.amountCents / 100)}`}
+              >
+                {company.people.map((person) => (
+                  <div key={person.key} className="flex justify-between gap-3 border-b py-2 text-sm">
+                    <span className="min-w-0">
+                      {person.name}
+                      <small className="block text-secondary">{person.department} · {person.invoiceEmission}</small>
+                    </span>
+                    <span className="shrink-0">
+                      {person.meals} refeições · {money(person.amountCents / 100)}
+                    </span>
+                  </div>
+                ))}
+              </AllocationDepartmentAccordion>
+            ))}
+          </AllocationDepartmentList>
+          <p className={`mt-2 text-xs ${companyTotalsMatch ? "text-secondary" : "text-error"}`} role={companyTotalsMatch ? undefined : "alert"}>
+            {batch.companyRateio.companies.map((company) => `${company.company} ${money(company.amountCents / 100)}`).join(" + ")} = {money(batch.companyRateio.companiesCents / 100)}
+            {companyTotalsMatch ? " · confere com o total do lote e a obrigação" : ` · diferença de ${money((Math.round(Number(batch.totalAmount) * 100) - batch.companyRateio.companiesCents) / 100)}`}
+          </p>
+          <h4 className="mb-2 mt-4 text-sm font-semibold">Por setor</h4>
+        </section>
+      )}
       <AllocationDepartmentList>
         {[...sectors.entries()]
           .sort(([a], [b]) => comparePtBr(a, b))
@@ -437,6 +473,7 @@ function MaRateio({
       {editorOccurrences && (
         <FoodMaEditor
           batchId={batch.id}
+          locality={batch.locality}
           occurrences={editorOccurrences}
           employees={employees}
           cancel={() => setEditorOccurrences(null)}
@@ -644,7 +681,8 @@ function LocalityPanel({
     Record<string, string>
   >({});
   const [manualAmount, setManualAmount] = useState("");
-  const [manualInvoice, setManualInvoice] = useState("");
+  // PA: Emissão NF individual por colaborador (NF 01 → BOINGA, NF 02 → PROJETA no rateio).
+  const [manualInvoices, setManualInvoices] = useState<Record<string, FoodPaInvoiceCode | "">>({});
   const [manualSuccess, setManualSuccess] = useState<string | null>(null);
   const paQuantitiesValid =
     manualEmployeeIds.length > 0 &&
@@ -653,10 +691,12 @@ function LocalityPanel({
         Number.isInteger(Number(manualQuantities[id])) &&
         Number(manualQuantities[id]) >= 1,
     );
+  // Todo colaborador do PA entra com ≥ 1 refeição, então a NF é obrigatória para todas as linhas lançadas.
+  const paInvoicesValid = manualEmployeeIds.every((id) => isFoodPaInvoiceCode(manualInvoices[id]));
   const manualReady = Boolean(
     entityId &&
     manualEmployeeIds.length &&
-    (locality === "PA" ? paQuantitiesValid : manualDates.length > 0) &&
+    (locality === "PA" ? paQuantitiesValid && paInvoicesValid : manualDates.length > 0) &&
     Number(manualAmount) > 0,
   );
   const manualHint = !entityId
@@ -665,10 +705,12 @@ function LocalityPanel({
       ? "Selecione ao menos um colaborador para continuar."
       : locality === "PA" && !paQuantitiesValid
         ? "Informe a quantidade de refeições de todos os colaboradores."
+        : locality === "PA" && !paInvoicesValid
+          ? FOOD_PA_INVOICE_REQUIRED_MESSAGE
         : locality === "MA" && !manualDates.length
           ? "Selecione ao menos uma data."
           : !(Number(manualAmount) > 0)
-            ? "Configure o valor do fornecedor para continuar."
+            ? "Informe o valor por refeição para continuar."
             : null;
   const lastDay = new Date(year, month, 0).getDate();
   const dateMin = `${year}-${String(month).padStart(2, "0")}-${String(locality === "MA" && cycle === 2 ? 16 : 1).padStart(2, "0")}`;
@@ -789,21 +831,23 @@ function LocalityPanel({
                 collaborators: manualEmployeeIds.map((collaboratorId) => ({
                   collaboratorId,
                   quantity: Number(manualQuantities[collaboratorId]),
+                  // só a NF (NF_01/NF_02); a empresa é derivada no servidor
+                  invoiceEmission: manualInvoices[collaboratorId],
                 })),
               }
             : {
                 employeeIds: manualEmployeeIds,
                 dates: manualDates,
-                amount: manualAmount,
               }),
-          invoiceEmission: manualInvoice,
+          // MA e PA: o servidor usa o valor informado (ver manualFoodUsesSupplierPrice).
+          amount: manualAmount,
         }),
       });
       const body = await parseManualFoodResponse(response);
       setManualEmployeeIds([]);
       setManualDates([]);
       setManualQuantities({});
-      setManualInvoice("");
+      setManualInvoices({});
       const details = body.duplicateDetails
         .map((item) =>
           item.date
@@ -924,15 +968,24 @@ function LocalityPanel({
                       .map((id) => [id, current[id]]),
                   ),
                 );
+                setManualInvoices((current) =>
+                  Object.fromEntries(
+                    ids
+                      .filter((id) => current[id] !== undefined)
+                      .map((id) => [id, current[id]]),
+                  ),
+                );
                 setManualSuccess(null);
               }}
             />
             {locality === "PA" && manualEmployeeIds.length > 0 && (
-              <div className="mt-3 overflow-hidden rounded-lg border border-base-300">
-                <div className="hidden grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_120px_130px] gap-3 bg-base-200 px-3 py-2 text-xs font-semibold uppercase sm:grid">
+              <div className="mt-3 overflow-x-auto rounded-lg border border-base-300">
+                <div className="sm:min-w-[680px]">
+                <div className="hidden grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_110px_120px_130px] gap-3 bg-base-200 px-3 py-2 text-xs font-semibold uppercase sm:grid">
                   <span>Colaborador</span>
                   <span>Departamento</span>
                   <span>Refeições</span>
+                  <span>Emissão NF</span>
                   <span>Subtotal</span>
                 </div>
                 {manualEmployeeIds.map((id) => {
@@ -943,7 +996,7 @@ function LocalityPanel({
                   return (
                     <div
                       key={id}
-                      className="grid gap-2 border-t border-base-300 p-3 first:border-t-0 sm:grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_120px_130px] sm:items-center"
+                      className="grid gap-2 border-t border-base-300 p-3 first:border-t-0 sm:grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_110px_120px_130px] sm:items-center"
                     >
                       <div className="min-w-0">
                         <strong className="block truncate">
@@ -986,12 +1039,37 @@ function LocalityPanel({
                             </small>
                           )}
                       </label>
+                      <label className="text-xs">
+                        <span className="sm:sr-only">Emissão NF</span>
+                        <select
+                          required
+                          className={`select select-bordered select-sm w-full ${quantity > 0 && !isFoodPaInvoiceCode(manualInvoices[id]) ? "select-warning" : ""}`}
+                          value={manualInvoices[id] ?? ""}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setManualInvoices((current) => ({
+                              ...current,
+                              [id]: isFoodPaInvoiceCode(value) ? value : "",
+                            }));
+                            setManualSuccess(null);
+                          }}
+                          aria-label={`Emissão NF de ${employee?.officialName ?? "colaborador"}`}
+                        >
+                          <option value="">Selecione...</option>
+                          {FOOD_PA_INVOICE_CODES.map((code) => (
+                            <option key={code} value={code}>
+                              {FOOD_PA_INVOICES[code].label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                       <strong className="text-sm">
                         {money(quantity * Number(manualAmount))}
                       </strong>
                     </div>
                   );
                 })}
+                </div>
               </div>
             )}
           </ManualEntrySection>
@@ -1034,7 +1112,6 @@ function LocalityPanel({
                 <input
                   id={`food-manual-amount-${locality}`}
                   required
-                  readOnly={locality === "PA"}
                   type="number"
                   min="0.01"
                   step="0.01"
@@ -1048,34 +1125,23 @@ function LocalityPanel({
                   }}
                 />
                 <span className="mt-1 text-xs text-secondary">
-                  Valor unitário do cadastro do fornecedor.
+                  Preenchido com o valor do cadastro do fornecedor; pode ser
+                  ajustado neste lançamento.
                 </span>
               </label>
               {locality === "PA" && (
-                <>
-                  <div className="form-control">
-                    <span className="label-text mb-1">Restaurante</span>
-                    <div
-                      className="rounded-md border border-base-300 bg-base-200 px-3 py-2 text-sm"
-                      aria-live="polite"
-                    >
-                      {restaurantName || "Selecione o fornecedor"}
-                    </div>
-                    <span className="mt-1 text-xs text-secondary">
-                      Obtido automaticamente do Nome Fantasia do cadastro.
-                    </span>
+                <div className="form-control">
+                  <span className="label-text mb-1">Restaurante</span>
+                  <div
+                    className="rounded-md border border-base-300 bg-base-200 px-3 py-2 text-sm"
+                    aria-live="polite"
+                  >
+                    {restaurantName || "Selecione o fornecedor"}
                   </div>
-                  <label htmlFor="food-manual-invoice" className="form-control">
-                    <span className="label-text mb-1">Emissão NF</span>
-                    <input
-                      id="food-manual-invoice"
-                      className="input input-bordered w-full"
-                      placeholder="Ex.: NF 01"
-                      value={manualInvoice}
-                      onChange={(e) => setManualInvoice(e.target.value)}
-                    />
-                  </label>
-                </>
+                  <span className="mt-1 text-xs text-secondary">
+                    Obtido automaticamente do Nome Fantasia do cadastro.
+                  </span>
+                </div>
               )}
             </div>
           </ManualEntrySection>

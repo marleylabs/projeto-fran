@@ -1127,3 +1127,101 @@ test("máscara Flash: CPF do cadastro (numérico com formato da máscara); sem C
   const { calculateBreakfastEmployeeTotal, calculateFinalQuantity } = await import("../src/modules/accounts-payable/breakfast/calculations");
   assert.equal(calculateBreakfastEmployeeTotal(1250, calculateFinalQuantity(21, 2, 5)), 22500);
 });
+test("alimentação manual: valor por refeição editável no PA (mesma regra do MA) e usado pelo backend", async () => {
+  const { manualFoodUsesSupplierPrice } = await import("../src/modules/accounts-payable/food/manual-contract");
+  assert.equal(manualFoodUsesSupplierPrice("12.50"), false); assert.equal(manualFoodUsesSupplierPrice("15,75"), false);
+  assert.equal(manualFoodUsesSupplierPrice(""), true); assert.equal(manualFoodUsesSupplierPrice("  "), true); assert.equal(manualFoodUsesSupplierPrice(undefined), true);
+  const [page, server] = await Promise.all([
+    readFile(new URL("../src/app/pagamentos/alimentacao/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/food/manual-server.ts", import.meta.url), "utf8"),
+  ]);
+  // regressão: o input do lançamento manual não pode voltar a ficar somente leitura/desabilitado por localidade
+  const input = page.slice(page.indexOf("id={`food-manual-amount-${locality}`}"), page.indexOf("/>", page.indexOf("id={`food-manual-amount-${locality}`}")));
+  assert.ok(input.includes("value={manualAmount}") && input.includes("setManualAmount(e.target.value)"));
+  assert.doesNotMatch(input, /readOnly|disabled/);
+  // o valor digitado é enviado também no PA e o servidor não força o valor do cadastro por localidade
+  assert.match(page, /\r?\n\s+amount: manualAmount,\r?\n\s+\}\),/); // enviado também no PA (fora do ramo MA)
+  assert.match(server, /manualFoodUsesSupplierPrice\(input\.amount\)/); assert.doesNotMatch(server, /input\.locality === "PA" \|\| !input\.amount/);
+  assert.match(server, /unitPrice\.lte\(0\)/); // validação financeira mantida
+});
+// ---------------------------------------------------------------- Alimentação PA: Emissão NF por colaborador
+test("alimentação PA: NF 01 → BOINGA, NF 02 → PROJETA (helper central, estrito na entrada, tolerante na leitura)", async () => {
+  const { FOOD_PA_INVOICES, isFoodPaInvoiceCode, parseFoodPaInvoice, foodInvoiceEmissionToCompany, foodPaInvoiceLabel } = await import("../src/modules/accounts-payable/food/invoice-company");
+  assert.deepEqual(FOOD_PA_INVOICES, { NF_01: { label: "NF 01", company: "BOINGA" }, NF_02: { label: "NF 02", company: "PROJETA" } });
+  assert.equal(foodInvoiceEmissionToCompany("NF_01"), "BOINGA"); assert.equal(foodInvoiceEmissionToCompany("NF 01"), "BOINGA");
+  assert.equal(foodInvoiceEmissionToCompany("NF_02"), "PROJETA"); assert.equal(foodInvoiceEmissionToCompany("NF 02"), "PROJETA");
+  assert.notEqual(foodInvoiceEmissionToCompany("NF 01"), "PROJETA"); assert.notEqual(foodInvoiceEmissionToCompany("NF 02"), "BOINGA");
+  // entrada do formulário/API: somente os códigos internos
+  for (const bad of ["NF 03", "NF_03", "NF 01", "BOINGA", "", null, undefined, 1]) assert.equal(isFoodPaInvoiceCode(bad), false, String(bad));
+  assert.equal(isFoodPaInvoiceCode("NF_01"), true); assert.equal(foodPaInvoiceLabel("NF_02"), "NF 02");
+  // leitura do valor gravado (manual "NF 01"; Upload grava o texto da planilha)
+  for (const value of ["NF 01", "NF01", "nf 1", "NF-01", "N.F. 01", "NF_01"]) assert.equal(parseFoodPaInvoice(value), "NF_01", value);
+  for (const value of ["NF 03", "NF 10", "BOINGA", "", null]) assert.equal(parseFoodPaInvoice(value), null, String(value));
+  assert.equal(foodInvoiceEmissionToCompany("NF 03"), null); // nunca inventa empresa
+});
+
+test("alimentação PA: rateio misto por empresa fecha com o total (A+C BOINGA, B PROJETA)", async () => {
+  const { buildFoodPaCompanyRateio, FOOD_PA_UNIDENTIFIED_COMPANY } = await import("../src/modules/accounts-payable/food/invoice-company");
+  const row = (employeeId: string, name: string, meals: number, invoiceEmission: string | null, amount: string, included = true) => ({ employeeId, officialName: name, receivedName: name, confirmedDepartment: "ENGENHARIA", receivedDepartment: "ENGENHARIA", invoiceEmission, mealQuantity: meals, amount, included });
+  const rateio = buildFoodPaCompanyRateio([row("a", "Pessoa A", 10, "NF 01", "100.00"), row("b", "Pessoa B", 15, "NF 02", "150.0000"), row("c", "Pessoa C", 20, "NF 01", "200"), row("x", "Excluída", 3, "NF 02", "30", false)]);
+  assert.deepEqual(rateio.companies.map((company) => [company.company, company.people.map((person) => person.name), company.meals, company.amountCents]), [["BOINGA", ["Pessoa A", "Pessoa C"], 30, 30000], ["PROJETA", ["Pessoa B"], 15, 15000]]);
+  assert.equal(rateio.totalCents, 45000); assert.equal(rateio.companiesCents, 45000); assert.equal(rateio.consistent, true);
+  // mesmo colaborador com NF 01 e NF 02 → cada parcela na sua empresa; NF desconhecida/antiga → categoria explícita
+  const split = buildFoodPaCompanyRateio([row("a", "Pessoa A", 2, "NF 01", "25"), row("a", "Pessoa A", 1, "NF 02", "12.5"), row("h", "Histórico", 1, null, "10")]);
+  assert.deepEqual(split.companies.map((company) => [company.company, company.amountCents]), [["BOINGA", 2500], ["PROJETA", 1250], [FOOD_PA_UNIDENTIFIED_COMPANY, 1000]]);
+  assert.equal(split.consistent, true);
+  // trocar NF 01 → NF 02 só muda a empresa: subtotal e total iguais
+  const before = buildFoodPaCompanyRateio([row("a", "Pessoa A", 20, "NF 01", "250.00")]);
+  const after = buildFoodPaCompanyRateio([row("a", "Pessoa A", 20, "NF 02", "250.00")]);
+  assert.deepEqual([before.companies[0].company, before.totalCents], ["BOINGA", 25000]);
+  assert.deepEqual([after.companies[0].company, after.totalCents, after.companies[0].meals], ["PROJETA", 25000, 20]);
+});
+
+test("alimentação PA: XLSX com Empresa e Emissão NF ao lado das Refeições; MA inalterado", async () => {
+  const occurrence = (id: string, employeeId: string, name: string, sector: string, meals: number, invoiceEmission: string | null, amount: number) => ({ id, employeeId, normalizedReceivedName: name.toUpperCase(), receivedName: name, officialName: name, receivedDepartment: sector, confirmedDepartment: sector, mealQuantity: meals, invoiceEmission, restaurantName: "REI DO ASSADO", amount, included: true });
+  const rows = [occurrence("1", "aline", "ALINE", "ADMINISTRATIVO", 20, "NF 02", 250), occurrence("2", "adilson", "ADILSON", "ENGENHARIA", 15, "NF 01", 187.5), occurrence("3", "maria", "MARIA", "ENGENHARIA", 18, "NF 02", 225)];
+  const workbook = buildFoodRateioWorkbook({ locality: "PA", mealOccurrences: rows });
+  const values = (row: ExcelJS.Row) => (row.values as ExcelJS.CellValue[]).slice(1);
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Resumo por Setor", "Resumo por Empresa", "Rateio por Colaborador"]);
+  const allocation = workbook.getWorksheet("Rateio por Colaborador")!;
+  const header = values(allocation.getRow(1)) as string[];
+  assert.deepEqual(header, ["Empresa", "Setor", "Colaborador", "Refeições", "Emissão NF", "Valor Médio", "Custo", "Restaurante"]);
+  assert.equal(header.indexOf("Emissão NF"), header.indexOf("Refeições") + 1);
+  assert.deepEqual(values(allocation.getRow(2)), ["BOINGA", "ENGENHARIA", "ADILSON", 15, "NF 01", 12.5, 187.5, "REI DO ASSADO"]);
+  assert.deepEqual(values(allocation.getRow(3)), ["PROJETA", "ADMINISTRATIVO", "ALINE", 20, "NF 02", 12.5, 250, "REI DO ASSADO"]);
+  assert.deepEqual(values(allocation.getRow(4)), ["PROJETA", "ENGENHARIA", "MARIA", 18, "NF 02", 12.5, 225, "REI DO ASSADO"]);
+  for (let line = 2; line <= allocation.rowCount; line += 1) { const company = allocation.getCell(line, 1).value, nf = allocation.getCell(line, 5).value; assert.ok((nf === "NF 01" && company === "BOINGA") || (nf === "NF 02" && company === "PROJETA")); }
+  const companies = workbook.getWorksheet("Resumo por Empresa")!;
+  assert.deepEqual(values(companies.getRow(2)), ["BOINGA", 1, 15, 187.5]); assert.deepEqual(values(companies.getRow(3)), ["PROJETA", 2, 38, 475]);
+  assert.deepEqual(values(companies.getRow(4)), ["TOTAL", 3, 53, 662.5]);
+  assert.equal(workbook.getWorksheet("Resumo por Setor")!.getCell("D4").value, 662.5); // Total Geral igual nos dois resumos
+  // MA (sem locality PA): mesmas duas abas e colunas de antes
+  const ma = buildFoodRateioWorkbook({ locality: "MA", mealOccurrences: rows.map((row) => ({ ...row, invoiceEmission: null })) });
+  assert.deepEqual(ma.worksheets.map((sheet) => sheet.name), ["Resumo por Setor", "Rateio por Colaborador"]);
+  assert.deepEqual(values(ma.getWorksheet("Rateio por Colaborador")!.getRow(1)), ["Setor", "Colaborador", "Refeições", "Valor Médio", "Custo", "Restaurante", "Emissão NF"]);
+});
+
+test("alimentação PA manual: NF individual na etapa 2, sem campo global, validada e derivada no backend", async () => {
+  const [page, server, maServer, editor, foodServer] = await Promise.all([
+    readFile(new URL("../src/app/pagamentos/alimentacao/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/food/manual-server.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/food/ma-server.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/food/ui/FoodMaEditor.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/food/server.ts", import.meta.url), "utf8"),
+  ]);
+  // etapa 2: coluna Emissão NF (select por colaborador) entre Refeições e Subtotal; etapa 3 sem campo global
+  assert.match(page, /<span>Refeições<\/span>\s*<span>Emissão NF<\/span>\s*<span>Subtotal<\/span>/);
+  assert.match(page, /aria-label=\{`Emissão NF de \$\{employee\?\.officialName/); assert.match(page, /FOOD_PA_INVOICE_CODES\.map/);
+  assert.doesNotMatch(page, /manualInvoice\b|food-manual-invoice/);
+  assert.match(page, /invoiceEmission: manualInvoices\[collaboratorId\]/); assert.doesNotMatch(page, /company:\s*foodInvoiceEmissionToCompany/);
+  assert.match(page, /paQuantitiesValid && paInvoicesValid/);
+  // backend: rejeita NF fora de NF_01/NF_02 antes da transação; persiste o rótulo por linha; empresa nunca vem do payload
+  assert.ok(server.indexOf("FOOD_PA_INVOICE_REQUIRED_MESSAGE") < server.indexOf("prisma.$transaction"));
+  assert.match(server, /invoiceEmission: invoice,/); assert.doesNotMatch(server, /input\.company|\.company\b/);
+  // correção: NF editável (só PA), auditada na revisão, valor recalculado igual (unitPrice × refeições)
+  assert.match(maServer, /batch\.locality !== "PA" \|\| !isFoodPaInvoiceCode\(edit\.invoiceEmission\)/);
+  assert.match(maServer, /invoiceEmission: occurrence\.invoiceEmission,/); assert.match(maServer, /amount: occurrence\.unitPrice\.mul\(mealQuantity\),\r?\n\s+invoiceEmission,/);
+  assert.match(editor, /locality === "PA" && invoiceCode && invoiceCode !== parseFoodPaInvoice\(row\.invoiceEmission\)/);
+  // tela: rateio PA por empresa calculado no servidor a partir do snapshot de cada linha
+  assert.match(foodServer, /buildFoodPaCompanyRateio\(paRows\.filter/);
+});

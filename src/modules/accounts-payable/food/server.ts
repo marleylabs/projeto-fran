@@ -1,4 +1,5 @@
 import "server-only";
+import { buildFoodPaCompanyRateio } from "./invoice-company";
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { removePrivateFile, sanitizeOriginalName, storePrivateFile } from "@/modules/documents/server/privateStorage";
@@ -48,7 +49,11 @@ export async function getFoodCompetence(year: number, month: number) {
   const editableOccurrences = editableBatchIds.length ? await prisma.foodMealOccurrence.findMany({ where: { batchId: { in: editableBatchIds }, deletedAt: null }, orderBy: { sourceRow: "asc" } }) : [];
   const occurrencesByBatch = new Map<string, typeof editableOccurrences>();
   for (const occurrence of editableOccurrences) occurrencesByBatch.set(occurrence.batchId, [...(occurrencesByBatch.get(occurrence.batchId) ?? []), occurrence]);
-  const responseCompetence = competence ? { ...competence, batches: competence.batches.map(({ _count, ...batch }) => ({ ...batch, mealOccurrenceCount: _count.mealOccurrences, mealOccurrences: occurrencesByBatch.get(batch.id) ?? [] })) } : null;
+  // PA: rateio por Empresa derivado da Emissão NF de cada linha (snapshot) — NF 01 → BOINGA, NF 02 → PROJETA.
+  const paBatchIds = competence?.batches.filter((batch) => batch.locality === "PA").map((batch) => batch.id) ?? [];
+  const paRows = paBatchIds.length ? await prisma.foodMealOccurrence.findMany({ where: { batchId: { in: paBatchIds }, deletedAt: null }, select: { batchId: true, employeeId: true, officialName: true, receivedName: true, normalizedReceivedName: true, confirmedDepartment: true, receivedDepartment: true, invoiceEmission: true, mealQuantity: true, amount: true, included: true } }) : [];
+  const companyRateioByBatch = new Map(paBatchIds.map((id) => [id, buildFoodPaCompanyRateio(paRows.filter((row) => row.batchId === id))]));
+  const responseCompetence = competence ? { ...competence, batches: competence.batches.map(({ _count, ...batch }) => ({ ...batch, mealOccurrenceCount: _count.mealOccurrences, mealOccurrences: occurrencesByBatch.get(batch.id) ?? [], companyRateio: companyRateioByBatch.get(batch.id) ?? null })) } : null;
   const supplierPrices = new Map<string, Prisma.Decimal>();
   for (const config of priceConfigs) if (!supplierPrices.has(config.administrativeEntityId) &&
     (!config.effectiveYear || config.effectiveYear < year || (config.effectiveYear === year && (!config.effectiveMonth || config.effectiveMonth <= month)))) supplierPrices.set(config.administrativeEntityId, config.unitPrice);

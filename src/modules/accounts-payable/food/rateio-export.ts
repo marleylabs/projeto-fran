@@ -7,9 +7,12 @@ import {
   styleFoodExcelHeader,
   styleFoodExcelTotal,
 } from "./excel-style";
+import { buildFoodPaCompanyRateio } from "./invoice-company";
 
 type NumericValue = number | string | { toString(): string };
 export type FoodRateioBatch = {
+  // PA: o rateio por colaborador ganha Empresa (derivada da Emissão NF) e a NF ao lado das Refeições.
+  locality?: string;
   mealOccurrences: Array<{
     id: string;
     employeeId: string | null;
@@ -87,6 +90,13 @@ export function buildFoodRateioWorkbook(batch: FoodRateioBatch) {
   styleFoodExcelTotal(summaryTotal);
   summaryTotal.getCell(4).numFmt = FOOD_EXCEL_MONEY_FORMAT;
 
+  if (batch.locality === "PA") {
+    addPaCompanySheets(workbook, batch, totalAmount);
+    assertEqual("refeições", sectors.values().reduce((sum, value) => sum + value.meals, 0), totalMeals);
+    assertEqual("valor", sectors.values().reduce((sum, value) => sum + value.amount, 0), totalAmount);
+    return workbook;
+  }
+
   const allocation = workbook.addWorksheet("Rateio por Colaborador");
   allocation.addRow(["Setor", "Colaborador", "Refeições", "Valor Médio", "Custo", "Restaurante", "Emissão NF"]);
   styleFoodExcelHeader(allocation.getRow(1));
@@ -110,6 +120,50 @@ export function buildFoodRateioWorkbook(batch: FoodRateioBatch) {
   return workbook;
 }
 
+// PA: "Resumo por Empresa" (Empresa = NF 01 → BOINGA, NF 02 → PROJETA) e "Rateio por Colaborador" com
+// Empresa + Emissão NF imediatamente ao lado de Refeições. Uma linha por colaborador + NF.
+function addPaCompanySheets(workbook: ExcelJS.Workbook, batch: FoodRateioBatch, totalAmount: number) {
+  const rateio = buildFoodPaCompanyRateio(batch.mealOccurrences);
+  assertEqual("empresas", rateio.companiesCents / 100, totalAmount);
+
+  const companySheet = workbook.addWorksheet("Resumo por Empresa");
+  companySheet.addRow(["Empresa", "Colaboradores", "Refeições", "Valor"]);
+  styleFoodExcelHeader(companySheet.getRow(1));
+  for (const company of rateio.companies) companySheet.addRow([company.company, company.collaborators, company.meals, company.amountCents / 100]);
+  const companyTotal = companySheet.addRow(["TOTAL", new Set(rateio.companies.flatMap((company) => company.people.map((person) => person.key.split("|")[0]))).size, rateio.companies.reduce((sum, company) => sum + company.meals, 0), rateio.totalCents / 100]);
+  companySheet.columns = [{ width: 30 }, { width: 18 }, { width: 14 }, { width: 18 }];
+  companySheet.getColumn(4).numFmt = FOOD_EXCEL_MONEY_FORMAT;
+  configureFoodExcelSheet(companySheet, "D", companySheet.rowCount);
+  for (let row = 2; row < companySheet.rowCount; row++) {
+    companySheet.getCell(row, 1).alignment = { horizontal: "left", vertical: "middle" };
+    companySheet.getCell(row, 2).alignment = { horizontal: "center", vertical: "middle" };
+    companySheet.getCell(row, 3).alignment = { horizontal: "center", vertical: "middle" };
+    companySheet.getCell(row, 4).alignment = { horizontal: "right", vertical: "middle" };
+  }
+  styleFoodExcelTotal(companyTotal);
+  companyTotal.getCell(4).numFmt = FOOD_EXCEL_MONEY_FORMAT;
+
+  const restaurantsByIdentity = new Map<string, Set<string>>();
+  for (const row of batch.mealOccurrences.filter((occurrence) => occurrence.included)) {
+    const identity = personIdentity(row);
+    if (row.restaurantName) restaurantsByIdentity.set(identity, (restaurantsByIdentity.get(identity) ?? new Set<string>()).add(row.restaurantName));
+  }
+  const allocation = workbook.addWorksheet("Rateio por Colaborador");
+  allocation.addRow(["Empresa", "Setor", "Colaborador", "Refeições", "Emissão NF", "Valor Médio", "Custo", "Restaurante"]);
+  styleFoodExcelHeader(allocation.getRow(1));
+  for (const company of rateio.companies)
+    for (const person of [...company.people].sort((a, b) => comparePtBr(a.department, b.department) || comparePtBr(a.name, b.name)))
+      allocation.addRow([company.company, person.department, person.name, person.meals, person.invoiceEmission, person.amountCents / 100 / person.meals, person.amountCents / 100, [...(restaurantsByIdentity.get(person.key.split("|")[0]) ?? [])].join(", ")]);
+  allocation.columns = [{ width: 22 }, { width: 28 }, { width: 34 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 18 }, { width: 28 }];
+  allocation.getColumn(6).numFmt = FOOD_EXCEL_MONEY_FORMAT;
+  allocation.getColumn(7).numFmt = FOOD_EXCEL_MONEY_FORMAT;
+  configureFoodExcelSheet(allocation, "H", allocation.rowCount);
+  for (let row = 2; row <= allocation.rowCount; row++) {
+    for (const column of [1, 2, 3]) allocation.getCell(row, column).alignment = { horizontal: "left", vertical: "middle" };
+    for (const column of [4, 5]) allocation.getCell(row, column).alignment = { horizontal: "center", vertical: "middle" };
+    for (const column of [6, 7]) allocation.getCell(row, column).alignment = { horizontal: "right", vertical: "middle" };
+  }
+}
 export async function exportFoodRateio(batch: FoodRateioBatch) {
   return buildFoodRateioWorkbook(batch).xlsx.writeBuffer();
 }
