@@ -1225,3 +1225,80 @@ test("alimentação PA manual: NF individual na etapa 2, sem campo global, valid
   // tela: rateio PA por empresa calculado no servidor a partir do snapshot de cada linha
   assert.match(foodServer, /buildFoodPaCompanyRateio\(paRows\.filter/);
 });
+// ---------------------------------------------------------------- Café da Manhã: Espelho de Ponto → Quantidade Extras
+test("espelho de ponto: CSV (BOM, ;) , colunas obrigatórias, horas, datas e CPF com zeros perdidos", async () => {
+  const { readCsvMatrix } = await import("../src/modules/accounts-payable/shared/spreadsheet");
+  const { normalizePointMirrorMatrix, parseWorkedMinutes, parsePointMirrorDate, normalizePointMirrorCpf, PointMirrorError } = await import("../src/modules/accounts-payable/breakfast/point-mirror");
+  const cpf = cpfWithDigits("029788742"); // sintético, começa com 0
+  const header = "CNPJ;Nome;Matrícula;PIS;CPF;Admissão;Demissão;Filial;Departamento;Cargo;Data;Dia;Jornada Esperada;Horas Esperadas;Nome Escala;Natureza Dia;Marcações Válidas;Jornada Considerada;Horas Trabalhadas;Eventos;Centro Custo;Grupos";
+  const line = (date: string, day: string, nature: string, journey: string, hours: string, rawCpf = cpf.replace(/^0+/, "")) => `00000000000000;FULANO SINTETICO;1;0;${rawCpf};01/01/2020;;F;X;Y;${date};${day};;;;${nature};;${journey};${hours};;;`;
+  const csv = `﻿${header}\r\n${line("05/09/2026", "SÁB.", "Folga", "Trabalho com Horas Excedentes", "08:00")}\r\n\r\n`;
+  const rows = normalizePointMirrorMatrix(readCsvMatrix(csv));
+  assert.equal(rows.length, 1); assert.equal(rows[0].cpf, cpf); assert.equal(rows[0].date, "2026-09-05"); assert.equal(rows[0].workedMinutes, 480); assert.equal(rows[0].name, "FULANO SINTETICO");
+  // colunas obrigatórias ausentes: bloqueia e lista quais
+  assert.throws(() => normalizePointMirrorMatrix(readCsvMatrix("Nome;CPF;Data\nA;1;01/01/2026")), (error: Error) => error instanceof PointMirrorError && /Dia, Natureza Dia, Jornada Considerada, Horas Trabalhadas/.test(error.message));
+  assert.equal(parseWorkedMinutes("00:00"), 0); assert.equal(parseWorkedMinutes("00:01"), 1); assert.equal(parseWorkedMinutes("08:48"), 528); assert.equal(parseWorkedMinutes("10:04"), 604); assert.equal(parseWorkedMinutes("8h"), null); assert.equal(parseWorkedMinutes(""), null);
+  assert.equal(parsePointMirrorDate("21/09/2026"), "2026-09-21"); assert.equal(parsePointMirrorDate("31/02/2026"), null); assert.equal(parsePointMirrorDate("2026-09-21"), null);
+  // zeros à esquerda perdidos: 10 e 9 dígitos voltam a 11 e passam na validação real
+  assert.equal(normalizePointMirrorCpf(cpf.slice(1)), cpf);
+  const twoZeros = cpfWithDigits("006308272"); assert.equal(normalizePointMirrorCpf(twoZeros.replace(/^0+/, "")), twoZeros);
+  assert.equal(normalizePointMirrorCpf("12345678900"), null); assert.equal(normalizePointMirrorCpf("123456789012"), null); assert.equal(normalizePointMirrorCpf(""), null);
+});
+
+test("espelho de ponto: sábado, domingo e feriado +1 por data (sem horas, Trabalho Esperado e duplicidades não contam)", async () => {
+  const { isBreakfastExtraDay, buildBreakfastExtraSuggestions } = await import("../src/modules/accounts-payable/breakfast/point-mirror");
+  const base = { dayLabel: "", nature: "Trabalho", journey: "Trabalho com Horas Excedentes", workedMinutes: 480 };
+  assert.equal(isBreakfastExtraDay({ ...base, date: "2026-09-05", dayLabel: "SÁB." }).qualifies, true); // sábado
+  assert.equal(isBreakfastExtraDay({ ...base, date: "2026-09-06", dayLabel: "DOM.", workedMinutes: 540 }).qualifies, true); // domingo
+  assert.equal(isBreakfastExtraDay({ ...base, date: "2026-09-07", nature: "Feriado", journey: "Feriado", workedMinutes: 528 }).qualifies, true); // feriado
+  assert.equal(isBreakfastExtraDay({ ...base, date: "2026-09-05", workedMinutes: 0 }).qualifies, false); // 00:00
+  assert.equal(isBreakfastExtraDay({ ...base, date: "2026-09-05", journey: "Trabalho Esperado" }).qualifies, false);
+  assert.equal(isBreakfastExtraDay({ ...base, date: "2026-09-07", nature: "Feriado", journey: "  trabalho esperado " }).qualifies, false); // normalizado (trim/caixa)
+  assert.equal(isBreakfastExtraDay({ ...base, date: "2026-09-08" }).qualifies, false); // dia útil comum
+  assert.equal(isBreakfastExtraDay({ ...base, date: "2026-09-05", dayLabel: "SEG." }).dayMismatch, true); // conferência pela coluna Dia
+  const cpfA = cpfWithDigits("111444777"), cpfB = cpfWithDigits("222555888");
+  const row = (sourceRow: number, cpf: string | null, date: string, extra: Partial<typeof base> = {}) => ({ sourceRow, name: `P${sourceRow}`, cpf, rawCpf: cpf ?? "123", date, ...base, ...extra });
+  const result = buildBreakfastExtraSuggestions([
+    row(2, cpfA, "2026-09-05"), row(3, cpfA, "2026-09-05"), // mesma pessoa + data duplicada → +1
+    row(4, cpfA, "2026-09-06"), row(5, cpfA, "2026-09-07", { nature: "Feriado", journey: "Feriado" }),
+    row(6, cpfB, "2026-09-12", { nature: "Feriado" }), // sábado que também é feriado → +1 (coluna Feriado)
+    row(7, cpfB, "2026-09-19", { workedMinutes: 0 }), row(8, cpfB, "2026-09-08"),
+    row(9, null, "2026-09-05"),
+  ]);
+  const byCpf = (cpf: string) => result.people.find((person) => person.cpf === cpf)!;
+  assert.deepEqual([byCpf(cpfA).saturdays, byCpf(cpfA).sundays, byCpf(cpfA).holidays, byCpf(cpfA).extraQuantity], [1, 1, 1, 3]);
+  assert.deepEqual([byCpf(cpfB).saturdays, byCpf(cpfB).holidays, byCpf(cpfB).extraQuantity], [0, 1, 1]);
+  assert.equal(result.totals.extraDates, 5); assert.equal(result.totals.invalidCpf, 1); assert.equal(result.totals.peopleWithExtras, 3); // CPF inválido conta no total encontrado, mas nunca é aplicado
+  assert.deepEqual(result.period, { from: "2026-09-05", to: "2026-09-19" }); // período do arquivo, sem filtrar pela competência
+  assert.ok(result.people.every((person) => !person.cpfMasked.includes(person.cpf?.slice(0, 9) ?? "x")));
+});
+
+test("espelho de ponto: aplicar ATRIBUI (idempotente), só selecionados aptos, e a edição manual prevalece", async () => {
+  const { applyBreakfastExtraSuggestions } = await import("../src/modules/accounts-payable/breakfast/point-mirror");
+  const { calculateFinalQuantity, calculateBreakfastEmployeeTotal } = await import("../src/modules/accounts-payable/breakfast/calculations");
+  const values = { a: { extra: "2", discount: "2" }, b: { extra: "1", discount: "0" }, c: { extra: "7", discount: "0" } };
+  const suggestions = [{ employeeId: "a", extraQuantity: 3, status: "APPLY" }, { employeeId: "b", extraQuantity: 0, status: "APPLY" }, { employeeId: "c", extraQuantity: 9, status: "NOT_IN_FILE" }, { employeeId: "x", extraQuantity: 4, status: "NOT_SELECTED" }];
+  const once = applyBreakfastExtraSuggestions(values, suggestions);
+  assert.deepEqual([once.a.extra, once.b.extra, once.c.extra, "x" in once], ["3", "0", "7", false]); // = e não +=; fora do arquivo mantém
+  assert.equal(once.a.discount, "2"); assert.equal(values.a.extra, "2"); // não muta o estado anterior
+  const twice = applyBreakfastExtraSuggestions(once, suggestions);
+  assert.equal(twice.a.extra, "3"); // reimportar o mesmo arquivo nunca dobra
+  const edited = { ...twice, a: { ...twice.a, extra: "5" } }; // usuário corrige 3 → 5
+  assert.equal(edited.a.extra, "5");
+  // fórmula inalterada: 21 + 3 − 2 = 22 × R$ 12,50 = R$ 275,00; depois da edição usa 5
+  assert.equal(calculateBreakfastEmployeeTotal(1250, calculateFinalQuantity(21, Number(twice.a.extra), 2)), 27500);
+  assert.equal(calculateFinalQuantity(21, Number(edited.a.extra), 2), 24);
+  const [section, route, server] = await Promise.all([
+    readFile(new URL("../src/modules/accounts-payable/breakfast/BreakfastSection.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/api/accounts-payable/breakfast/point-mirror/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/breakfast/point-mirror-server.ts", import.meta.url), "utf8"),
+  ]);
+  // input de extras continua editável e só muda pelo clique explícito (sem effect reaplicando)
+  assert.match(section, /aria-label="Quantidade extras"[^>]*value=\{value\.extra\} onChange=\{\(event\) => patchValue\(row\.id, \{ extra: event\.target\.value \}\)\}/);
+  assert.doesNotMatch(section, /useEffect\([^)]*applyBreakfastExtraSuggestions/); assert.match(section, /onClick=\{applyPointMirror\}/);
+  // segurança: mesma permissão do lançamento, limite de tamanho, nada persistido, sem log de conteúdo
+  assert.match(route, /requirePermission\(PERMISSIONS\.FINANCIAL_RECORDS_CREATE\)/); assert.match(route, /MAX_POINT_MIRROR_FILE_SIZE/);
+  assert.doesNotMatch(server, /\.create\(|\.update\(|\.upsert\(|writeFile|storePrivateFile|console\./);
+  assert.match(server, /where: \{ cpf: \{ in: cpfs \} \}/); assert.doesNotMatch(server, /normalizedName|officialName: \{/); // match só por CPF
+  assert.doesNotMatch(server, /cpf: person\.cpf|cpf: employee\.cpf/); // resposta sem CPF completo
+});

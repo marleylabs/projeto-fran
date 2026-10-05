@@ -9,13 +9,24 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList } from "@/components/allocation/AllocationCard";
 import { CompetenceCalendar, HolidayModal, type Holiday } from "@/components/allocation/CompetenceHolidays";
 import { CompanyModal, companyLabel, normalizeText as normalize, type Company } from "@/components/allocation/CompanyPicker";
-import { Badge, Button, DeletionModal, EmptyState, MetricCard, buttonClassName, useToast } from "@/components/ui";
+import { Badge, Button, DeletionModal, EmptyState, FileInput, MetricCard, buttonClassName, useToast } from "@/components/ui";
 import { type CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { ManualEntrySection } from "@/components/ManualEntryLayout";
 import { BREAKFAST_ALLOWED_DEPARTMENT, calculateBreakfastEmployeeTotal, calculateFinalQuantity, formatBreakfastObservation, parseUnitPriceToCents, type BreakfastObservationKind } from "./calculations";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 import { groupBreakfastByCompanyCostCenter } from "./rateio";
+import { applyBreakfastExtraSuggestions } from "./point-mirror";
+
+type PointMirrorStatus = "APPLY" | "NOT_SELECTED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "INVALID_CPF" | "NOT_IN_FILE";
+type PointMirrorPreview = {
+  period: { from: string; to: string } | null;
+  totals: { rows: number; people: number; saturdays: number; sundays: number; holidays: number; extraDates: number; peopleWithExtras: number; located: number; notFound: number; apply: number; notSelected: number; notEligible: number; notInFile: number; invalidCpf: number };
+  warnings: string[];
+  people: Array<{ employeeId: string | null; employeeName: string; cpfMasked: string; saturdays: number; sundays: number; holidays: number; extraQuantity: number; status: PointMirrorStatus }>;
+};
+const pointStatusLabel = (status: PointMirrorStatus, extra: number) => ({ APPLY: extra ? "Será aplicado" : "Presente no arquivo com 0 extras", NOT_SELECTED: "Encontrado no arquivo, mas não selecionado", NOT_ELIGIBLE: "Fora do TOPOGEO ou inativo", NOT_FOUND: "Não localizado (CPF)", INVALID_CPF: "CPF inválido", NOT_IN_FILE: "Selecionado, não está no arquivo — mantém o valor atual" })[status];
+const isoBr = (iso: string) => iso.split("-").reverse().join("/");
 import { triggerDownload } from "@/lib/export/download";
 
 type Entity = { id: string; cnpj: string | null; tradeName: string; legalName: string; activityArea: string; locality: string };
@@ -165,6 +176,30 @@ export function BreakfastSection() {
     setValues((current) => { const next = { ...current }; for (const id of ids) if (!next[id]) { const preset = companies.find((company) => company.id === configs[id]?.companyId); next[id] = { companyText: preset ? companyLabel(preset) : "", companyId: preset?.id ?? "", extra: "0", discount: "0", obsType: "", obsDetails: "" }; } return next; });
   }
   const patchValue = (id: string, patch: Partial<EntryValue>) => setValues((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
+
+  // ---- Espelho de Ponto: só SUGERE Quantidade Extras. Processado no servidor (match por CPF, sem
+  // devolver CPF completo); nada muda nos inputs até o usuário clicar em "Aplicar Quantidades Extras",
+  // que ATRIBUI o valor (idempotente). Depois disso o campo segue livre para edição manual.
+  const [pointFile, setPointFile] = useState<File | null>(null);
+  const [pointBusy, setPointBusy] = useState(false);
+  const [pointMirror, setPointMirror] = useState<(PointMirrorPreview & { competence: string }) | null>(null);
+  async function processPointMirror() {
+    if (!pointFile) return; setPointBusy(true);
+    try {
+      const data = new FormData(); data.set("file", pointFile); data.set("selectedIds", JSON.stringify(selectedIds));
+      const response = await fetch("/api/accounts-payable/breakfast/point-mirror", { method: "POST", body: data });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error ?? "Não foi possível processar o Espelho de Ponto.");
+      setPointMirror({ ...(body as PointMirrorPreview), competence });
+    } catch (cause) { setPointMirror(null); toast.error(cause instanceof Error ? cause.message : "Falha ao processar o Espelho de Ponto.", "Espelho de Ponto"); }
+    finally { setPointBusy(false); }
+  }
+  function applyPointMirror() {
+    if (!pointMirror) return;
+    const applicable = pointMirror.people.filter((person) => person.status === "APPLY" && person.employeeId && selectedIds.includes(person.employeeId)) as Array<PointMirrorPreview["people"][number] & { employeeId: string }>;
+    setValues((current) => applyBreakfastExtraSuggestions(current, applicable));
+    toast.success(`Quantidade Extras aplicada para ${applicable.length} colaborador(es). Os valores continuam editáveis.`);
+  }
   function applyCompany(text: string) { setBulkCompany(text); const company = companyByText(text); if (company) setValues((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, selectedIds.includes(id) ? { ...value, companyText: companyLabel(company), companyId: company.id } : value]))); }
 
   const entityBase = useMemo(() => mapBase(maps.find((map) => map.administrativeEntity.id === entityId)), [maps, entityId]);
@@ -224,7 +259,7 @@ export function BreakfastSection() {
     {tab === "preenchimento" && <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-5" role="tabpanel">
       <ManualEntrySection eyebrow="1. Dados necessários" title="Competência, calendário e valor">
         <div className="grid gap-4 md:grid-cols-2">
-          <label className="form-control"><span className="label-text mb-1">Competência *</span><input type="month" className="input input-bordered w-full" value={competence} onChange={(event) => setCompetence(event.target.value)} /></label>
+          <label className="form-control"><span className="label-text mb-1">Competência *</span><input type="month" className="input input-bordered w-full" value={competence} onChange={(event) => { setCompetence(event.target.value); setPointMirror(null); }} /></label>
           <label className="form-control"><span className="label-text mb-1">Cadastro da obrigação *</span><select required className="select select-bordered w-full" value={entityId} onChange={(event) => setEntityId(event.target.value)}><option value="">Selecionar cadastro</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select></label>
         </div>
         <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,22rem)_1fr]">
@@ -251,6 +286,31 @@ export function BreakfastSection() {
       <ManualEntrySection eyebrow="2. Pessoas" title="Colaboradores">
         {entityBase && <p className="mb-3 rounded-lg border border-base-300 bg-base-100 p-3 text-sm text-secondary" role="note">Este lançamento já possui mapa: novos colaboradores usarão a base histórica do mapa ({entityBase.workingDays} dias úteis · {money(entityBase.unitPrice)} por café), mesmo que a competência tenha sido alterada depois.</p>}
         <CollaboratorMultiCombobox value={selectedIds} options={topogeoCollaborators} onChange={changeSelection} fixedDepartment={BREAKFAST_ALLOWED_DEPARTMENT} />
+        <div className="mt-4 rounded-lg border border-base-300 p-3" aria-label="Importar Espelho de Ponto">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-56 flex-1"><span className="label-text mb-1 block">Importar Espelho de Ponto (opcional)</span><FileInput accept=".csv,.xlsx" fileName={pointFile?.name ?? ""} loading={pointBusy} aria-label="Selecionar Espelho de Ponto" onChange={(event) => { setPointFile(event.target.files?.[0] ?? null); setPointMirror(null); }} /></div>
+            <Button type="button" variant="secondary" disabled={!pointFile || pointBusy} loading={pointBusy} onClick={processPointMirror}>Processar arquivo</Button>
+          </div>
+          <p className="mt-2 text-xs text-secondary">Sugere Quantidade Extras: +1 por data trabalhada em sábado, domingo ou feriado (Horas Trabalhadas &gt; 00:00 e Jornada diferente de “Trabalho Esperado”). Identificação somente por CPF. Nada é alterado antes de aplicar, e o arquivo não é armazenado.</p>
+          {pointMirror && <div className="mt-3 grid gap-3">
+            <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-8">{([["Período do ponto", pointMirror.period ? `${isoBr(pointMirror.period.from)} a ${isoBr(pointMirror.period.to)}` : "—"], ["Competência", `${String(month).padStart(2, "0")}/${year}`], ["Linhas analisadas", pointMirror.totals.rows], ["Colaboradores no arquivo", pointMirror.totals.people], ["Localizados (CPF)", pointMirror.totals.located], ["Não localizados", pointMirror.totals.notFound + pointMirror.totals.invalidCpf], ["Dias extras", `${pointMirror.totals.extraDates} (Sáb ${pointMirror.totals.saturdays} · Dom ${pointMirror.totals.sundays} · Fer ${pointMirror.totals.holidays})`], ["Serão aplicados", pointMirror.totals.apply]] as const).map(([label, value]) => <div key={label} className="rounded-md bg-base-200 p-2"><dt className="text-secondary">{label}</dt><dd className="font-semibold">{value}</dd></div>)}</dl>
+            {pointMirror.competence !== competence && <p role="alert" className="text-xs text-warning">A competência mudou depois do processamento; processe o arquivo novamente.</p>}
+            {pointMirror.warnings.length > 0 && <details className="text-xs text-warning"><summary>{pointMirror.warnings.length} aviso(s) de conferência (coluna Dia × Data)</summary><ul className="mt-1 list-inside list-disc">{pointMirror.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}
+            <div className="max-h-80 overflow-auto rounded-lg border border-base-300">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead className="sticky top-0 bg-base-200 text-left text-xs"><tr><th className="p-2">Colaborador</th><th className="p-2">CPF</th><th className="p-2 text-center">Sáb.</th><th className="p-2 text-center">Dom.</th><th className="p-2 text-center">Feriado</th><th className="p-2 text-center">Sugerido</th><th className="p-2 text-center">Atual</th><th className="p-2">Situação</th></tr></thead>
+                <tbody>{[...pointMirror.people].sort((a, b) => Number(b.status === "APPLY") - Number(a.status === "APPLY") || comparePtBr(a.employeeName, b.employeeName)).map((person, index) => <tr key={`${person.employeeId ?? person.cpfMasked}-${index}`} className="border-t border-border">
+                  <td className="p-2 font-medium">{person.employeeName}</td><td className="p-2 text-xs tabular-nums text-secondary">{person.cpfMasked || "—"}</td>
+                  <td className="p-2 text-center">{person.status === "NOT_IN_FILE" ? "—" : person.saturdays}</td><td className="p-2 text-center">{person.status === "NOT_IN_FILE" ? "—" : person.sundays}</td><td className="p-2 text-center">{person.status === "NOT_IN_FILE" ? "—" : person.holidays}</td>
+                  <td className="p-2 text-center font-semibold">{person.status === "NOT_IN_FILE" ? "—" : person.extraQuantity}</td>
+                  <td className="p-2 text-center">{person.employeeId && values[person.employeeId] && selectedIds.includes(person.employeeId) ? values[person.employeeId].extra : "—"}</td>
+                  <td className={`p-2 text-xs ${person.status === "APPLY" ? "text-success" : "text-secondary"}`}>{pointStatusLabel(person.status, person.extraQuantity)}</td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2"><span className="text-xs text-secondary">Substitui (não soma) a Quantidade Extras dos {pointMirror.totals.apply} colaborador(es) selecionados encontrados; os demais não mudam.</span><Button type="button" disabled={!pointMirror.totals.apply || pointMirror.competence !== competence} onClick={applyPointMirror}>Aplicar Quantidades Extras</Button></div>
+          </div>}
+        </div>
         {selectedIds.length > 0 && <>
           <datalist id="cafe-companies">{companies.map((company) => <option key={company.id} value={companyLabel(company)} />)}</datalist>
           <div className="mt-4 flex flex-wrap items-end gap-2">
