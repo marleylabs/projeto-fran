@@ -901,3 +901,98 @@ test("café da manhã: somente colaboradores de TOPOGEO (regra validada no backe
   assert.match(manualServer, /organizationalComparisonKey/);
   assert.match(manualServer, /Apenas colaboradores do departamento \$\{BREAKFAST_ALLOWED_DEPARTMENT\}/);
 });
+
+test("café da manhã: rateio consolidado Empresa → Centro de Custo (snapshot do lançamento)", async () => {
+  const { groupBreakfastByCompanyCostCenter, amountToCents, BREAKFAST_EMPTY_COST_CENTER } = await import("../src/modules/accounts-payable/breakfast/rateio");
+  // `employee` simula o cadastro ATUAL (CC já alterado): o rateio deve ignorá-lo e usar o snapshot.
+  const rows = [
+    { employeeId: "a", employeeName: "Colaborador A", company: "PROJETA", department: "TOPOGEO", costCenter: "VALE TOPOGRAFIA BMSA", amount: "262.5000", employee: { costCenter: "OUTRO CC" } },
+    { employeeId: "b", employeeName: "Colaborador B", company: "PROJETA", department: "TOPOGEO", costCenter: "VALE TOPOGRAFIA BMSA", amount: "250.00", employee: { costCenter: "OUTRO CC" } },
+    { employeeId: "c", employeeName: "Colaborador C", company: "PROJETA", department: "TOPOGEO", costCenter: "VALE TOPOGRAFIA SALOBO", amount: "300", employee: { costCenter: "OUTRO CC" } },
+    { employeeId: "d", employeeName: "Colaborador D", company: "BOINGA", department: "TOPOGEO", costCenter: "VALE TOPOGRAFIA BMSA", amount: "200.00", employee: { costCenter: "OUTRO CC" } },
+    { employeeId: "e", employeeName: "Colaborador E", company: "BOINGA", department: "TOPOGEO", costCenter: "VALE INTEGRIDADE SALOBO", amount: "287.50", employee: { costCenter: "OUTRO CC" } },
+  ];
+  const result = groupBreakfastByCompanyCostCenter(rows);
+  const view = result.companies.map((company) => [company.company, company.people, company.totalCents, company.costCenters.map((child) => [child.costCenter, child.people, child.totalCents])]);
+  assert.deepEqual(view, [
+    ["BOINGA", 2, 48750, [["VALE INTEGRIDADE SALOBO", 1, 28750], ["VALE TOPOGRAFIA BMSA", 1, 20000]]],
+    ["PROJETA", 3, 81250, [["VALE TOPOGRAFIA BMSA", 2, 51250], ["VALE TOPOGRAFIA SALOBO", 1, 30000]]],
+  ]);
+  // mesmo CC em empresas diferentes: separados, nunca somados
+  assert.equal(result.grandCents, 130000); assert.equal(result.companiesCents, 130000); assert.equal(result.costCentersCents, 130000); assert.equal(result.consistent, true); assert.equal(result.people, 5);
+  assert.ok(!result.companies.flatMap((company) => company.costCenters).some((child) => child.costCenter === "OUTRO CC"));
+  // CC vazio/nulo → categoria explícita; nada inventado
+  const empty = groupBreakfastByCompanyCostCenter([{ employeeId: "x", employeeName: "X", company: "PROJETA", costCenter: "", amount: "12.50" }, { employeeId: "y", employeeName: "Y", company: "PROJETA", costCenter: null, amount: "25.00" }]);
+  assert.deepEqual(empty.companies[0].costCenters.map((child) => [child.costCenter, child.people, child.totalCents]), [[BREAKFAST_EMPTY_COST_CENTER, 2, 3750]]);
+  assert.equal(amountToCents("7962.5000"), 796250); assert.equal(amountToCents("0.1"), 10); assert.equal(amountToCents(12.5), 1250);
+  // o consolidado não consulta cadastro atual (FoodEmployee)
+  const source = await readFile(new URL("../src/modules/accounts-payable/breakfast/rateio.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /foodEmployee|\.employee\b|@\/generated\/prisma|@\/lib\/db/);
+});
+
+test("café da manhã: XLSX resume por Empresa → Centro de Custo e preserva detalhe/auditoria", async () => {
+  const { buildBreakfastWorkbook } = await import("../src/modules/accounts-payable/breakfast/workbook");
+  const allocation = (id: string, company: string, costCenter: string, amount: string, finalQuantity: number) => ({ id, employeeId: id, employeeName: `Colaborador ${id.toUpperCase()}`, company, department: "TOPOGEO", costCenter, amount, workingDays: 21, baseQuantity: 21, extraQuantity: 0, discountQuantity: 21 - finalQuantity, finalQuantity, unitPrice: "12.50", observationType: null, observationDetails: null });
+  const allocations = [allocation("a", "PROJETA", "VALE TOPOGRAFIA BMSA", "262.50", 21), allocation("b", "PROJETA", "VALE TOPOGRAFIA BMSA", "250.00", 20), allocation("c", "PROJETA", "VALE TOPOGRAFIA SALOBO", "300.00", 24), allocation("d", "BOINGA", "VALE TOPOGRAFIA BMSA", "200.00", 16), allocation("e", "BOINGA", "VALE INTEGRIDADE SALOBO", "287.50", 23)];
+  const map = { id: "m", version: 1, createdAt: new Date("2026-09-01T00:00:00Z"), administrativeEntityId: "ent", totalAmount: "1300.00", holidaysSnapshot: [], competence: { year: 2026, month: 9 }, administrativeEntity: { tradeName: "Fornecedor" }, allocations };
+  const workbook = buildBreakfastWorkbook(map as unknown as Parameters<typeof buildBreakfastWorkbook>[0]);
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Resumo", "Rateio por Colaborador", "Auditoria"]);
+  const summary = workbook.getWorksheet("Resumo")!;
+  const values = summary.getSheetValues().slice(1).map((row) => (row as unknown[]).slice(1));
+  assert.deepEqual(values, [
+    ["Empresa / Centro de Custo", "Colaboradores", "A pagar"],
+    ["BOINGA", 2, 487.5], ["   ↳ VALE INTEGRIDADE SALOBO", 1, 287.5], ["   ↳ VALE TOPOGRAFIA BMSA", 1, 200],
+    ["PROJETA", 3, 812.5], ["   ↳ VALE TOPOGRAFIA BMSA", 2, 512.5], ["   ↳ VALE TOPOGRAFIA SALOBO", 1, 300],
+    ["Total Geral", 5, 1300],
+  ]);
+  assert.ok(!values.some((row) => String(row[0]).includes("TOPOGEO")));
+  assert.equal(summary.getColumn(3).numFmt, "R$ #,##0.00");
+  const detail = workbook.getWorksheet("Rateio por Colaborador")!;
+  assert.deepEqual((detail.getRow(1).values as unknown[]).slice(1), ["Empresa", "Nome", "Departamento", "Centro de custo", "Dias Úteis", "Quantidade", "Quantidade Extras", "Desconto", "Quantidade Final", "Valor Unitário", "Valor Total", "Observação"]);
+  assert.equal(detail.getRow(2).getCell(3).value, "TOPOGEO");
+  assert.equal(detail.getRow(detail.rowCount).getCell(11).value, 1300);
+  assert.equal(workbook.getWorksheet("Auditoria")!.getCell("B5").value, 1300);
+});
+
+test("café da manhã: Máscara Flash (CNPJ | NOME COMPLETO | CPF | FLEXIVEL) por colaborador", async () => {
+  const { buildBreakfastFlashWorkbook, buildBreakfastFlashRows, BreakfastFlashExportError, FLASH_SHEET_NAME } = await import("../src/modules/accounts-payable/breakfast/flash");
+  const { calculateBreakfastEmployeeTotal, calculateFinalQuantity, centsToDecimalString } = await import("../src/modules/accounts-payable/breakfast/calculations");
+  const projeta = { taxId: "04892580000120" }, boinga = { taxId: "02801028000153" };
+  // 21 + 2 extras − 5 desconto = 18 × R$ 12,50 = R$ 225,00 (fórmula atual, não recalculada pela máscara)
+  const a225 = centsToDecimalString(calculateBreakfastEmployeeTotal(1250, calculateFinalQuantity(21, 2, 5)));
+  assert.equal(a225, "225.00");
+  const alloc = (id: string, employeeName: string, company: string, companyRef: { taxId: string } | null, amount: string) => ({ id, employeeId: id, employeeName, company, companyId: companyRef ? company : null, companyRef, amount });
+  const allocations = [alloc("c", "Colaborador C", "BOINGA", boinga, "250.0000"), alloc("b", "Colaborador B", "PROJETA", projeta, "262.50"), alloc("a", "Colaborador A", "PROJETA", projeta, a225)];
+  const map = { totalAmount: "737.50", financialRecord: { grossAmount: "737.5000" }, allocations };
+  const workbook = buildBreakfastFlashWorkbook(map);
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), [FLASH_SHEET_NAME]);
+  const sheet = workbook.worksheets[0];
+  assert.equal(sheet.columnCount, 4); assert.equal(sheet.rowCount, 4);
+  assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1), ["CNPJ", "NOME COMPLETO", "CPF", "FLEXIVEL (R$)"]);
+  const data = [2, 3, 4].map((n) => [1, 2, 3, 4].map((c) => sheet.getRow(n).getCell(c).value));
+  assert.deepEqual(data, [["02801028000153", "Colaborador C", null, 250], ["04892580000120", "Colaborador A", null, 225], ["04892580000120", "Colaborador B", null, 262.5]]);
+  for (const n of [2, 3, 4]) { assert.equal(typeof sheet.getRow(n).getCell(4).value, "number"); assert.equal(sheet.getRow(n).getCell(1).numFmt, "@"); }
+  // round-trip do arquivo: CPF continua sem valor, FLEXIVEL numérico, sem linha de total
+  const reread = new ExcelJS.Workbook(); await reread.xlsx.load(await workbook.xlsx.writeBuffer() as ArrayBuffer);
+  const back = reread.worksheets[0];
+  assert.equal(back.name, FLASH_SHEET_NAME); assert.equal(back.rowCount, 4);
+  for (const n of [2, 3, 4]) { const cpf = back.getRow(n).getCell(3).value; assert.ok(cpf === null || cpf === undefined, `CPF linha ${n} deve ser vazio`); }
+  assert.equal([2, 3, 4].reduce((total, n) => total + Math.round(Number(back.getRow(n).getCell(4).value) * 100), 0), 73750);
+  assert.ok(![1, 2, 3, 4].some((n) => String(back.getRow(n).getCell(1).value).includes("Total")));
+  assert.equal(buildBreakfastFlashRows(map).totalCents, 73750);
+  // bloqueios: empresa sem CNPJ (lista todas), sem colaboradores, total divergente, duplicidade
+  assert.throws(() => buildBreakfastFlashRows({ ...map, allocations: [alloc("x", "X", "BOINGA", { taxId: "" }, "10.00"), alloc("y", "Y", "ACME", null, "10.00")] }), (error: Error) => error instanceof BreakfastFlashExportError && error.message === "As empresas ACME, BOINGA não possuem CNPJ cadastrado.");
+  assert.throws(() => buildBreakfastFlashRows({ ...map, allocations: [alloc("x", "X", "BOINGA", null, "10.00")] }), /A empresa BOINGA não possui CNPJ cadastrado\./);
+  assert.throws(() => buildBreakfastFlashRows({ ...map, allocations: [] }), /Não há colaboradores para exportar\./);
+  assert.throws(() => buildBreakfastFlashRows({ ...map, financialRecord: { grossAmount: "737.49" } }), BreakfastFlashExportError);
+  assert.throws(() => buildBreakfastFlashRows({ ...map, allocations: [...allocations, { ...allocations[0], id: "c2" }] }), /mais de uma vez/);
+  // isolamento: só Café da Manhã ganha o botão/rota; rota usa a mesma permissão do download
+  const [route, section, transit] = await Promise.all([
+    readFile(new URL("../src/app/api/accounts-payable/breakfast/[mapId]/flash/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/breakfast/BreakfastSection.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/pagamentos/vale-transporte/page.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(route, /requirePermission\(PERMISSIONS\.FINANCIAL_RECORDS_READ\)/); assert.match(route, /deletedAt: null/);
+  assert.match(section, /Download do rateio XLSX/); assert.match(section, /Download da Máscara Flash/);
+  assert.doesNotMatch(transit, /Flash/);
+});

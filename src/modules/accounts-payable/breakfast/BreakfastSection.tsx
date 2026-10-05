@@ -15,6 +15,8 @@ import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobo
 import { ManualEntrySection } from "@/components/ManualEntryLayout";
 import { BREAKFAST_ALLOWED_DEPARTMENT, calculateBreakfastEmployeeTotal, calculateFinalQuantity, formatBreakfastObservation, parseUnitPriceToCents, type BreakfastObservationKind } from "./calculations";
 import { comparePtBr } from "@/lib/sorting/ptBr";
+import { groupBreakfastByCompanyCostCenter } from "./rateio";
+import { triggerDownload } from "@/lib/export/download";
 
 type Entity = { id: string; cnpj: string | null; tradeName: string; legalName: string; activityArea: string; locality: string };
 type Context = { year: number; month: number; unitPrice: string; unitPriceDefined: boolean; holidays: Holiday[]; weekdays: number; holidaysInMonth: number; holidaysOnWeekdays: number; workingDays: number };
@@ -139,6 +141,18 @@ export function BreakfastSection() {
     const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Falha na operação."); return body;
   }
+  // Máscara Flash: gerada no backend a partir do lançamento salvo; erros de validação (sem CNPJ,
+  // sem colaboradores, total divergente) chegam como JSON e viram toast — nenhum arquivo parcial.
+  const [flashBusy, setFlashBusy] = useState<string | null>(null);
+  async function downloadFlash(mapId: string) {
+    setFlashBusy(mapId);
+    try {
+      const response = await fetch(`/api/accounts-payable/breakfast/${mapId}/flash`);
+      if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error ?? "Falha ao gerar a Máscara Flash."); }
+      const filename = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ?? "Mascara_Flash_Cafe_Manha.xlsx";
+      triggerDownload(await response.blob(), filename);
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Falha ao gerar a Máscara Flash.", "Máscara Flash"); } finally { setFlashBusy(null); }
+  }
   async function savePrice() {
     try { setCtx(await post("/api/accounts-payable/breakfast/context", "PUT", { year, month, unitPrice: priceInput })); toast.success("Valor do café da manhã salvo para esta competência."); }
     catch (cause) { toast.error(cause instanceof Error ? cause.message : "Falha ao salvar o valor.", "Valor do café da manhã"); }
@@ -190,21 +204,16 @@ export function BreakfastSection() {
     catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Não foi possível excluir."); } finally { setDeleting(false); }
   }
 
-  // ---- Agregações de leitura (Empresa → Departamento → Colaborador); nada persistido/duplicado ----
+  // ---- Agregações de leitura; nada persistido/duplicado. Rateio (aba Rateio) mantém o detalhamento
+  // Empresa → Departamento → Colaborador; o consolidado do Resumo é Empresa → Centro de Custo (snapshot).
   const all = maps.flatMap((map) => map.allocations);
-  const tree = useMemo(() => {
-    const companiesMap = new Map<string, Map<string, Allocation[]>>();
-    for (const row of all) { const departments = companiesMap.get(row.company) ?? new Map<string, Allocation[]>(); const key = row.department ?? "Não informado"; departments.set(key, [...(departments.get(key) ?? []), row]); companiesMap.set(row.company, departments); }
-    return companiesMap;
-  }, [all]);
+  const rateio = useMemo(() => groupBreakfastByCompanyCostCenter(all), [all]);
   const sum = (rows: Allocation[]) => rows.reduce((total, row) => total + cents(row.amount), 0);
   const grand = sum(all);
-  const byCompanySum = [...tree.values()].reduce((total, departments) => total + [...departments.values()].reduce((inner, rows) => inner + sum(rows), 0), 0);
   const mapsTotal = maps.reduce((total, map) => total + cents(map.totalAmount), 0);
-  const difference = grand - byCompanySum + (grand - mapsTotal);
+  const difference = (grand - rateio.companiesCents) + (grand - rateio.costCentersCents) + (grand - mapsTotal);
   const uniquePeople = new Set(all.map((row) => row.employeeId ?? normalize(row.employeeName))).size;
   const totalMeals = all.reduce((total, row) => total + (row.finalQuantity ?? 0), 0);
-  const sortedTree = [...tree].sort(([a], [b]) => comparePtBr(a, b));
 
   const tabButton = (id: typeof tab, label: string) => <Button type="button" role="tab" aria-selected={tab === id} variant={tab === id ? "primary" : "ghost"} onClick={() => setTab(id)}>{label}</Button>;
   const monthLabel = `${String(month).padStart(2, "0")}/${year}`;
@@ -297,16 +306,16 @@ export function BreakfastSection() {
             </AllocationDepartmentAccordion>)}</div>
           </AllocationDepartmentAccordion>; })}</AllocationDepartmentList>
           <div className={`mt-4 flex flex-wrap gap-x-6 gap-y-1 rounded-md border px-3 py-2 text-sm ${diff !== 0 ? "border-error/40 bg-error/5 text-error" : "border-border"}`} role={diff !== 0 ? "alert" : undefined}><span>Valor total <strong>{money(map.totalAmount)}</strong></span><span>Rateado <strong>{money(mapSum / 100)}</strong></span><span>Diferença <strong>{money(diff / 100)}</strong></span></div>
-          <div className="mt-4 flex flex-wrap gap-2"><a href={`/api/accounts-payable/breakfast/${map.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}>Download do rateio XLSX</a><Button size="sm" variant="error" onClick={() => setDeleteTarget({ mapId: map.id })}>Cancelar lançamento</Button></div>
+          <div className="mt-4 flex flex-wrap gap-2"><a href={`/api/accounts-payable/breakfast/${map.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}>Download do rateio XLSX</a><Button size="sm" variant="secondary" loading={flashBusy === map.id} disabled={flashBusy !== null} onClick={() => downloadFlash(map.id)}>Download da Máscara Flash</Button><Button size="sm" variant="error" onClick={() => setDeleteTarget({ mapId: map.id })}>Cancelar lançamento</Button></div>
         </AllocationCard>;
       }) : <div className="card"><EmptyState title="Nenhum lançamento nesta competência." description="Preencha as etapas 1 e 2 para gerar o rateio." /></div>}
     </section>}
 
     {tab === "resumo" && <section role="tabpanel" className="grid gap-4">
       {all.length ? <>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6"><MetricCard label="Empresas" value={String(tree.size)} /><MetricCard label="Colaboradores" value={String(uniquePeople)} /><MetricCard label="Dias úteis" value={[...new Set(maps.map((map) => mapBase(map)?.workingDays))].length > 1 ? "Vários" : String(mapBase(maps[0])?.workingDays ?? ctx?.workingDays ?? "—")} /><MetricCard label="Quantidade de cafés" value={String(totalMeals)} /><MetricCard label="Valor unitário" value={[...new Set(maps.map((map) => mapBase(map)?.unitPrice))].length > 1 ? "Vários" : mapBase(maps[0]) ? money(mapBase(maps[0])!.unitPrice) : ctx ? money(ctx.unitPrice) : "—"} /><MetricCard label="Total Geral" value={money(grand / 100)} accent /></div>
-        <div className="grid gap-3">{sortedTree.map(([company, departments]) => { const companyRows = [...departments.values()].flat(); return <details key={company} open className="rounded-lg border border-border"><summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4"><strong>{company}</strong><span className="font-semibold text-primary">{money(sum(companyRows) / 100)}</span></summary><div className="border-t border-border px-4 py-2">{[...departments].sort(([a], [b]) => comparePtBr(a, b)).map(([department, rows]) => <div key={department} className="flex justify-between border-b border-border py-2 pl-4 text-sm last:border-0"><span>↳ {department} <span className="text-xs text-secondary">({rows.length})</span></span><span>{money(sum(rows) / 100)}</span></div>)}</div></details>; })}</div>
-        <div className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border-2 px-4 py-3 ${difference !== 0 ? "border-error bg-error/5 text-error" : "border-primary/40 bg-primary/5"}`}><strong>Total Geral</strong><strong className="text-xl">{money(grand / 100)}</strong><span className="basis-full text-xs">{difference === 0 ? "Colaboradores = departamentos = empresas = total · diferença R$ 0,00" : `Inconsistência: diferença ${money(difference / 100)}`}</span></div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6"><MetricCard label="Empresas" value={String(rateio.companies.length)} /><MetricCard label="Colaboradores" value={String(uniquePeople)} /><MetricCard label="Dias úteis" value={[...new Set(maps.map((map) => mapBase(map)?.workingDays))].length > 1 ? "Vários" : String(mapBase(maps[0])?.workingDays ?? ctx?.workingDays ?? "—")} /><MetricCard label="Quantidade de cafés" value={String(totalMeals)} /><MetricCard label="Valor unitário" value={[...new Set(maps.map((map) => mapBase(map)?.unitPrice))].length > 1 ? "Vários" : mapBase(maps[0]) ? money(mapBase(maps[0])!.unitPrice) : ctx ? money(ctx.unitPrice) : "—"} /><MetricCard label="Total Geral" value={money(grand / 100)} accent /></div>
+        <div className="grid gap-3">{rateio.companies.map((company) => <details key={company.company} open className="rounded-lg border border-border"><summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4"><strong>{company.company} <span className="text-xs font-normal text-secondary">({company.people})</span></strong><span className="font-semibold text-primary">{money(company.totalCents / 100)}</span></summary><div className="border-t border-border px-4 py-2">{company.costCenters.map((costCenter) => <div key={costCenter.costCenter} className="flex justify-between border-b border-border py-2 pl-4 text-sm last:border-0"><span>↳ {costCenter.costCenter} <span className="text-xs text-secondary">({costCenter.people})</span></span><span>{money(costCenter.totalCents / 100)}</span></div>)}</div></details>)}</div>
+        <div className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border-2 px-4 py-3 ${difference !== 0 ? "border-error bg-error/5 text-error" : "border-primary/40 bg-primary/5"}`}><strong>Total Geral</strong><strong className="text-xl">{money(grand / 100)}</strong><span className="basis-full text-xs">{difference === 0 ? "Colaboradores = centros de custo = empresas = total · diferença R$ 0,00" : `Inconsistência: diferença ${money(difference / 100)}`}</span></div>
       </> : <div className="card"><EmptyState title="Nenhum lançamento nesta competência." /></div>}
     </section>}
 

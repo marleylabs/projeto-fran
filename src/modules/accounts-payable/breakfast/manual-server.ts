@@ -10,6 +10,7 @@ import {
   centsToDecimalString, parseUnitPriceToCents, type BreakfastObservationKind,
 } from "./calculations";
 import { BreakfastValidationError } from "./server";
+import { breakfastCostCenterLabel } from "./rateio";
 
 type Tx = Prisma.TransactionClient;
 
@@ -187,11 +188,11 @@ export async function addBreakfastEntries(input: { year: number; month: number; 
     // Empresa já validada (ativa, cadastro mestre) acima; o padrão é atualizado na MESMA transação do lançamento.
     for (const entry of accepted) await tx.breakfastEmployeeConfig.upsert({ where: { employeeId: entry.employeeId }, create: { employeeId: entry.employeeId, defaultCompanyId: entry.companyId }, update: { defaultCompanyId: entry.companyId } });
 
-    const all = await tx.breakfastAllocation.findMany({ where: { mapId: map.id, deletedAt: null }, select: { amount: true, company: true, department: true } });
+    const all = await tx.breakfastAllocation.findMany({ where: { mapId: map.id, deletedAt: null }, select: { amount: true, company: true, department: true, costCenter: true } });
     const total = all.reduce((sum, row) => sum.add(row.amount), new Prisma.Decimal(0));
     const group = (key: (row: (typeof all)[number]) => string) => [...all.reduce((groups, row) => groups.set(key(row), (groups.get(key(row)) ?? new Prisma.Decimal(0)).add(row.amount)), new Map<string, Prisma.Decimal>()).values()].reduce((sum, value) => sum.add(value), new Prisma.Decimal(0));
-    if (!group((row) => normalizedKey(row.company)).equals(total) || !group((row) => `${normalizedKey(row.company)}|${normalizedKey(row.department ?? "")}`).equals(total)) {
-      throw new BreakfastValidationError("Erro de integridade no rateio: colaborador, departamento, empresa e total geral divergem.");
+    if (!group((row) => normalizedKey(row.company)).equals(total) || !group((row) => `${normalizedKey(row.company)}|${normalizedKey(row.department ?? "")}`).equals(total) || !group((row) => `${normalizedKey(row.company)}|${normalizedKey(breakfastCostCenterLabel(row.costCenter))}`).equals(total)) {
+      throw new BreakfastValidationError("Erro de integridade no rateio: colaborador, departamento, centro de custo, empresa e total geral divergem.");
     }
 
     let financialRecordId = map.financialRecordId;
