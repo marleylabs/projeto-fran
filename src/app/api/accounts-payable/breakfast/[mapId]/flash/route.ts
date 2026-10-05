@@ -8,7 +8,7 @@ export async function GET(_request: Request, context: { params: Promise<{ mapId:
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);
   if (response) return response;
   const { mapId } = await context.params;
-  const map = await prisma.breakfastMap.findFirst({ where: { id: mapId, current: true, cancelledAt: null }, include: { competence: true, financialRecord: true, allocations: { where: { deletedAt: null }, orderBy: { sourceRow: "asc" }, include: { companyRef: { select: { taxId: true } } } } } });
+  const map = await prisma.breakfastMap.findFirst({ where: { id: mapId, current: true, cancelledAt: null }, include: { competence: true, financialRecord: true, allocations: { where: { deletedAt: null }, orderBy: { sourceRow: "asc" }, include: { companyRef: { select: { taxId: true } }, employee: { select: { cpf: true } } } } } });
   if (!map) return Response.json({ error: "Lançamento não encontrado." }, { status: 404 });
   let buffer: ExcelJS.Buffer;
   try { buffer = await buildBreakfastFlashWorkbook(map).xlsx.writeBuffer(); }

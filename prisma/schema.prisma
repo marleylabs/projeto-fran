@@ -633,6 +633,9 @@ model FoodEmployee {
   department     String
   jobTitle       String               @default("")
   costCenter     String               @default("")
+  // CPF: só os 11 dígitos (sem pontuação); null = ainda não informado. Dado pessoal — omitido por
+  // padrão no PrismaClient (ver src/lib/db/prisma.ts); só é lido onde for explicitamente selecionado.
+  cpf            String?              @unique
   active         Boolean              @default(true)
   mergedIntoId   String?
   createdAt      DateTime             @default(now())

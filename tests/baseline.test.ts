@@ -996,3 +996,134 @@ test("café da manhã: Máscara Flash (CNPJ | NOME COMPLETO | CPF | FLEXIVEL) po
   assert.match(section, /Download do rateio XLSX/); assert.match(section, /Download da Máscara Flash/);
   assert.doesNotMatch(transit, /Flash/);
 });
+
+// ---------------------------------------------------------------- CPF / importação de colaboradores
+const cpfWithDigits = (base9: string) => { const digits = [...base9].map(Number); for (const length of [9, 10]) { const sum = digits.slice(0, length).reduce((total, digit, index) => total + digit * (length + 1 - index), 0); const rest = (sum * 10) % 11; digits.push(rest === 10 ? 0 : rest); } return digits.join(""); };
+
+test("cpf: normaliza, valida dígitos verificadores, formata e mascara", async () => {
+  const { normalizeCpf, isValidCpf, formatCpf, maskCpf, maskCpfInput, parseOptionalCpf, CpfValidationError } = await import("../src/lib/cpf");
+  assert.equal(normalizeCpf("529.982.247-25"), "52998224725"); assert.equal(normalizeCpf("52998224725"), "52998224725");
+  assert.equal(normalizeCpf(1234567890), "01234567890"); // número do Excel perde o zero à esquerda
+  assert.equal(isValidCpf("529.982.247-25"), true); assert.equal(isValidCpf("52998224725"), true);
+  assert.equal(isValidCpf("529.982.247-24"), false); assert.equal(isValidCpf("5299822472"), false);
+  for (let digit = 0; digit <= 9; digit += 1) assert.equal(isValidCpf(String(digit).repeat(11)), false);
+  assert.equal(isValidCpf(cpfWithDigits("012345678")), true); assert.equal(isValidCpf(Number(cpfWithDigits("012345678"))), true);
+  assert.equal(formatCpf("52998224725"), "529.982.247-25"); assert.equal(maskCpf("52998224725"), "***.***.***-25");
+  assert.equal(maskCpfInput("52998224725"), "529.982.247-25"); assert.equal(maskCpfInput("5299822"), "529.982.2"); assert.equal(maskCpfInput("529.982.247-2599"), "529.982.247-25");
+  assert.equal(parseOptionalCpf(""), null); assert.equal(parseOptionalCpf(null), null); assert.equal(parseOptionalCpf("529.982.247-25"), "52998224725");
+  assert.throws(() => parseOptionalCpf("111.111.111-11"), (error: Error) => error instanceof CpfValidationError && error.message === "CPF inválido.");
+  assert.throws(() => parseOptionalCpf("529.982"), CpfValidationError);
+});
+
+test("cadastro manual: CPF opcional, persistido só com dígitos e validado no backend", async () => {
+  const { parseCollaboratorInput } = await import("../src/modules/collaborators/schema");
+  assert.equal(parseCollaboratorInput({ officialName: "Teste CPF", department: "TOPOGEO", cpf: "529.982.247-25" }).cpf, "52998224725");
+  assert.equal(parseCollaboratorInput({ officialName: "Teste CPF", department: "TOPOGEO" }).cpf, null);
+  assert.throws(() => parseCollaboratorInput({ officialName: "Teste CPF", department: "TOPOGEO", cpf: "111.111.111-11" }), /CPF inválido\./);
+  const [post, patch, prismaClient, migration, schema] = await Promise.all([
+    readFile(new URL("../src/app/api/collaborators/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/api/collaborators/[id]/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/db/prisma.ts", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20261004120000_add_employee_cpf/migration.sql", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/schema.prisma", import.meta.url), "utf8"),
+  ]);
+  assert.match(post, /CPF_IN_USE_MESSAGE/); assert.match(patch, /CPF_IN_USE_MESSAGE/); assert.match(patch, /NOT: \{ id \}/);
+  // CPF omitido por padrão em toda consulta; só sai quando pedido explicitamente
+  assert.match(prismaClient, /omit: \{ foodEmployee: \{ cpf: true \} \}/); assert.match(post, /fields/);
+  // migration aditiva: coluna nullable + unique, sem NOT NULL nem DROP
+  assert.match(migration, /ADD COLUMN "cpf" TEXT;/); assert.match(migration, /CREATE UNIQUE INDEX "FoodEmployee_cpf_key"/); assert.doesNotMatch(migration, /NOT NULL|DROP/);
+  assert.match(schema, /cpf\s+String\?\s+@unique/);
+});
+
+test("importação de colaboradores: match ID → CPF → nome, create/update sem duplicar e sem apagar", async () => {
+  const { planCollaboratorImport } = await import("../src/modules/collaborators/import");
+  const person = (id: string, officialName: string, extra: Partial<{ cpf: string | null; jobTitle: string; costCenter: string; mergedIntoId: string | null }> = {}) => ({ id, officialName, normalizedName: officialName.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("pt-BR"), jobTitle: extra.jobTitle ?? "TOPOGRAFO", department: "TOPOGEO", costCenter: extra.costCenter ?? "VALE TOPOGRAFIA BMSA", cpf: extra.cpf ?? null, active: true, mergedIntoId: extra.mergedIntoId ?? null });
+  const cpfA = "52998224725", cpfB = cpfWithDigits("123456789"), cpfC = cpfWithDigits("987654321");
+  const existing = [person("id-ana", "ANA SOUZA"), person("id-bruno", "BRUNO LIMA", { cpf: cpfA }), person("id-carla", "CARLA DIAS", { cpf: cpfB })];
+  const row = (sourceRow: number, officialName: string, extra: Partial<{ id: string; cpf: string; jobTitle: string; department: string; costCenter: string; errors: string[] }> = {}) => ({ sourceRow, officialName, department: "TOPOGEO", errors: [], ...extra });
+
+  // UPDATE por ID: preenche CPF, mantém o mesmo ID, sem criar ninguém
+  let plan = planCollaboratorImport([row(2, "ANA SOUZA", { id: "id-ana", cpf: cpfC })], existing);
+  assert.equal(plan.rows[0].status, "UPDATE"); assert.equal(plan.rows[0].matchedBy, "ID"); assert.deepEqual(plan.rows[0].update, { id: "id-ana", data: { cpf: cpfC } }); assert.equal(plan.counts.CREATE, 0);
+  // UPDATE por nome exato (sem ID) também funciona para colaborador ainda sem CPF
+  plan = planCollaboratorImport([row(2, "Ana Souza", { cpf: cpfC })], existing);
+  assert.equal(plan.rows[0].status, "UPDATE"); assert.equal(plan.rows[0].matchedBy, "NOME"); assert.deepEqual(plan.rows[0].update?.data, { cpf: cpfC });
+  // CREATE
+  plan = planCollaboratorImport([row(2, "DIEGO NOVO", { cpf: cpfC, costCenter: "VALE TOPOGRAFIA SALOBO" })], existing);
+  assert.equal(plan.rows[0].status, "CREATE"); assert.equal(plan.rows[0].create?.cpf, cpfC); assert.equal(plan.rows[0].create?.normalizedName, "diego novo");
+  // CPF vazio / Função vazia NÃO apagam o atual → SEM ALTERAÇÃO
+  plan = planCollaboratorImport([row(2, "BRUNO LIMA", { id: "id-bruno" })], existing);
+  assert.equal(plan.rows[0].status, "UNCHANGED"); assert.equal(plan.rows[0].update, undefined);
+  // localização por CPF já cadastrado (mesmo com nome diferente na planilha)
+  plan = planCollaboratorImport([row(2, "BRUNO LIMA FILHO", { cpf: cpfA })], existing);
+  assert.equal(plan.rows[0].matchedBy, "CPF"); assert.equal(plan.rows[0].status, "UPDATE"); assert.deepEqual(plan.rows[0].changes, ["Nome"]);
+  // CPF de outra pessoa: bloqueia (nunca transfere), mensagem com CPF mascarado
+  plan = planCollaboratorImport([row(2, "ANA SOUZA", { id: "id-ana", cpf: cpfA })], existing);
+  assert.equal(plan.rows[0].status, "ERROR"); assert.equal(plan.blocked, true); assert.match(plan.rows[0].errors[0], /\*\*\*\.\*\*\*\.\*\*\*-25 já pertence a outro colaborador \(BRUNO LIMA\)/); assert.doesNotMatch(JSON.stringify(plan), new RegExp(cpfA));
+  // correção de CPF: permitida via ID (B válido e livre); bloqueada quando localizado só pelo nome
+  plan = planCollaboratorImport([row(2, "BRUNO LIMA", { id: "id-bruno", cpf: cpfC })], existing);
+  assert.equal(plan.rows[0].status, "UPDATE"); assert.deepEqual(plan.rows[0].update?.data, { cpf: cpfC });
+  plan = planCollaboratorImport([row(2, "BRUNO LIMA", { cpf: cpfC })], existing);
+  assert.equal(plan.rows[0].status, "ERROR"); assert.match(plan.rows[0].errors.join(), /use a máscara com a coluna ID/);
+  // CPF repetido dentro do arquivo
+  plan = planCollaboratorImport([row(10, "DIEGO NOVO", { cpf: cpfC }), row(25, "ELISA NOVA", { cpf: cpfC })], existing);
+  assert.deepEqual(plan.rows.map((item) => item.status), ["ERROR", "ERROR"]); assert.ok(plan.rows.every((item) => item.errors.includes("Linhas 10 e 25 possuem o mesmo CPF.")));
+  // duas linhas para o mesmo colaborador / nome novo repetido
+  plan = planCollaboratorImport([row(2, "ANA SOUZA", { id: "id-ana" }), row(3, "ANA SOUZA")], existing);
+  assert.ok(plan.rows.every((item) => item.status === "ERROR" && item.errors.some((error) => /mesmo colaborador/.test(error))));
+  plan = planCollaboratorImport([row(2, "DIEGO NOVO"), row(3, "Diego Novo")], existing);
+  assert.equal(plan.counts.ERROR, 2);
+  // ID inexistente, CPF inválido e novo sem departamento
+  plan = planCollaboratorImport([row(2, "X", { id: "nao-existe" }), row(3, "ANA SOUZA", { cpf: "11111111111", errors: ["CPF inválido."] }), { sourceRow: 4, officialName: "SEM DEPTO", errors: [] }], existing);
+  assert.deepEqual(plan.rows.map((item) => item.errors[0]), ["ID não encontrado no cadastro de colaboradores.", "CPF inválido.", "Departamento é obrigatório para novo colaborador."]);
+  // nome parecido: NÃO atualiza sozinho (revisão); só com decisão explícita
+  plan = planCollaboratorImport([row(7, "ANA SOUZA SILVA", { cpf: cpfC })], existing);
+  assert.equal(plan.rows[0].status, "REVIEW"); assert.equal(plan.rows[0].match?.id, "id-ana"); assert.equal(plan.blocked, false);
+  plan = planCollaboratorImport([row(7, "ANA SOUZA SILVA", { cpf: cpfC })], existing, [], { 7: "UPDATE" });
+  assert.equal(plan.rows[0].status, "UPDATE"); assert.equal(plan.rows[0].update?.id, "id-ana");
+  // alias de cadastro mesclado → revisão apontando para o principal
+  plan = planCollaboratorImport([row(2, "ANINHA")], existing, [{ normalizedAlias: "aninha", employeeId: "id-ana" }]);
+  assert.equal(plan.rows[0].status, "REVIEW"); assert.equal(plan.rows[0].match?.id, "id-ana");
+});
+
+test("importação massiva: 128 colaboradores existentes + 128 linhas com ID e CPF → 128 atualizados, 0 criados", async () => {
+  const { planCollaboratorImport, parseCollaboratorWorkbook, generateCollaboratorTemplate } = await import("../src/modules/collaborators/import");
+  const existing = Array.from({ length: 128 }, (_, index) => ({ id: `emp-${index}`, officialName: `COLABORADOR ${String(index).padStart(3, "0")}`, normalizedName: `colaborador ${String(index).padStart(3, "0")}`, jobTitle: "AUXILIAR", department: "TOPOGEO", costCenter: `CC ${index % 4}`, cpf: null, active: true, mergedIntoId: null }));
+  // máscara oficial pré-preenchida (download) → usuário preenche CPF → reimporta
+  const template = await generateCollaboratorTemplate(existing);
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(template as never);
+  const sheet = workbook.getWorksheet("COLABORADORES")!;
+  assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1), ["NOME", "FUNÇÃO", "DEPARTAMENTO", "CENTRO DE CUSTO", "CPF", "ID"]);
+  assert.equal(sheet.rowCount, 129);
+  const cpfs = existing.map((_, index) => cpfWithDigits(String(100000000 + index * 7919).slice(-9).padStart(9, "0")));
+  for (let index = 0; index < 128; index += 1) sheet.getCell(`E${index + 2}`).value = index % 2 ? cpfs[index] : Number(cpfs[index]); // texto e número
+  const rows = await parseCollaboratorWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+  const plan = planCollaboratorImport(rows, existing);
+  assert.equal(plan.total, 128); assert.equal(plan.counts.UPDATE, 128); assert.equal(plan.counts.CREATE, 0); assert.equal(plan.counts.ERROR, 0);
+  assert.deepEqual(plan.rows.map((row) => row.update?.id), existing.map((item) => item.id)); // IDs preservados, sem duplicação
+  assert.deepEqual(plan.rows.map((row) => row.update?.data), cpfs.map((cpf) => ({ cpf })));
+  // reimportar o mesmo arquivo depois de gravado → tudo SEM ALTERAÇÃO
+  const after = existing.map((item, index) => ({ ...item, cpf: cpfs[index] }));
+  assert.equal(planCollaboratorImport(rows, after).counts.UNCHANGED, 128);
+  // planilha antiga (sem colunas CPF/ID) continua aceita e localiza por nome
+  const legacy = new ExcelJS.Workbook(); const legacySheet = legacy.addWorksheet("COLABORADORES"); legacySheet.addRow(["NOME", "FUNÇÃO", "DEPARTAMENTO", "CENTRO DE CUSTO"]); legacySheet.addRow(["COLABORADOR 001", "", "TOPOGEO", ""]);
+  const legacyPlan = planCollaboratorImport(await parseCollaboratorWorkbook(Buffer.from(await legacy.xlsx.writeBuffer())), after);
+  assert.equal(legacyPlan.rows[0].status, "UNCHANGED"); assert.equal(legacyPlan.rows[0].matchedBy, "NOME");
+});
+
+test("máscara Flash: CPF do cadastro (numérico com formato da máscara); sem CPF fica vazio", async () => {
+  const { buildBreakfastFlashWorkbook } = await import("../src/modules/accounts-payable/breakfast/flash");
+  const leadingZero = cpfWithDigits("012345678");
+  const alloc = (id: string, name: string, cpf: string | null, amount: string) => ({ id, employeeId: id, employeeName: name, company: "PROJETA", companyId: "p", companyRef: { taxId: "04892580000120" }, employee: { cpf }, amount });
+  const map = { totalAmount: "487.50", financialRecord: { grossAmount: "487.50" }, allocations: [alloc("a", "A", "52998224725", "225.00"), alloc("b", "B", null, "262.50")] };
+  const sheet = buildBreakfastFlashWorkbook(map).worksheets[0];
+  assert.equal(sheet.getCell("C2").value, 52998224725); assert.equal(sheet.getCell("C2").numFmt, '000"."000"."000"-"00');
+  assert.equal(sheet.getCell("C3").value, null);
+  const zero = buildBreakfastFlashWorkbook({ ...map, totalAmount: "225.00", financialRecord: { grossAmount: "225.00" }, allocations: [alloc("z", "Z", leadingZero, "225.00")] }).worksheets[0];
+  assert.equal(String(zero.getCell("C2").value).padStart(11, "0"), leadingZero); // o formato 000.000.000-00 repõe o zero
+  const route = await readFile(new URL("../src/app/api/accounts-payable/breakfast/[mapId]/flash/route.ts", import.meta.url), "utf8");
+  assert.match(route, /employee: \{ select: \{ cpf: true \} \}/);
+  // cálculos financeiros inalterados
+  const { calculateBreakfastEmployeeTotal, calculateFinalQuantity } = await import("../src/modules/accounts-payable/breakfast/calculations");
+  assert.equal(calculateBreakfastEmployeeTotal(1250, calculateFinalQuantity(21, 2, 5)), 22500);
+});
