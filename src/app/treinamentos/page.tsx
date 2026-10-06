@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { CorporateHeader } from "@/components/CorporateHeader";
 import { Badge, Button, EmptyState, FilterBar, MetricCard, PageHeader } from "@/components/ui";
 
 type Training = {
@@ -298,13 +296,11 @@ function NewTrainingModal({ open, onClose, onCreated }: { open: boolean; onClose
 }
 
 export default function TrainingsPage() {
-  const router = useRouter();
   const [items, setItems] = useState<Training[]>([]);
   const [facets, setFacets] = useState<{ modalities: string[]; attendanceTypes: string[] }>({ modalities: [], attendanceTypes: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [selected, setSelected] = useState<Training | null>(null);
   const [showNewTraining, setShowNewTraining] = useState(false);
 
@@ -336,7 +332,7 @@ export default function TrainingsPage() {
   useEffect(() => {
     fetch("/api/auth/me")
       .then((response) => response.json())
-      .then((me) => { setCurrentUserEmail(me.email ?? null); setPermissions(me.permissions ?? []); })
+      .then((me) => { setPermissions(me.permissions ?? []); })
       .catch(() => undefined);
   }, []);
 
@@ -386,11 +382,9 @@ export default function TrainingsPage() {
     }
   };
 
-  const logout = async () => { await fetch("/api/auth/logout", { method: "POST" }); router.push("/login"); router.refresh(); };
 
   return (
     <div className="flex flex-1 flex-col">
-      <CorporateHeader currentUserEmail={currentUserEmail} onLogout={logout} />
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
         <PageHeader
           eyebrow="Cadastros"

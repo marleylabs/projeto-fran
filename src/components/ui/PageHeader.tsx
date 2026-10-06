@@ -3,7 +3,12 @@ import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import clsx from "clsx";
 
+// Cabeçalho da PÁGINA (dentro do App Shell): é o dono do título visível (h1), da descrição e das ações da página.
+// Regra anti-duplicação: o header do shell mostra só o CONTEXTO (trilha de ancestrais: grupo/página-pai) e o
+// título da aba; o título da página aparece uma única vez, aqui. Por isso `eyebrow` (que repetia o contexto, ex.:
+// "Administração / Acessos") não é mais exibido — a prop continua aceita para não quebrar as telas existentes.
 type PageHeaderProps = {
+  /** @deprecated O contexto agora aparece no header do App Shell; não é mais renderizado. */
   eyebrow?: string;
   title: string;
   description?: string;
@@ -14,7 +19,6 @@ type PageHeaderProps = {
 };
 
 export function PageHeader({
-  eyebrow,
   title,
   description,
   actions,
@@ -35,11 +39,8 @@ export function PageHeader({
       )}
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div className="min-w-0">
-          {eyebrow && (
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">{eyebrow}</p>
-          )}
-          <h1 className="mt-1 text-2xl font-bold text-foreground">{title}</h1>
-          {description && <p className="mt-1 max-w-2xl text-sm text-text-muted">{description}</p>}
+          <h1 className="text-page-title text-foreground">{title}</h1>
+          {description && <p className="mt-1 max-w-2xl text-body text-foreground-muted">{description}</p>}
         </div>
         {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
       </div>

@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
-import { CorporateHeader } from "@/components/CorporateHeader";
 import { Badge, Button, FeedbackAlert, FilterBar, FloatingActionMenu, useToast, PageHeader } from "@/components/ui";
 
 type Role = { id: string; key: string; name: string; description: string | null };
@@ -20,9 +18,9 @@ const formatDate = (iso: string | null) => iso ? new Date(iso).toLocaleString("p
 async function request(url: string, init?: RequestInit) { const response = await fetch(url, init); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error ?? "Não foi possível concluir a operação."); return body; }
 
 export default function UsuariosPage() {
-  const router = useRouter(), toast = useToast();
+  const toast = useToast();
   const [users, setUsers] = useState<UserRow[]>([]), [roles, setRoles] = useState<Role[]>([]);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null), [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [query, setQuery] = useState(""), [roleFilter, setRoleFilter] = useState(""), [statusFilter, setStatusFilter] = useState("active");
   const [openMenu, setOpenMenu] = useState<string | null>(null), [editing, setEditing] = useState<UserRow | null>(null), [resetting, setResetting] = useState<UserRow | null>(null);
   const [editName, setEditName] = useState(""), [editRole, setEditRole] = useState(""), [editActive, setEditActive] = useState(true);
@@ -33,7 +31,7 @@ export default function UsuariosPage() {
   async function load() { const body = await request("/api/users"); setUsers(body.users ?? []); setRoles(body.roles ?? []); setRecoveryEmailConfigured(Boolean(body.recoveryEmailConfigured)); }
   useEffect(() => {
     void request("/api/users").then(body => { setUsers(body.users ?? []); setRoles(body.roles ?? []); setRecoveryEmailConfigured(Boolean(body.recoveryEmailConfigured)); }).catch(()=>{});
-    void fetch("/api/auth/me").then(r=>r.json()).then(me=>{setCurrentUserId(me.id);setCurrentUserEmail(me.email)}).catch(()=>{});
+    void fetch("/api/auth/me").then(r=>r.json()).then(me=>{setCurrentUserId(me.id)}).catch(()=>{});
   }, []);
   const filtered = useMemo(() => users.filter(user => (!query || normalize(`${user.name ?? ""} ${user.email}`).includes(normalize(query))) && (!roleFilter || user.roles.some(item => item.role.key === roleFilter)) && (statusFilter === "all" || user.active === (statusFilter === "active"))), [users, query, roleFilter, statusFilter]);
   const closeDialogs = () => { setEditing(null); setResetting(null); setError(null); setTempPassword(""); setTempConfirmation(""); };
@@ -43,9 +41,8 @@ export default function UsuariosPage() {
   async function saveEdit() { if (!editing) return; setBusy(true); setError(null); try { const body = await request(`/api/users/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: editName, roleKey: editRole, active: editActive }) }); setUsers(current => current.map(item => item.id === editing.id ? body.user : item)); toast.success(`Acesso de ${body.user.name || body.user.email} atualizado.`); closeDialogs(); } catch(cause) { setError(cause instanceof Error ? cause.message : "Não foi possível alterar o usuário."); } finally { setBusy(false); } }
   async function sendReset() { if (!resetting) return; setBusy(true); setError(null); try { await request(`/api/users/${resetting.id}/password-reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ strategy: "email" }) }); toast.success(`Link de redefinição enviado para ${resetting.email}.`); closeDialogs(); } catch(cause) { setError(cause instanceof Error ? cause.message : "Não foi possível enviar a redefinição."); } finally { setBusy(false); } }
   async function setTemporary() { if (!resetting) return; setBusy(true); setError(null); try { await request(`/api/users/${resetting.id}/password-reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ strategy: "temporary", password: tempPassword, confirmation: tempConfirmation }) }); toast.success(`Senha temporária de ${resetting.name || resetting.email} atualizada.`); closeDialogs(); } catch(cause) { setError(cause instanceof Error ? cause.message : "Não foi possível redefinir a senha."); } finally { setBusy(false); } }
-  async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.push("/login"); router.refresh(); }
 
-  return <div className="flex flex-1 flex-col"><CorporateHeader currentUserEmail={currentUserEmail} onLogout={logout}/><main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-6 sm:px-6"><PageHeader eyebrow="Administração / Acessos" title="Usuários" description="Perfis, status e segurança das contas de login." actions={<Button size="sm" aura onClick={()=>{setCreateOpen(true);setError(null)}}>Novo usuário</Button>}/>
+  return <div className="flex flex-1 flex-col"><main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-6 sm:px-6"><PageHeader eyebrow="Administração / Acessos" title="Usuários" description="Perfis, status e segurança das contas de login." actions={<Button size="sm" aura onClick={()=>{setCreateOpen(true);setError(null)}}>Novo usuário</Button>}/>
     <FilterBar><input className="input input-bordered w-full" placeholder="Buscar por nome ou e-mail..." value={query} onChange={event=>setQuery(event.target.value)}/><select className="select select-bordered w-full" value={roleFilter} onChange={event=>setRoleFilter(event.target.value)}><option value="">Todos os perfis</option>{roles.map(role=><option key={role.key} value={role.key}>{role.name}</option>)}</select><select className="select select-bordered w-full" value={statusFilter} onChange={event=>setStatusFilter(event.target.value)}><option value="all">Todos os status</option><option value="active">Ativos</option><option value="inactive">Inativos</option></select></FilterBar>
     <section className="card"><div className="overflow-x-auto"><table className="table min-w-[800px]"><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Status</th><th>Último acesso</th><th className="text-right">Ações</th></tr></thead><tbody>{filtered.map(user=><tr key={user.id}><td className="font-semibold">{user.name || "Sem nome"}{user.id===currentUserId&&<span className="ml-2 text-xs font-normal text-secondary">Você</span>}</td><td className="font-mono text-xs">{user.email}</td><td><Badge tone="neutral">{user.roles.map(item=>item.role.name).join(", ") || "Sem perfil"}</Badge></td><td><Badge tone={user.active?"success":"neutral"}>{user.active?"Ativo":"Inativo"}</Badge></td><td className="text-xs text-secondary">{formatDate(user.lastLoginAt)}</td><td className="text-right"><FloatingActionMenu open={openMenu===user.id} onOpenChange={open=>setOpenMenu(open?user.id:null)} label={`Ações de ${user.name||user.email}`}><button role="menuitem" className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-base-200" onClick={()=>openEdit(user)}>Editar usuário</button><button role="menuitem" className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-base-200" onClick={()=>{setResetting(user);setError(null)}} disabled={!user.active}>Redefinir senha</button>{user.id!==currentUserId&&<button role="menuitem" className={`w-full rounded-md px-3 py-2 text-left text-sm ${user.active?"text-error hover:bg-error/10":"text-emerald-700 hover:bg-emerald-50"}`} onClick={()=>{openEdit(user);setEditActive(!user.active)}}>{user.active?"Desativar acesso":"Reativar acesso"}</button>}</FloatingActionMenu></td></tr>)}{!filtered.length&&<tr><td colSpan={6} className="py-10 text-center text-secondary">Nenhum usuário encontrado.</td></tr>}</tbody></table></div></section></main>
 

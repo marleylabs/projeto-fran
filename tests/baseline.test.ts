@@ -529,17 +529,58 @@ test("cancelamento da revisão descarta o staging e reseta o input sem gerar obr
 });
 
 test("shell corporativo centraliza identidade, navegação, sessão e responsividade", async () => {
-  const [layout, shell, styles, header] = await Promise.all([
+  const [layout, shell, styles, header, sidebar, profile, drawer] = await Promise.all([
     readFile(new URL("../src/app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/components/AppShell.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/globals.css", import.meta.url), "utf8"),
-    readFile(new URL("../src/components/CorporateHeader.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/shell/AppHeader.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/shell/SidebarNav.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/shell/ProfileMenu.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/ui/Drawer.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(layout, /Manrope/);assert.doesNotMatch(layout,/Cause/);assert.match(layout,/<AppShell>/);
-  for(const token of ["--color-sidebar: #0a0a0a","--color-background: #f7f7f5","--color-surface: #ffffff","--color-primary: #af1b1b"])assert.ok(styles.toLowerCase().includes(token));
-  assert.match(styles,/\.app-sidebar/);assert.match(styles,/@media \(min-width: 1024px\)/);assert.match(styles,/width: 15\.5rem/);
-  assert.match(shell,/NAVIGATION_MODULES/);assert.match(shell,/\/api\/auth\/me/);assert.match(shell,/\/api\/auth\/logout/);assert.match(shell,/app-drawer/);
-  assert.doesNotMatch(header,/Módulos da plataforma/);
+  for(const token of ["--color-background: #f7f7f5","--color-surface: #ffffff","--color-primary: #af1b1b"])assert.ok(styles.toLowerCase().includes(token));
+  // shell novo: sidebar clara (sem o bloco preto), trilho de ícones em 1024–1279px, expandida em >= 1280px, drawer < 1024px
+  assert.doesNotMatch(styles, /\.app-sidebar|--color-sidebar|\.app-mobile-header|\.app-drawer/);
+  assert.match(styles, /\.app-content main \{ max-width: 1440px/);
+  assert.match(shell, /visibleNavigationGroups/); assert.match(shell, /\/api\/auth\/me/); assert.match(shell, /\/api\/auth\/logout/);
+  assert.match(shell, /<Drawer /); assert.match(shell, /lg:pl-\[4\.5rem\] xl:pl-60/); assert.match(shell, /<title>\{`\$\{meta\.title\} · Projeta`\}<\/title>/);
+  assert.doesNotMatch(shell, /<main/); // cada página já tem o próprio <main>
+  // header sem busca global/notificações; trilha de ancestrais; perfil com Sair
+  assert.match(header, /aria-label="Localização"/); assert.match(header, /aria-expanded=\{menuOpen\}/); assert.match(header, /aria-controls=\{drawerId\}/); assert.doesNotMatch(header, /Bell|Search|<input/);
+  assert.match(sidebar, /aria-current=\{active \? "page" : undefined\}/); assert.match(sidebar, /aria-label="Navegação principal"/);
+  assert.match(profile, /aria-haspopup="menu"/); assert.match(profile, /role="menuitem"/); assert.match(profile, /"Sair"/); assert.doesNotMatch(profile, /Meu perfil|Configurações/);
+  assert.match(drawer, /showModal\(\)/); assert.match(drawer, /onCancel=/); assert.match(drawer, /opener\.current\?\.focus\(\)/);
+  // CorporateHeader (no-op legado) removido de todas as telas
+  await assert.rejects(readFile(new URL("../src/components/CorporateHeader.tsx", import.meta.url), "utf8"));
+});
+
+test("navegação do shell: grupos por permissão, item ativo e trilha sem repetir o título da página", async () => {
+  const { NAVIGATION_GROUPS, visibleNavigationGroups, isNavigationItemActive, resolveRouteMeta, roleLabel } = await import("../src/modules/core/navigation/moduleRegistry");
+  const item = (id: string) => NAVIGATION_GROUPS.flatMap((group) => group.items).find((entry) => entry.id === id)!;
+  // grupos e itens reais; Café/Cesta não entram na sidebar
+  assert.deepEqual(NAVIGATION_GROUPS.map((group) => group.label), ["Visão geral", "Despesas", "Contabilidade", "Cadastros", "Administração"]);
+  assert.doesNotMatch(JSON.stringify(NAVIGATION_GROUPS), /Café|Cesta/);
+  assert.equal(item("dashboard").availability, "planned"); assert.equal(item("dashboard").href, undefined);
+  // permissões só escondem navegação (sem nenhuma rota permitida = nada; o Dashboard planejado aparece desabilitado para quem tem acesso)
+  assert.deepEqual(visibleNavigationGroups([]).map((group) => group.id), []);
+  assert.deepEqual(visibleNavigationGroups(["financial-records.read"]).map((group) => [group.id, group.items.map((entry) => entry.id)]), [["overview", ["dashboard"]], ["expenses", ["food", "transit-voucher", "training-expenses"]]]);
+  const all = visibleNavigationGroups(["financial-records.read", "accounting.read", "master-data.read", "training.read", "users.read"]);
+  assert.deepEqual(all.map((group) => group.id), ["overview", "expenses", "accounting", "master-data", "administration"]);
+  // item ativo: Entidades só em /cadastros (não em /cadastros/colaboradores); Folha também na raiz "/"
+  assert.equal(isNavigationItemActive("/cadastros", item("entities")), true); assert.equal(isNavigationItemActive("/cadastros/colaboradores", item("entities")), false);
+  assert.equal(isNavigationItemActive("/cadastros/colaboradores", item("collaborators")), true);
+  assert.equal(isNavigationItemActive("/", item("payroll")), true); assert.equal(isNavigationItemActive("/pagamentos", item("payroll")), false);
+  assert.equal(isNavigationItemActive("/pagamentos/alimentacao", item("food")), true); assert.equal(isNavigationItemActive("/pagamentos/abc/validacao", item("food")), false);
+  // título da aba + trilha de ANCESTRAIS (nunca o título da própria página, que é o h1 do PageHeader)
+  assert.deepEqual(resolveRouteMeta("/cadastros/colaboradores"), { title: "Colaboradores", trail: [{ label: "Cadastros" }] });
+  assert.deepEqual(resolveRouteMeta("/pagamentos/alimentacao"), { title: "Alimentação", trail: [{ label: "Despesas", href: "/pagamentos" }] });
+  assert.deepEqual(resolveRouteMeta("/pagamentos/rec123/validacao"), { title: "Validação documental", trail: [{ label: "Despesas", href: "/pagamentos" }, { label: "Obrigação", href: "/pagamentos/rec123" }] });
+  assert.deepEqual(resolveRouteMeta("/usuarios").title, "Usuários"); assert.deepEqual(resolveRouteMeta("/rota-inexistente"), { title: "Projeta", trail: [] });
+  for (const path of ["/", "/contabilidade/folha", "/pagamentos", "/pagamentos/vale-transporte", "/pagamentos/treinamentos", "/pagamentos/x", "/cadastros", "/treinamentos"]) {
+    const meta = resolveRouteMeta(path); assert.notEqual(meta.title, "Projeta", path); assert.ok(!meta.trail.some((crumb) => crumb.label === meta.title), path);
+  }
+  assert.equal(roleLabel("ADMIN"), "Administrador"); assert.equal(roleLabel("DESCONHECIDO"), "DESCONHECIDO"); assert.equal(roleLabel(undefined), "");
 });
 
 test("revisão de alimentação usa resumo compacto e workspace modal responsivo", async () => {

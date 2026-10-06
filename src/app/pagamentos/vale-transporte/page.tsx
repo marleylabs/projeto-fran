@@ -1,8 +1,6 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- competence changes load a persisted server snapshot */
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { CorporateHeader } from "@/components/CorporateHeader";
 import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList } from "@/components/allocation/AllocationCard";
 import { CompetenceCalendar, HolidayModal, type Holiday } from "@/components/allocation/CompetenceHolidays";
 import { CompanyModal, companyLabel, normalizeText as normalize, type Company } from "@/components/allocation/CompanyPicker";
@@ -82,13 +80,11 @@ function CorrectionModal({ target, companies, onClose, onSaved }: { target: { ma
 }
 
 export default function TransitVoucherPage() {
-  const router = useRouter();
   const toast = useToast();
   const now = new Date();
   const [competence, setCompetence] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [year, month] = competence.split("-").map(Number);
   const [tab, setTab] = useState<"preenchimento" | "rateio" | "resumo">("preenchimento");
-  const [email, setEmail] = useState<string | null>(null);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([]);
@@ -121,11 +117,11 @@ export default function TransitVoucherPage() {
   useEffect(() => { reload().catch(() => setError("Falha ao carregar a competência.")); }, [reload]);
   useEffect(() => {
     Promise.all([
-      fetch("/api/administrative-entities?q=").then((r) => r.json()), fetch("/api/auth/me").then((r) => r.json()),
+      fetch("/api/administrative-entities?q=").then((r) => r.json()),
       fetch("/api/collaborators?status=active&limit=1000").then((r) => r.json()), fetch("/api/master-data/companies").then((r) => r.json()),
       fetch("/api/accounts-payable/transit-voucher/employee-config").then((r) => r.json()),
-    ]).then(([entitiesBody, me, people, companyBody, configBody]) => {
-      setEntities((entitiesBody.items ?? []).filter((entity: Entity) => acceptsMA(entity.locality))); setEmail(me.email ?? null);
+    ]).then(([entitiesBody, people, companyBody, configBody]) => {
+      setEntities((entitiesBody.items ?? []).filter((entity: Entity) => acceptsMA(entity.locality)));
       setCollaborators(people.items ?? []); setCompanies((companyBody.items ?? []).filter((company: Company) => company.active));
       setConfigs(Object.fromEntries((configBody.items ?? []).map((item: { employeeId: string; dailyPassageQuantity: number; defaultCompanyId: string | null }) => [item.employeeId, { qty: item.dailyPassageQuantity, companyId: item.defaultCompanyId }])));
     }).catch(() => undefined);
@@ -194,7 +190,6 @@ export default function TransitVoucherPage() {
       setDeleteTarget(null); await reload();
     } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Não foi possível excluir."); } finally { setDeleting(false); }
   }
-  async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.push("/login"); router.refresh(); }
 
   // ---- Agregações de leitura (Empresa → Departamento → Colaborador); nada persistido/duplicado ----
   const all = maps.flatMap((map) => map.allocations);
@@ -215,7 +210,6 @@ export default function TransitVoucherPage() {
   const monthLabel = `${String(month).padStart(2, "0")}/${year}`;
 
   return <div className="flex flex-1 flex-col">
-    <CorporateHeader currentUserEmail={email} onLogout={logout} />
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
       <PageHeader backHref="/pagamentos" backLabel="Despesas" title="Vale Transporte" description="Rateio por Empresa → Departamento → Colaborador · Maranhão (MA)." />
       <div className="rounded-lg border border-base-300 bg-base-200/60 p-1"><div role="tablist" aria-label="Etapas do Vale Transporte" className="grid grid-cols-3 gap-1">{tabButton("preenchimento", "Preenchimento")}{tabButton("rateio", "Rateio")}{tabButton("resumo", "Resumo")}</div></div>

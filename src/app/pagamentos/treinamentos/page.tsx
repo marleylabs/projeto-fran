@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { CorporateHeader } from "@/components/CorporateHeader";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import type { CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList } from "@/components/allocation/AllocationCard";
@@ -491,7 +489,6 @@ function ResumoTab({ year, month }: { year: number; month: number }) {
 }
 
 export default function TrainingExpensePage() {
-  const router = useRouter();
   const now = new Date();
   const [competence, setCompetence] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [year, month] = competence.split("-").map(Number);
@@ -499,7 +496,6 @@ export default function TrainingExpensePage() {
   const [items, setItems] = useState<ExpenseListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [supplierFilter, setSupplierFilter] = useState("");
@@ -528,16 +524,14 @@ export default function TrainingExpensePage() {
 
   useEffect(() => { const t = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(t); }, [year, month, supplierFilter, statusFilter, query]);
   useEffect(() => {
-    fetch("/api/auth/me").then((r) => r.json()).then((me) => { setCurrentUserEmail(me.email ?? null); setPermissions(me.permissions ?? []); }).catch(() => undefined);
+    fetch("/api/auth/me").then((r) => r.json()).then((me) => { setPermissions(me.permissions ?? []); }).catch(() => undefined);
     fetch("/api/administrative-entities").then((r) => r.json()).then((b) => setSuppliers(b.items ?? [])).catch(() => undefined);
   }, []);
 
   const visible = useMemo(() => items, [items]);
-  const logout = async () => { await fetch("/api/auth/logout", { method: "POST" }); router.push("/login"); router.refresh(); };
 
   return (
     <div className="flex flex-1 flex-col">
-      <CorporateHeader currentUserEmail={currentUserEmail} onLogout={logout} />
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
         <PageHeader
           backHref="/pagamentos"

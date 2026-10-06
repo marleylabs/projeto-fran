@@ -1,7 +1,5 @@
 "use client";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { CorporateHeader } from "@/components/CorporateHeader";
 import {
   Button,
   DeletionModal,
@@ -1560,13 +1558,11 @@ function LocalityTabs({
 }
 
 export default function FoodAccountsPayablePage() {
-  const router = useRouter();
   const [subsection, setSubsection] = useState<"alimentacao" | "cafe" | "cesta">("alimentacao");
   const now = new Date();
   const [competence, setCompetence] = useState(
     `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
   );
-  const [email, setEmail] = useState<string | null>(null);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [prices, setPrices] = useState<Record<string, string>>({});
@@ -1602,21 +1598,15 @@ export default function FoodAccountsPayablePage() {
   useEffect(() => {
     Promise.all([
       fetch("/api/administrative-entities?q=").then((r) => r.json()),
-      fetch("/api/auth/me").then((r) => r.json()),
-    ]).then(([entityBody, me]) => {
+    ]).then(([entityBody]) => {
       setEntities(
         (entityBody.items ?? []).filter((entity: Entity) =>
           entity.activityArea.toLocaleUpperCase("pt-BR").includes("ALIMENTA"),
         ),
       );
-      setEmail(me.email ?? null);
     });
   }, []);
-  async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
-    router.refresh();
-  }
+
   const ready = batches.filter((batch) => batch.status === "READY");
   const totalPeople = uniqueCollaborators(ready);
   const totalAmount = ready.reduce(
@@ -1626,7 +1616,6 @@ export default function FoodAccountsPayablePage() {
   const totalMeals = ready.reduce((sum, batch) => sum + batch.validRows, 0);
   return (
     <div className="flex flex-1 flex-col">
-      <CorporateHeader currentUserEmail={email} onLogout={logout} />
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
         <PageHeader
           backHref="/pagamentos"

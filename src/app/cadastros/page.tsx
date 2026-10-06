@@ -1,8 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { CorporateHeader } from "@/components/CorporateHeader";
 import { Badge, Button, EmptyState, FilterBar, PageHeader } from "@/components/ui";
 import Link from "next/link";
 import { formatCnpj, isValidCnpj } from "@/modules/administrative-entities/schema";
@@ -20,7 +18,6 @@ function YesNoBadge({ value }: { value: boolean }) {
 }
 
 export default function AdministrativeEntitiesPage() {
-  const router = useRouter();
   const [items, setItems] = useState<Entity[]>([]);
   const [filters, setFilters] = useState({ activityAreas: [] as string[], localities: [] as string[] });
   const [query, setQuery] = useState("");
@@ -31,7 +28,6 @@ export default function AdministrativeEntitiesPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -60,7 +56,6 @@ export default function AdministrativeEntitiesPage() {
   }, [params]);
 
   useEffect(() => { const timeout = window.setTimeout(() => void load(), 250); return () => window.clearTimeout(timeout); }, [load]);
-  useEffect(() => { fetch("/api/auth/me").then((response) => response.json()).then((me) => setCurrentUserEmail(me.email ?? null)).catch(() => undefined); }, []);
 
   const resetForm = () => { setForm(EMPTY_FORM); setEditingId(null); setShowForm(false); };
   const edit = (item: Entity) => {
@@ -83,10 +78,8 @@ export default function AdministrativeEntitiesPage() {
     finally { setSaving(false); }
   };
 
-  const logout = async () => { await fetch("/api/auth/logout", { method: "POST" }); router.push("/login"); router.refresh(); };
 
   return <div className="flex flex-1 flex-col">
-    <CorporateHeader currentUserEmail={currentUserEmail} onLogout={logout} />
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
       <PageHeader
         eyebrow="Gestão administrativa"

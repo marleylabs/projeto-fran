@@ -24,3 +24,4 @@ export { Field, TextInput, textInputClassName, type FieldProps, type FieldContro
 export { StatusBadge, type StatusBadgeProps, type StatusTone } from "./StatusBadge";
 export { Dialog, type DialogProps } from "./Dialog";
 export { Tabs, TabPanel, type TabsProps, type TabItem } from "./Tabs";
+export { Drawer, type DrawerProps } from "./Drawer";

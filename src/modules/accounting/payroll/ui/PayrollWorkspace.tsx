@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import type { Colaborador } from "@/lib/types/payroll";
 import type { PayrollExtractionResult } from "@/lib/parser/router";
 import { computeTotaisGerais } from "@/lib/parser/computeTotals";
@@ -17,16 +16,13 @@ import { EmployeeDetailModal } from "@/components/EmployeeDetailModal";
 import { ExportButtons } from "@/components/ExportButtons";
 import { RecentUploads, type UploadSummary } from "@/components/RecentUploads";
 import { DuplicateUploadModal } from "@/components/DuplicateUploadModal";
-import { CorporateHeader } from "@/components/CorporateHeader";
-import { PageHeader } from "@/components/ui";
+import { Button, PageHeader } from "@/components/ui";
 
 type Stage = "idle" | "uploading" | "processing" | "error";
 
 const LAST_UPLOAD_KEY = "extratoMensal:currentUploadId";
 
 export function PayrollWorkspace() {
-  const router = useRouter();
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -68,18 +64,6 @@ export function PayrollWorkspace() {
     restore.finally(() => setRestoring(false));
   }, []);
 
-  useEffect(() => {
-    fetch("/api/auth/me")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((me) => setCurrentUserEmail(me.email))
-      .catch(() => setCurrentUserEmail(null));
-  }, []);
-
-  const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
-    router.refresh();
-  };
 
   const runUpload = async (file: File, duplicateAction?: "replace" | "keep_both") => {
     setStage("uploading");
@@ -226,15 +210,9 @@ export function PayrollWorkspace() {
 
   return (
     <div className="flex-1 flex flex-col">
-      <CorporateHeader
-        currentUserEmail={currentUserEmail}
-        showNewUpload={!!result}
-        onNewUpload={reset}
-        onLogout={handleLogout}
-      />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col gap-6">
-        <PageHeader eyebrow="Contabilidade / Importações de folha" title="Extrato mensal" description="Extração, conferência e consolidação de relatórios de folha de pagamento."/>
+        <PageHeader title="Extrato mensal" description="Extração, conferência e consolidação de relatórios de folha de pagamento." actions={result ? <Button variant="secondary" onClick={reset}>Novo upload</Button> : undefined}/>
         {restoring && (
           <div className="flex-1 flex items-center justify-center py-16 text-sm text-text-muted">Carregando...</div>
         )}
