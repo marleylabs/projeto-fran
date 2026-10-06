@@ -1412,3 +1412,195 @@ test("data de admissão: célula XLSX com fórmula usa só o resultado salvo (se
     ["id-1", "2024-09-18", []], ["id-2", "2026-02-25", []], ["id-3", null, []], ["id-4", null, [ADMISSION_FORMULA_WITHOUT_RESULT_MESSAGE]],
   ]);
 });
+// ---------------------------------------------------------------- Cesta Básica
+test("cesta básica: dias no mês, 2ª quarta-feira (vários meses) e feriados VT + Café deduplicados", async () => {
+  const { basicBasketDaysInMonth, getSecondWednesday, mergeBasicBasketHolidays } = await import("../src/modules/accounts-payable/basic-basket/calculations");
+  assert.deepEqual([[2026, 1], [2026, 2], [2027, 2], [2028, 2], [2026, 4], [2026, 10]].map(([y, m]) => basicBasketDaysInMonth(y, m)), [31, 28, 28, 29, 30, 31]);
+  // meses começando em todos os dias da semana
+  const cases: Array<[number, number, string]> = [[2026, 10, "2026-10-14"], [2026, 7, "2026-07-08"], [2026, 4, "2026-04-08"], [2026, 3, "2026-03-11"], [2026, 2, "2026-02-11"], [2026, 1, "2026-01-14"], [2026, 11, "2026-11-11"], [2026, 9, "2026-09-09"], [2027, 9, "2027-09-08"], [2028, 2, "2028-02-09"], [2024, 5, "2024-05-08"]];
+  for (const [y, m, expected] of cases) { const date = getSecondWednesday(y, m); assert.equal(date, expected, `${m}/${y}`); assert.equal(new Date(`${date}T00:00:00Z`).getUTCDay(), 3); }
+  // propriedade em todos os meses de 2024–2030 (todos os dias de início): quarta-feira, entre 8 e 14, com exatamente 1 quarta antes
+  const starts = new Set<number>();
+  for (let y = 2024; y <= 2030; y += 1) for (let m = 1; m <= 12; m += 1) {
+    const date = getSecondWednesday(y, m); const day = Number(date.slice(8, 10)); starts.add(new Date(Date.UTC(y, m - 1, 1)).getUTCDay());
+    assert.equal(new Date(`${date}T00:00:00Z`).getUTCDay(), 3); assert.ok(day >= 8 && day <= 14, `${m}/${y}`);
+    assert.equal(Array.from({ length: day - 1 }, (_, i) => new Date(Date.UTC(y, m - 1, i + 1)).getUTCDay()).filter((weekday) => weekday === 3).length, 1);
+  }
+  assert.equal(starts.size, 7);
+  // feriado na 2ª quarta NÃO move o pagamento (não existe regra de adiamento)
+  assert.equal(getSecondWednesday(2027, 4), "2027-04-14");
+  const holidays = mergeBasicBasketHolidays(2026, 10, [{ date: "2026-10-12", name: "Padroeira (VT)" }, { date: "2026-10-20", name: "Municipal" }, { date: "2026-11-02", name: "Fora da competência" }], [{ date: "2026-10-20", name: "Municipal" }, { date: "2026-10-28", name: "Servidor" }]);
+  assert.deepEqual(holidays.map((holiday) => [holiday.date, holiday.sources]), [["2026-10-12", ["NATIONAL", "TRANSIT_VOUCHER"]], ["2026-10-20", ["TRANSIT_VOUCHER", "BREAKFAST"]], ["2026-10-28", ["BREAKFAST"]]]);
+  assert.deepEqual(holidays[1].names, ["Municipal"]); assert.deepEqual(holidays[0].names, ["Nossa Senhora Aparecida", "Padroeira (VT)"]);
+});
+
+test("cesta básica: base financeira fixa de 30 dias (mês comercial) para a Cesta da competência e o Retroativo do MÊS ANTERIOR", async () => {
+  const { BASIC_BASKET_CALCULATION_DAYS, basicBasketDaysInMonth, buildBasicBasketContext, basicBasketContextFromPayments, calculateCurrentBasketDays, calculateRetroactiveDays, commercialDay, prorateCents, calculateBasicBasketLine, countDaysInclusive, addDays, parseMoneyToCents, BasicBasketCalculationError } = await import("../src/modules/accounts-payable/basic-basket/calculations");
+  assert.equal(BASIC_BASKET_CALCULATION_DAYS, 30);
+  assert.deepEqual(["2026-10-01", "2026-10-05", "2026-10-14", "2027-02-28", "2028-02-29", "2026-09-30", "2026-10-31"].map(commercialDay), [1, 5, 14, 28, 29, 30, 30]);
+  assert.deepEqual([basicBasketDaysInMonth(2026, 10), basicBasketDaysInMonth(2027, 2), basicBasketDaysInMonth(2028, 2)], [31, 28, 29]); // calendário continua real
+  const oct = buildBasicBasketContext(2026, 10);
+  assert.deepEqual(oct, { previousPaymentDate: "2026-09-09", paymentDate: "2026-10-14", competenceYear: 2026, competenceMonth: 10, currentMonthStart: "2026-10-01", currentMonthEnd: "2026-10-31", referenceYear: 2026, referenceMonth: 9, referenceMonthStart: "2026-09-01", referenceMonthEnd: "2026-09-30" });
+  assert.deepEqual(basicBasketContextFromPayments("2026-09-09", "2026-10-14"), oct); // correção reconstrói o mesmo contexto a partir do mapa
+  const nov = buildBasicBasketContext(2026, 11);
+  assert.deepEqual([nov.previousPaymentDate, nov.paymentDate, nov.referenceMonthEnd], ["2026-10-14", "2026-11-11", "2026-10-31"]);
+  // linha completa a partir do valor MENSAL R$ 400,00 (Bonificação/Acordo nunca proporcionais)
+  const MONTHLY = 40000;
+  const calc = (admissionDate: string, context = oct, driverBonusCents = 0, agreementCents = 0) => {
+    const current = calculateCurrentBasketDays({ context, admissionDate }), retro = calculateRetroactiveDays({ context, admissionDate });
+    const line = calculateBasicBasketLine({ driverBonusCents, agreementCents, monthlyBasketCents: MONTHLY, currentBasketDays: current.currentBasketDays, retroactiveDays: retro.retroactiveDays });
+    return { current: current.status, days: current.currentBasketDays, retro: retro.status, retroDays: retro.retroactiveDays, ...line };
+  };
+  // matriz OUTUBRO/2026 (31 dias no calendário; base 30; pagamento 14/10, anterior 09/09)
+  assert.deepEqual(calc("2026-10-01"), { current: "FULL_MONTH", days: 30, retro: "CURRENT_OR_LATER", retroDays: 0, payableBasketCents: 40000, retroactiveCents: 0, totalCents: 40000 });
+  assert.deepEqual(calc("2026-10-05"), { current: "PRORATED", days: 26, retro: "CURRENT_OR_LATER", retroDays: 0, payableBasketCents: 34667, retroactiveCents: 0, totalCents: 34667 }); // 400 × 26/30 = 346,67 (nunca 27/31)
+  assert.equal(calc("2026-10-05", oct, 15000, 10000).totalCents, 59667); // 150 + 100 + 346,67
+  assert.deepEqual(calc("2026-10-14"), { current: "PRORATED", days: 17, retro: "CURRENT_OR_LATER", retroDays: 0, payableBasketCents: 22667, retroactiveCents: 0, totalCents: 22667 }); // admitido NO pagamento
+  for (const late of ["2026-10-15", "2026-10-20", "2026-10-31"]) assert.deepEqual(calc(late), { current: "AFTER_PAYMENT", days: 0, retro: "CURRENT_OR_LATER", retroDays: 0, payableBasketCents: 0, retroactiveCents: 0, totalCents: 0 });
+  // admitidos no mês anterior: Cesta de outubro cheia + Retroativo de setembro (só depois do pagamento anterior)
+  assert.deepEqual(calc("2026-09-21"), { current: "FULL_MONTH", days: 30, retro: "PRORATED", retroDays: 10, payableBasketCents: 40000, retroactiveCents: 13333, totalCents: 53333 });
+  assert.deepEqual([calc("2026-09-15").retroDays, calc("2026-09-15").retroactiveCents], [16, 21333]);
+  assert.deepEqual([calc("2026-09-10").retroDays, calc("2026-09-10").retroactiveCents, calc("2026-09-30").retroDays, calc("2026-09-30").retroactiveCents], [21, 28000, 1, 1333]);
+  for (const paid of ["2026-09-01", "2026-09-09", "2018-07-09"]) assert.deepEqual([calc(paid).current, calc(paid).days, calc(paid).retro, calc(paid).totalCents], ["FULL_MONTH", 30, "NONE", 40000]);
+  // NOVEMBRO/2026: quem ficou sem Cesta em outubro recebe Cesta cheia + Retroativo de outubro (÷ 30, nunca ÷ 31)
+  assert.deepEqual(calc("2026-10-20", nov), { current: "FULL_MONTH", days: 30, retro: "PRORATED", retroDays: 11, payableBasketCents: 40000, retroactiveCents: 14667, totalCents: 54667 }); // antes 12/31 = 154,84
+  assert.deepEqual([calc("2026-10-31", nov).retroDays, calc("2026-10-31", nov).retroactiveCents, calc("2026-10-31", nov).totalCents], [1, 1333, 41333]); // dia 31 = dia 30 → 1 dia (antes 1/31 = 12,90)
+  assert.deepEqual([calc("2026-10-30", nov).retroDays, calc("2026-10-15", nov).retroDays, calc("2026-10-15", nov).retroactiveCents], [1, 16, 21333]);
+  for (const alreadyPaid of ["2026-10-05", "2026-10-14"]) assert.deepEqual([calc(alreadyPaid, nov).retro, calc(alreadyPaid, nov).retroactiveCents], ["NONE", 0]); // já recebeu proporcional em outubro
+  assert.deepEqual(calc("2026-11-01", nov), { current: "FULL_MONTH", days: 30, retro: "CURRENT_OR_LATER", retroDays: 0, payableBasketCents: 40000, retroactiveCents: 0, totalCents: 40000 });
+  // FEVEREIRO (28/29 no calendário): base continua 30
+  const feb27 = buildBasicBasketContext(2027, 2), feb28 = buildBasicBasketContext(2028, 2);
+  assert.deepEqual([feb27.paymentDate, feb28.paymentDate], ["2027-02-10", "2028-02-09"]);
+  assert.deepEqual([calc("2027-01-20", feb27).days, calc("2027-01-20", feb27).payableBasketCents, calc("2028-01-02", feb28).days, calc("2028-01-02", feb28).payableBasketCents], [30, 40000, 30, 40000]); // mês completo 30/30
+  assert.deepEqual([calc("2027-02-05", feb27).days, calc("2027-02-05", feb27).payableBasketCents, calc("2028-02-05", feb28).days], [26, 34667, 26]);
+  assert.equal(calc("2027-02-20", feb27).current, "AFTER_PAYMENT");
+  const mar27 = buildBasicBasketContext(2027, 3), mar28 = buildBasicBasketContext(2028, 3);
+  assert.deepEqual([calc("2027-02-20", mar27).retroDays, calc("2027-02-20", mar27).retroactiveCents], [11, 14667]); // 30 − 20 + 1 = 11 (não os dias físicos até 28/02)
+  assert.deepEqual([calc("2027-02-28", mar27).retroDays, calc("2028-02-29", mar28).retroDays, calc("2028-02-29", mar28).retroactiveCents], [3, 2, 2667]);
+  assert.deepEqual(calculateBasicBasketLine({ driverBonusCents: 0, agreementCents: 0, monthlyBasketCents: MONTHLY, currentBasketDays: 11, retroactiveDays: 0 }).payableBasketCents, 14667); // 400 × 11/30
+  // virada de ano: referência dezembro, base 30
+  const jan = buildBasicBasketContext(2027, 1);
+  assert.deepEqual([jan.referenceYear, jan.referenceMonth, jan.previousPaymentDate, jan.paymentDate], [2026, 12, "2026-12-09", "2027-01-13"]);
+  assert.deepEqual([calc("2026-12-20", jan).retroDays, calc("2026-12-20", jan).retroactiveCents, calc("2026-12-20", jan).payableBasketCents, calc("2026-12-31", jan).retroDays, calc("2027-01-05", jan).payableBasketCents], [11, 14667, 40000, 1, 34667]);
+  // Data de Admissão ausente: bloqueante (sem valor inventado)
+  assert.deepEqual(calculateCurrentBasketDays({ context: oct, admissionDate: null }), { status: "MISSING_ADMISSION", currentBasketDays: 0 });
+  assert.deepEqual(calculateRetroactiveDays({ context: oct, admissionDate: null }), { status: "MISSING_ADMISSION", retroactiveDays: 0, retroactiveStart: null, retroactiveEnd: null });
+  // valor mensal alterado → paga e Retroativo recalculados sobre o novo mensal
+  assert.deepEqual(calculateBasicBasketLine({ driverBonusCents: 0, agreementCents: 0, monthlyBasketCents: 45000, currentBasketDays: 26, retroactiveDays: 10 }), { payableBasketCents: 39000, retroactiveCents: 15000, totalCents: 54000 });
+  // arredondamento comercial exato (metade para cima), conferido com aritmética racional em BigInt
+  for (let base = 0; base <= 120000; base += 997) for (let d = 1; d <= 30; d += 1) {
+    const n = BigInt(base) * BigInt(d), q = BigInt(30); const two = BigInt(2);
+    assert.equal(prorateCents(base, d, BASIC_BASKET_CALCULATION_DAYS), Number((two * n + q) / (two * q)));
+  }
+  assert.throws(() => prorateCents(100, 31, 30), BasicBasketCalculationError);
+  assert.throws(() => calculateBasicBasketLine({ driverBonusCents: -1, agreementCents: 0, monthlyBasketCents: 0, currentBasketDays: 0, retroactiveDays: 0 }), BasicBasketCalculationError);
+  // a fórmula não usa dias reais do mês
+  const source = await readFile(new URL("../src/modules/accounts-payable/basic-basket/calculations.ts", import.meta.url), "utf8");
+  const formula = source.slice(source.indexOf("export function calculateCurrentBasketDays"), source.indexOf("export const centsToDecimalString")).split(/\r?\n/).filter((line) => !line.trim().startsWith("//")).join("\n");
+  assert.doesNotMatch(formula, /daysInMonth|countDaysInclusive|getDate\(|monthDays/i); assert.doesNotMatch(formula, /\b30\b/); // constante central
+  // datas só-dia sem deslocamento (inclusive na antiga virada de horário de verão de 04/11/2018 em São Paulo)
+  assert.equal(addDays("2018-11-03", 1), "2018-11-04"); assert.equal(countDaysInclusive("2018-11-01", "2018-11-30"), 30); assert.equal(addDays("2019-02-16", 1), "2019-02-17");
+  // entrada monetária pt-BR
+  assert.deepEqual(["400", "400,5", "400,50", "1.234,56", "400.50", "R$ 12,34", "", "0"].map((value) => parseMoneyToCents(value, "Cesta")), [40000, 40050, 40050, 123456, 40050, 1234, 0, 0]);
+  for (const bad of ["-1", "12,345", "abc", "1,2,3"]) assert.throws(() => parseMoneyToCents(bad, "Cesta"), /Cesta inválido/);
+});
+
+test("cesta básica: rateio Empresa → Departamento → Colaborador, resumo Empresa → CC e XLSX auditável fecham (base 30)", async () => {
+  const { groupBasicBasketByCompanyDepartment, groupBasicBasketByCompanyCostCenter } = await import("../src/modules/accounts-payable/basic-basket/rateio");
+  const { buildBasicBasketWorkbook } = await import("../src/modules/accounts-payable/basic-basket/workbook");
+  const row = (employeeId: string, company: string, department: string, costCenter: string | null, values: [string, string, string, string, string], retroactiveDays: number, admissionDate: string | null = null, observation: string | null = null, currentBasketDays = 30) => ({ id: employeeId, employeeId, employeeName: `PESSOA ${employeeId.toUpperCase()}`, company, department, costCenter, driverBonus: values[0], agreementAmount: values[1], monthlyBasketAmount: "400.0000", currentCalculationDays: 30, currentBasketDays, basketAmount: values[2], retroactiveAmount: values[3], amount: values[4], referenceCalculationDays: 30, retroactiveDays, admissionDate, observation });
+  const rows = [
+    row("a", "PROJETA", "TOPOGEO", "VALE BMSA", ["150.00", "100.00", "346.67", "0.00", "596.67"], 0, "2026-10-05T00:00:00.000Z", null, 26), // admissão na competência: 26 de 30
+    row("b", "PROJETA", "ADMINISTRATIVO", "VALE BMSA", ["0.00", "0.00", "400.00", "133.33", "533.33"], 10, "2026-09-21T00:00:00.000Z", "Ajuste conforme acordo"), // Retroativo parcial
+    row("c", "BOINGA", "TOPOGEO", null, ["150.00", "100.00", "400.0000", "280.0000", "930.0000"], 21, "2026-09-10T00:00:00.000Z"), // desde o dia seguinte ao pagamento anterior
+  ];
+  const tree = groupBasicBasketByCompanyDepartment(rows);
+  assert.deepEqual(tree.companies.map((company) => [company.company, company.totals.totalCents, company.departments.map((department) => [department.department, department.totals.totalCents])]), [["BOINGA", 93000, [["TOPOGEO", 93000]]], ["PROJETA", 113000, [["ADMINISTRATIVO", 53333], ["TOPOGEO", 59667]]]]);
+  assert.equal(tree.totals.totalCents, 206000); assert.equal(tree.consistent, true);
+  const summary = groupBasicBasketByCompanyCostCenter(rows);
+  assert.deepEqual(summary.companies.map((company) => [company.company, company.costCenters.map((cc) => [cc.costCenter, cc.totals.people, cc.totals.basketCents, cc.totals.retroactiveCents, cc.totals.totalCents])]), [["BOINGA", [["Sem centro de custo", 1, 40000, 28000, 93000]]], ["PROJETA", [["VALE BMSA", 2, 74667, 13333, 113000]]]]);
+  assert.deepEqual([summary.totals.driverBonusCents, summary.totals.agreementCents, summary.totals.basketCents, summary.totals.retroactiveCents, summary.totals.totalCents], [30000, 20000, 114667, 41333, 206000]); assert.equal(summary.consistent, true);
+  const map = { version: 1, createdAt: new Date("2026-10-01T12:00:00Z"), previousPaymentDate: "2026-09-09T00:00:00.000Z", paymentDate: "2026-10-14T00:00:00.000Z", daysInMonth: 31, totalAmount: "2060.00", competence: { year: 2026, month: 10 }, administrativeEntity: { tradeName: "Fornecedor QA" }, financialRecord: { identifier: "PG-QA", grossAmount: "2060.0000" }, allocations: rows };
+  const workbook = buildBasicBasketWorkbook(map, "qa");
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Detalhado", "Resumo", "Auditoria"]);
+  const detail = workbook.getWorksheet("Detalhado")!; const values = (n: number) => (detail.getRow(n).values as unknown[]).slice(1);
+  assert.deepEqual(values(1), ["Empresa", "Departamento", "Centro de Custo", "Colaborador", "Data de Admissão", "Pagamento Anterior", "Pagamento Atual", "Valor Mensal da Cesta", "Base de Cálculo da Cesta", "Dias de Direito à Cesta", "Mês de Referência Retroativo", "Base de Cálculo Retroativo", "Dias Retroativos", "Bonificação Condutor", "Acordo", "Cesta Paga", "Retroativo", "Total", "Observação", "Fornecedor"]);
+  const iso = (cell: string) => (detail.getCell(cell).value as Date).toISOString().slice(0, 10);
+  const cells = (n: number, columns: string) => columns.split("").map((column) => detail.getCell(`${column}${n}`).value);
+  assert.deepEqual([iso("E2"), iso("F2"), iso("G2"), ...cells(2, "HIJKLMPQR")], ["2026-09-10", "2026-09-09", "2026-10-14", 400, 30, 30, "09/2026", 30, 21, 400, 280, 930]); // BOINGA
+  assert.deepEqual([iso("E3"), ...cells(3, "HIJLMPQR")], ["2026-09-21", 400, 30, 30, 30, 10, 400, 133.33, 533.33]); // Retroativo parcial
+  assert.deepEqual([iso("E4"), ...cells(4, "HIJMNOPQR")], ["2026-10-05", 400, 30, 26, 0, 150, 100, 346.67, 0, 596.67]); // Cesta proporcional 26 de 30
+  for (const column of [5, 6, 7]) assert.equal(detail.getColumn(column).numFmt, "dd/mm/yyyy");
+  for (const column of [8, 14, 15, 16, 17, 18]) assert.equal(detail.getColumn(column).numFmt, "R$ #,##0.00");
+  assert.deepEqual(cells(5, "PQR"), [1146.67, 413.33, 2060]); // linha TOTAL: soma a Cesta PAGA
+  assert.equal(detail.getCell("S3").value, "Ajuste conforme acordo"); assert.equal(detail.getCell("T2").value, "Fornecedor QA");
+  const resumo = workbook.getWorksheet("Resumo")!;
+  assert.deepEqual((resumo.getRow(1).values as unknown[]).slice(1), ["Empresa", "Centro de Custo", "Colaboradores", "Bonificação Condutor", "Acordo", "Cesta Paga", "Retroativo", "Total"]);
+  assert.deepEqual((resumo.getRow(resumo.rowCount).values as unknown[]).slice(1), ["Total Geral", "", 3, 300, 200, 1146.67, 413.33, 2060]);
+  const audit = workbook.getWorksheet("Auditoria")!;
+  assert.deepEqual([audit.getCell("A2").value, audit.getCell("B2").value], ["Dias no mês (calendário)", 31]); // calendário real
+  assert.equal(audit.getCell("B3").value, "09/09/2026"); assert.equal(audit.getCell("B4").value, "14/10/2026");
+  assert.equal(audit.getCell("B5").value, "09/2026 (01/09/2026 a 30/09/2026)"); assert.equal(audit.getCell("B10").value, 2060);
+  const auditText = JSON.stringify(audit.getSheetValues());
+  assert.match(auditText, /Os cálculos de Cesta Básica e Retroativo utilizam base financeira fixa de 30 dias, independentemente da quantidade de dias do mês calendário\./);
+  assert.doesNotMatch(auditText, /apuração|31 dias|dias corridos|Cesta integral/);
+  assert.throws(() => buildBasicBasketWorkbook({ ...map, totalAmount: "2059.99" }), /Inconsistência/);
+});
+test("cesta básica: backend autoritativo, padrões, observação, soft cancel, correção e isolamento", async () => {
+  const [server, deletion, section, page, schema, migration, proration, referenceMonth, currentMonth, commercial, workbook] = await Promise.all([
+    readFile(new URL("../src/modules/accounts-payable/basic-basket/server.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/deletion-server.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/basic-basket/BasicBasketSection.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/pagamentos/alimentacao/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/schema.prisma", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20261005150000_add_basic_basket/migration.sql", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20261005180000_basic_basket_retroactive_proration/migration.sql", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20261005200000_basic_basket_retroactive_reference_month/migration.sql", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20261005220000_basic_basket_current_month_proration/migration.sql", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20261006090000_basic_basket_commercial_30_days/migration.sql", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/basic-basket/workbook.ts", import.meta.url), "utf8"),
+  ]);
+  // servidor deriva pagamentos, dias de direito (base 30), Cesta paga, mês de referência, Retroativo e Total, e lê a Data de Admissão do cadastro (nunca do cliente)
+  assert.match(server, /const cycle = buildBasicBasketContext\(input\.year, input\.month\)/); assert.match(server, /select: \{ id: true, officialName: true, department: true, costCenter: true, admissionDate: true \}/);
+  assert.match(server, /calculateCurrentBasketDays\(\{ context: cycle, admissionDate: employee\.admissionDate \}\)/); assert.match(server, /calculateRetroactiveDays\(\{ context: cycle, admissionDate: employee\.admissionDate \}\)/);
+  assert.match(server, /if \(!employee\.admissionDate\) throw new BasicBasketValidationError/); assert.match(server, /"Informe a Data de Admissão do colaborador para calcular a Cesta Básica\."/); // ausência bloqueia
+  assert.match(server, /monthlyBasketCents: entry\.basketCents/); assert.match(server, /monthlyBasketAmount: centsToDecimalString\(entry\.basketCents\)/); assert.match(server, /basketAmount: centsToDecimalString\(line\.payableBasketCents\)/);
+  assert.match(server, /return \{ year, month, daysInMonth: basicBasketDaysInMonth\(year, month\), calculationDays: BASIC_BASKET_CALCULATION_DAYS, \.\.\.cycle, holidays, people \}/); // contexto: dias reais (card) + base 30
+  assert.match(server, /currentCalculationDays: BASIC_BASKET_CALCULATION_DAYS/); assert.match(server, /referenceCalculationDays: BASIC_BASKET_CALCULATION_DAYS/);
+  for (const source of [server, section, workbook]) assert.doesNotMatch(source, /currentMonthDays|referenceMonthDays/); // sem campo ambíguo de "dias do mês" na fórmula
+  assert.doesNotMatch(server, /entry\.(retroactiveAmount|retroactiveDays|referenceCalculationDays|currentBasketDays|currentCalculationDays|monthlyBasketAmount|payable\w*|totalAmount|amount|admissionDate|previousPaymentDate|department|costCenter)/);
+  assert.doesNotMatch(server, /retroactiveWindowStart|accrual|cycleFromPayments|RetroactiveContext|retroactiveContextFromPayments/); // regras anteriores removidas
+  assert.match(server, /createFinancialRecordInTransaction/); assert.match(server, /Prisma\.TransactionIsolationLevel\.Serializable/);
+  // padrões: Bonificação, Acordo, Cesta MENSAL e empresa; NUNCA Observação/Retroativo/valor proporcional
+  const defaults = /const defaults = \{([^}]*)\}/.exec(server)?.[1] ?? "";
+  assert.match(defaults, /driverBonus/); assert.match(defaults, /agreementAmount/); assert.match(defaults, /basketAmount: centsToDecimalString\(entry\.basketCents\)/); assert.doesNotMatch(defaults, /observation|retroactive|payable/);
+  assert.match(section, /observation: "" \}/); // nova competência: observação vazia
+  // correção preserva snapshots (admissão usada + ciclo do mapa), parte do valor mensal e é soft delete; cancelamento é soft cancel
+  assert.match(server, /admissionDate: dateOnlyFromDb\(original\.admissionDate\)/); assert.match(server, /basicBasketContextFromPayments\(isoDay\(map\.previousPaymentDate\), isoDay\(map\.paymentDate\)\)/); assert.match(server, /deletedAt: new Date\(\)/);
+  assert.match(section, /basket: toInput\(row\.monthlyBasketAmount\)/);
+  assert.match(deletion, /export async function cancelBasicBasketMap/); assert.doesNotMatch(deletion, /basicBasket\w*\.delete(Many)?\(/);
+  // tela: card mostra os dias REAIS do calendário; base 30 vem da constante; ausência de admissão bloqueia; lote explícito
+  assert.match(section, /<MetricCard label="Dias no mês" value=\{String\(ctx\?\.daysInMonth \?\? "—"\)\}/); assert.match(section, /BASIC_BASKET_CALCULATION_DAYS/);
+  assert.match(section, /Receberá na próxima competência/); assert.match(section, /A pagar: /); assert.match(section, /if \(currentStatus === "MISSING_ADMISSION"\) return \{ \.\.\.base, error: MISSING_ADMISSION \}/);
+  assert.match(section, /selectedIds\.includes\(id\) \? \{ \.\.\.value, basket: bulkBasket \}/); assert.doesNotMatch(section, /useEffect\([^)]*bulkBasket/); assert.doesNotMatch(section, /Cesta Básica desta competência é integral|dias corridos/);
+  // calendário somente leitura (sem cadastro/edição de feriado na Cesta)
+  assert.doesNotMatch(section, /HolidayModal|holidays", "POST"|holidays", "DELETE"/);
+  // aba nova sem quebrar as existentes; domínio próprio; migrations só aditivas
+  assert.match(page, /useState<"alimentacao" \| "cafe" \| "cesta">\("alimentacao"\)/); assert.match(page, /subsection === "cafe" && <BreakfastSection \/>/);
+  assert.match(schema, /model BasicBasketAllocation \{/); assert.doesNotMatch(schema.slice(schema.indexOf("model BreakfastAllocation {"), schema.indexOf("enum BreakfastObservationType")), /basket|driverBonus/i);
+  const strip = (text: string) => text.split(/\r?\n/).filter((line) => !line.trim().startsWith("--")).join("\n");
+  const sql = strip(migration);
+  assert.doesNotMatch(sql, /DROP|RENAME|ALTER TABLE "(?!BasicBasket)/); assert.equal((sql.match(/CREATE TABLE/g) ?? []).length, 4);
+  const prorationSql = strip(proration);
+  assert.doesNotMatch(prorationSql, /DROP|RENAME|ALTER TABLE "(?!BasicBasket)|UPDATE "(?!BasicBasket)/); assert.doesNotMatch(prorationSql, /"(retroactiveAmount|amount|basketAmount)" =/); // não reescreve valores
+  const referenceSql = strip(referenceMonth);
+  assert.match(referenceSql, /RENAME COLUMN "accrualPeriodDays" TO "referenceMonthDays"/); assert.doesNotMatch(referenceSql, /DROP|ALTER TABLE "(?!BasicBasketAllocation)|"(retroactiveAmount|amount|basketAmount|totalAmount|grossAmount)" =/);
+  const currentSql = strip(currentMonth);
+  assert.match(currentSql, /ADD COLUMN "monthlyBasketAmount" DECIMAL\(19,4\)/); assert.doesNotMatch(currentSql, /DROP|RENAME|DELETE|ALTER TABLE "(?!BasicBasketAllocation)|UPDATE "(?!BasicBasketAllocation)|"(retroactiveAmount|amount|basketAmount|totalAmount|grossAmount)" =/);
+  // migration da base de 30: trava contra linhas proporcionais antigas, só renomeia bases e ajusta metadados — nunca dinheiro
+  const commercialSql = strip(commercial);
+  assert.match(commercialSql, /RAISE EXCEPTION/); assert.match(commercialSql, /RENAME COLUMN "currentMonthDays" TO "currentCalculationDays"/); assert.match(commercialSql, /RENAME COLUMN "referenceMonthDays" TO "referenceCalculationDays"/);
+  assert.doesNotMatch(commercialSql, /DROP|DELETE|ALTER TABLE "(?!BasicBasketAllocation)|UPDATE "(?!BasicBasketAllocation)|"(retroactiveAmount|amount|basketAmount|monthlyBasketAmount|totalAmount|grossAmount)" =/);
+  assert.match(schema, /previousPaymentDate\s+DateTime\s+@db\.Date/); assert.match(schema, /retroactiveDays\s+Int/); assert.match(schema, /monthlyBasketAmount\s+Decimal\s+@db\.Decimal\(19, 4\)/); assert.match(schema, /currentBasketDays\s+Int/);
+  assert.match(schema, /currentCalculationDays\s+Int/); assert.match(schema, /referenceCalculationDays\s+Int/); assert.doesNotMatch(schema, /accrualPeriodDays|currentMonthDays\s+Int|referenceMonthDays\s+Int/);
+});

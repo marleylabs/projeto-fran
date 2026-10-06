@@ -19,6 +19,7 @@ import { ManualEntrySection } from "@/components/ManualEntryLayout";
 import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList } from "@/components/allocation/AllocationCard";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { BreakfastSection } from "@/modules/accounts-payable/breakfast/BreakfastSection";
+import { BasicBasketSection } from "@/modules/accounts-payable/basic-basket/BasicBasketSection";
 import { MultiDatePicker } from "@/components/MultiDatePicker";
 import { compareDateThenId, comparePtBr, sortedPtBr } from "@/lib/sorting/ptBr";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
@@ -1560,7 +1561,7 @@ function LocalityTabs({
 
 export default function FoodAccountsPayablePage() {
   const router = useRouter();
-  const [subsection, setSubsection] = useState<"alimentacao" | "cafe">("alimentacao");
+  const [subsection, setSubsection] = useState<"alimentacao" | "cafe" | "cesta">("alimentacao");
   const now = new Date();
   const [competence, setCompetence] = useState(
     `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
@@ -1633,9 +1634,10 @@ export default function FoodAccountsPayablePage() {
           title="Alimentação"
           description="Competência → estado → fornecedor → colaboradores → obrigação individual."
         />
-        <div className="rounded-lg border border-base-300 bg-base-200/60 p-1"><div role="tablist" aria-label="Subseções de Alimentação" className="grid grid-cols-2 gap-1">
+        <div className="rounded-lg border border-base-300 bg-base-200/60 p-1"><div role="tablist" aria-label="Subseções de Alimentação" className="grid grid-cols-3 gap-1">
           <Button type="button" role="tab" aria-selected={subsection === "alimentacao"} variant={subsection === "alimentacao" ? "primary" : "ghost"} onClick={() => setSubsection("alimentacao")}>Alimentação</Button>
           <Button type="button" role="tab" aria-selected={subsection === "cafe"} variant={subsection === "cafe" ? "primary" : "ghost"} onClick={() => setSubsection("cafe")}>Café da Manhã</Button>
+          <Button type="button" role="tab" aria-selected={subsection === "cesta"} variant={subsection === "cesta" ? "primary" : "ghost"} onClick={() => setSubsection("cesta")}>Cesta Básica</Button>
         </div></div>
         {subsection === "alimentacao" && <>
         <section className="card p-5">
@@ -1726,6 +1728,7 @@ export default function FoodAccountsPayablePage() {
         </section>
         </>}
         {subsection === "cafe" && <BreakfastSection />}
+        {subsection === "cesta" && <BasicBasketSection />}
       </main>
     </div>
   );
