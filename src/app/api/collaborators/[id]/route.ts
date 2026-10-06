@@ -7,9 +7,9 @@ import { CollaboratorValidationError, CPF_IN_USE_MESSAGE, collaboratorWriteError
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { response } = await requirePermission(PERMISSIONS.MASTER_DATA_MANAGE); if (response) return response;
   try {
-    const { id } = await context.params; const body = await request.json() as CollaboratorInput; const { cpf, ...profile } = parseCollaboratorInput(body);
-    // Sem a chave "cpf" no corpo, o CPF atual não é alterado; com "cpf" vazio, é limpo (ação explícita do formulário).
-    const data = "cpf" in body ? { ...profile, cpf } : profile;
+    const { id } = await context.params; const body = await request.json() as CollaboratorInput; const { cpf, admissionDate, ...profile } = parseCollaboratorInput(body);
+    // Sem a chave "cpf"/"admissionDate" no corpo, o valor atual não é alterado; enviada vazia, é limpo (ação explícita do formulário).
+    const data = { ...profile, ...("cpf" in body ? { cpf } : {}), ...("admissionDate" in body ? { admissionDate } : {}) };
     // CPF de outro colaborador: bloqueia (nunca transfere). O próprio CPF pode ser mantido/corrigido.
     if ("cpf" in data && data.cpf && await prisma.foodEmployee.findFirst({ where: { cpf: data.cpf, NOT: { id } }, select: { id: true } })) return NextResponse.json({ error: CPF_IN_USE_MESSAGE }, { status: 409 });
     return NextResponse.json({ item: await prisma.foodEmployee.update({ where: { id }, data }) });

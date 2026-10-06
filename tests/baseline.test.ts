@@ -1029,7 +1029,7 @@ test("cadastro manual: CPF opcional, persistido só com dígitos e validado no b
   ]);
   assert.match(post, /CPF_IN_USE_MESSAGE/); assert.match(patch, /CPF_IN_USE_MESSAGE/); assert.match(patch, /NOT: \{ id \}/);
   // CPF omitido por padrão em toda consulta; só sai quando pedido explicitamente
-  assert.match(prismaClient, /omit: \{ foodEmployee: \{ cpf: true \} \}/); assert.match(post, /fields/);
+  assert.match(prismaClient, /omit: \{ foodEmployee: \{ cpf: true[,} ]/); assert.match(post, /fields/);
   // migration aditiva: coluna nullable + unique, sem NOT NULL nem DROP
   assert.match(migration, /ADD COLUMN "cpf" TEXT;/); assert.match(migration, /CREATE UNIQUE INDEX "FoodEmployee_cpf_key"/); assert.doesNotMatch(migration, /NOT NULL|DROP/);
   assert.match(schema, /cpf\s+String\?\s+@unique/);
@@ -1093,7 +1093,7 @@ test("importação massiva: 128 colaboradores existentes + 128 linhas com ID e C
   const template = await generateCollaboratorTemplate(existing);
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(template as never);
   const sheet = workbook.getWorksheet("COLABORADORES")!;
-  assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1), ["NOME", "FUNÇÃO", "DEPARTAMENTO", "CENTRO DE CUSTO", "CPF", "ID"]);
+  assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1), ["NOME", "FUNÇÃO", "DEPARTAMENTO", "CENTRO DE CUSTO", "CPF", "DATA DE ADMISSÃO", "ID"]);
   assert.equal(sheet.rowCount, 129);
   const cpfs = existing.map((_, index) => cpfWithDigits(String(100000000 + index * 7919).slice(-9).padStart(9, "0")));
   for (let index = 0; index < 128; index += 1) sheet.getCell(`E${index + 2}`).value = index % 2 ? cpfs[index] : Number(cpfs[index]); // texto e número
@@ -1301,4 +1301,78 @@ test("espelho de ponto: aplicar ATRIBUI (idempotente), só selecionados aptos, e
   assert.doesNotMatch(server, /\.create\(|\.update\(|\.upsert\(|writeFile|storePrivateFile|console\./);
   assert.match(server, /where: \{ cpf: \{ in: cpfs \} \}/); assert.doesNotMatch(server, /normalizedName|officialName: \{/); // match só por CPF
   assert.doesNotMatch(server, /cpf: person\.cpf|cpf: employee\.cpf/); // resposta sem CPF completo
+});
+// ---------------------------------------------------------------- Colaboradores: Data de Admissão
+test("data de admissão: parser dd/MM/yyyy, Date do XLSX, serial do Excel, inválidas e sem deslocamento de fuso", async () => {
+  const { parseDateOnly, parseOptionalDateOnly, dateOnlyToDb, dateOnlyFromDb, formatDateOnlyBR, DateOnlyValidationError } = await import("../src/lib/date-only");
+  assert.equal(parseDateOnly("05/10/2026"), "2026-10-05"); assert.equal(parseDateOnly(" 15/03/2021 "), "2021-03-15"); assert.equal(parseDateOnly("2021-04-01"), "2021-04-01");
+  assert.equal(parseDateOnly(new Date(Date.UTC(2020, 0, 1))), "2020-01-01"); // célula de data real (ExcelJS → meia-noite UTC)
+  assert.equal(parseDateOnly(45931), "2025-10-01"); assert.equal(parseDateOnly(43831), "2020-01-01"); // serial do Excel
+  for (const bad of ["31/02/2021", "32/01/2026", "00/00/2026", "10/05/26", "2021-13-01", "abc", "15-03-2021", 0, -1, NaN, new Date("x")]) assert.equal(parseDateOnly(bad), null, String(bad));
+  assert.equal(parseOptionalDateOnly(""), null); assert.equal(parseOptionalDateOnly(null), null); assert.equal(parseOptionalDateOnly(undefined), null);
+  assert.throws(() => parseOptionalDateOnly("31/02/2021", "Data de Admissão"), (error: Error) => error instanceof DateOnlyValidationError && error.message === "Data de Admissão inválida.");
+  // DATE sem hora: o valor gravado é meia-noite UTC e volta exatamente para o mesmo dia (independe do TZ do processo)
+  for (const iso of ["2020-01-01", "2026-10-05", "2021-03-15", "2019-10-10"]) {
+    const db = dateOnlyToDb(iso);
+    assert.equal(db.toISOString(), `${iso}T00:00:00.000Z`); assert.equal(dateOnlyFromDb(db), iso); assert.equal(dateOnlyFromDb(db.toISOString()), iso);
+    assert.equal(formatDateOnlyBR(db.toISOString()), iso.split("-").reverse().join("/"));
+  }
+  assert.equal(formatDateOnlyBR(null), ""); assert.equal(dateOnlyFromDb(undefined), null);
+});
+
+test("data de admissão: cadastro manual opcional (null válido) e validada no backend", async () => {
+  const { parseCollaboratorInput } = await import("../src/modules/collaborators/schema");
+  const base = { officialName: "Teste Data Admissão", department: "TOPOGEO" };
+  assert.equal(parseCollaboratorInput({ ...base, admissionDate: "2021-03-15" }).admissionDate?.toISOString(), "2021-03-15T00:00:00.000Z");
+  assert.equal(parseCollaboratorInput({ ...base, admissionDate: "15/03/2021" }).admissionDate?.toISOString(), "2021-03-15T00:00:00.000Z");
+  assert.equal(parseCollaboratorInput(base).admissionDate, null); assert.equal(parseCollaboratorInput({ ...base, admissionDate: "" }).admissionDate, null);
+  assert.throws(() => parseCollaboratorInput({ ...base, admissionDate: "31/02/2021" }), /Data de Admissão inválida\./);
+  const [patch, list, prismaClient, migration] = await Promise.all([
+    readFile(new URL("../src/app/api/collaborators/[id]/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/api/collaborators/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/db/prisma.ts", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20261005120000_add_employee_admission_date/migration.sql", import.meta.url), "utf8"),
+  ]);
+  assert.match(patch, /"admissionDate" in body \? \{ admissionDate \} : \{\}/); // ausente = mantém; enviado vazio = limpa
+  assert.match(list, /admissionDate: !withAdmission/); assert.match(prismaClient, /omit: \{ foodEmployee: \{ cpf: true, admissionDate: true \} \}/);
+  const sql = migration.split(/\r?\n/).filter((line) => !line.trim().startsWith("--")).join("\n");
+  assert.match(sql, /ADD COLUMN "admissionDate" DATE;/); assert.doesNotMatch(sql, /UNIQUE|NOT NULL|DROP|UPDATE/);
+});
+
+test("data de admissão na importação: atualiza (sem localizar), vazia não apaga, inválida bloqueia, reimportação sem alteração", async () => {
+  const { planCollaboratorImport, parseCollaboratorWorkbook, generateCollaboratorTemplate } = await import("../src/modules/collaborators/import");
+  const { dateOnlyToDb } = await import("../src/lib/date-only");
+  const person = (id: string, officialName: string, admissionDate: string | null = null) => ({ id, officialName, normalizedName: officialName.toLocaleLowerCase("pt-BR"), jobTitle: "AUXILIAR", department: "TOPOGEO", costCenter: "CC", cpf: null, admissionDate: admissionDate ? dateOnlyToDb(admissionDate) : null, active: true, mergedIntoId: null });
+  const existing = [person("id-ana", "ANA SOUZA"), person("id-bia", "BIA LIMA", "2019-10-10"), person("id-caio", "CAIO DIAS", "2020-03-01")];
+  const row = (sourceRow: number, officialName: string, extra: Partial<{ id: string; admissionDate: string; errors: string[] }> = {}) => ({ sourceRow, officialName, department: "TOPOGEO", errors: [], ...extra });
+  let plan = planCollaboratorImport([row(2, "ANA SOUZA", { id: "id-ana", admissionDate: "2020-05-05" })], existing);
+  assert.equal(plan.rows[0].status, "UPDATE"); assert.deepEqual(plan.rows[0].update, { id: "id-ana", data: { admissionDate: dateOnlyToDb("2020-05-05") } }); assert.deepEqual(plan.rows[0].changes, ["Data de Admissão"]);
+  plan = planCollaboratorImport([row(2, "BIA LIMA", { id: "id-bia" })], existing); // vazia não apaga
+  assert.equal(plan.rows[0].status, "UNCHANGED"); assert.equal(plan.rows[0].update, undefined);
+  plan = planCollaboratorImport([row(2, "CAIO DIAS", { id: "id-caio", admissionDate: "2020-03-02" })], existing); // correção via ID
+  assert.deepEqual(plan.rows[0].update?.data, { admissionDate: dateOnlyToDb("2020-03-02") });
+  plan = planCollaboratorImport([row(2, "CAIO DIAS", { id: "id-caio", admissionDate: "2020-03-01" })], existing); // igual → sem alteração
+  assert.equal(plan.rows[0].status, "UNCHANGED");
+  // a data NÃO localiza ninguém: nome novo com a mesma data de um existente vira CREATE
+  plan = planCollaboratorImport([row(2, "NOVO COLABORADOR", { admissionDate: "2019-10-10" })], existing);
+  assert.equal(plan.rows[0].status, "CREATE"); assert.equal(plan.rows[0].create?.admissionDate?.toISOString(), "2019-10-10T00:00:00.000Z"); assert.equal(plan.rows[0].matchedBy, null);
+  // máscara: coluna de data real; Excel edita → reimporta (Date, texto dd/MM/yyyy, serial e inválida)
+  const template = await generateCollaboratorTemplate(existing);
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(template as never); const sheet = workbook.getWorksheet("COLABORADORES")!;
+  assert.equal(sheet.getCell("F3").value instanceof Date, true); assert.equal((sheet.getCell("F3").value as Date).toISOString(), "2019-10-10T00:00:00.000Z"); assert.equal(sheet.getCell("F3").numFmt, "dd/mm/yyyy");
+  assert.equal(sheet.getCell("F2").value, null); assert.equal(sheet.getCell("G2").value, "id-ana");
+  sheet.getCell("F2").value = new Date(Date.UTC(2020, 0, 1)); sheet.getCell("F4").value = "02/03/2020";
+  const rows = await parseCollaboratorWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+  assert.deepEqual(rows.map((item) => [item.id, item.admissionDate]), [["id-ana", "2020-01-01"], ["id-bia", "2019-10-10"], ["id-caio", "2020-03-02"]]);
+  plan = planCollaboratorImport(rows, existing);
+  assert.deepEqual(plan.rows.map((item) => item.status), ["UPDATE", "UNCHANGED", "UPDATE"]); assert.deepEqual(plan.rows.map((item) => item.update?.id ?? null), ["id-ana", null, "id-caio"]);
+  // reimportação depois de gravado → tudo sem alteração (idempotente)
+  const saved = existing.map((item, index) => ({ ...item, admissionDate: dateOnlyToDb(["2020-01-01", "2019-10-10", "2020-03-02"][index]) }));
+  assert.equal(planCollaboratorImport(rows, saved).counts.UNCHANGED, 3);
+  sheet.getCell("F2").value = "31/02/2021";
+  const invalid = planCollaboratorImport(await parseCollaboratorWorkbook(Buffer.from(await workbook.xlsx.writeBuffer())), existing);
+  assert.equal(invalid.blocked, true); assert.deepEqual(invalid.rows[0].errors, ["Data de Admissão inválida."]);
+  // Espelho de Ponto e Máscara Flash não usam Data de Admissão
+  const [pointServer, flash] = await Promise.all([readFile(new URL("../src/modules/accounts-payable/breakfast/point-mirror-server.ts", import.meta.url), "utf8"), readFile(new URL("../src/modules/accounts-payable/breakfast/flash.ts", import.meta.url), "utf8")]);
+  assert.doesNotMatch(pointServer, /admission/i); assert.doesNotMatch(flash, /admission/i);
 });

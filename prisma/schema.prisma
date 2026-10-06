@@ -636,6 +636,9 @@ model FoodEmployee {
   // CPF: só os 11 dígitos (sem pontuação); null = ainda não informado. Dado pessoal — omitido por
   // padrão no PrismaClient (ver src/lib/db/prisma.ts); só é lido onde for explicitamente selecionado.
   cpf            String?              @unique
+  // Data de Admissão: só dia/mês/ano (DATE, sem hora/timezone); null = ainda não informada.
+  // Dado cadastral pessoal — também omitido por padrão no PrismaClient. Não é chave de match.
+  admissionDate  DateTime?            @db.Date
   active         Boolean              @default(true)
   mergedIntoId   String?
   createdAt      DateTime             @default(now())

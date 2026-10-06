@@ -2,6 +2,8 @@ import ExcelJS from "exceljs";
 import { findHeader, normalizeCell, readXlsxMatrix } from "@/modules/accounts-payable/shared/spreadsheet";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
 import { formatCpf, isValidCpf, maskCpf, normalizeCpf } from "@/lib/cpf";
+import { dateOnlyFromDb, dateOnlyToDb, formatDateOnlyBR, parseSpreadsheetDate } from "@/lib/date-only";
+
 import { normalizeCollaboratorSearch, normalizeCollaboratorText } from "./schema";
 
 export type CollaboratorRow = { officialName: string; normalizedName: string; jobTitle: string; department: string; costCenter: string };
@@ -33,29 +35,29 @@ export function classifyCollaborator(row: CollaboratorRow, existing: ExistingCol
 // apaga dado existente (inclusive CPF). CPF diferente do cadastrado só é corrigido via ID.
 // Qualquer ERRO bloqueia a importação inteira: nada é gravado parcialmente.
 // ---------------------------------------------------------------------------------------------
-export type CollaboratorSheetRow = { sourceRow: number; id?: string; officialName: string; jobTitle?: string; department?: string; costCenter?: string; cpf?: string; errors: string[] };
-export type ImportCandidate = CollaboratorRow & { id: string; cpf: string | null; active: boolean; mergedIntoId: string | null };
+export type CollaboratorSheetRow = { sourceRow: number; id?: string; officialName: string; jobTitle?: string; department?: string; costCenter?: string; cpf?: string; admissionDate?: string; errors: string[] };
+export type ImportCandidate = CollaboratorRow & { id: string; cpf: string | null; admissionDate?: Date | null; active: boolean; mergedIntoId: string | null };
 export type ImportAlias = { normalizedAlias: string; employeeId: string };
 export type ImportOverride = "SKIP" | "CREATE" | "UPDATE";
 export type ImportRowStatus = "CREATE" | "UPDATE" | "UNCHANGED" | "REVIEW" | "SKIP" | "ERROR";
 export type ImportMatchedBy = "ID" | "CPF" | "NOME" | "ALIAS" | "SIMILAR" | "REVISAO";
 export type PlannedImportRow = {
   sourceRow: number;
-  file: { id?: string; officialName: string; jobTitle?: string; department?: string; costCenter?: string; cpf?: string };
+  file: { id?: string; officialName: string; jobTitle?: string; department?: string; costCenter?: string; cpf?: string; admissionDate?: string };
   status: ImportRowStatus; matchedBy: ImportMatchedBy | null;
   match: { id: string; officialName: string; department: string; costCenter: string; cpf: string | null } | null;
   changes: string[]; errors: string[];
-  create?: CollaboratorRow & { cpf: string | null; active: boolean };
-  update?: { id: string; data: Partial<CollaboratorRow & { cpf: string }> };
+  create?: CollaboratorRow & { cpf: string | null; admissionDate: Date | null; active: boolean };
+  update?: { id: string; data: Partial<CollaboratorRow & { cpf: string; admissionDate: Date }> };
 };
 
-const FIELD_LABELS = { officialName: "Nome", jobTitle: "Função", department: "Departamento", costCenter: "Centro de Custo", cpf: "CPF" } as const;
+const FIELD_LABELS = { officialName: "Nome", jobTitle: "Função", department: "Departamento", costCenter: "Centro de Custo", cpf: "CPF", admissionDate: "Data de Admissão" } as const;
 const optional = (value: string | undefined) => (value ? value : undefined);
 
 export async function parseCollaboratorWorkbook(buffer: Buffer): Promise<CollaboratorSheetRow[]> {
   const matrix = await readXlsxMatrix(buffer); if (!matrix.length) throw new Error("A planilha está vazia.");
   const headers = matrix[0].map(normalizeCell);
-  const name = findHeader(headers, ["NOME"]), job = findHeader(headers, ["FUNÇÃO", "FUNCAO"]), department = findHeader(headers, ["DEPARTAMENTO"]), cost = findHeader(headers, ["CENTRO DE CUSTO"]), cpf = findHeader(headers, ["CPF"]), id = findHeader(headers, ["ID"]);
+  const name = findHeader(headers, ["NOME"]), job = findHeader(headers, ["FUNÇÃO", "FUNCAO"]), department = findHeader(headers, ["DEPARTAMENTO"]), cost = findHeader(headers, ["CENTRO DE CUSTO"]), cpf = findHeader(headers, ["CPF"]), id = findHeader(headers, ["ID"]), admission = findHeader(headers, ["DATA DE ADMISSÃO"]);
   if (name < 0 || department < 0) throw new Error("A máscara deve conter NOME e DEPARTAMENTO.");
   return matrix.slice(1).map((values, index) => ({ sourceRow: index + 2, values })).filter((item) => item.values.some((value) => normalizeCell(value))).map(({ sourceRow, values }) => {
     const errors: string[] = [];
@@ -65,6 +67,10 @@ export async function parseCollaboratorWorkbook(buffer: Buffer): Promise<Collabo
     const hasCpf = rawCpf !== undefined && rawCpf !== null && normalizeCell(rawCpf) !== "";
     const cpfDigits = hasCpf ? normalizeCpf(rawCpf) : undefined;
     if (hasCpf && !isValidCpf(cpfDigits)) errors.push("CPF inválido.");
+    // Data de Admissão: dd/MM/yyyy, Date real da célula XLSX ou serial do Excel. Vazia = não alterar.
+    const admissionCell = admission >= 0 ? parseSpreadsheetDate(values[admission]) : { status: "empty" as const };
+    const admissionDate = admissionCell.status === "date" ? admissionCell.iso : undefined;
+    if (admissionCell.status === "invalid") errors.push("Data de Admissão inválida.");
     return {
       sourceRow, officialName, errors,
       id: id >= 0 ? optional(normalizeCell(values[id])) : undefined,
@@ -72,6 +78,7 @@ export async function parseCollaboratorWorkbook(buffer: Buffer): Promise<Collabo
       department: optional(normalizeOrganizationalValue(normalizeCell(values[department]))),
       costCenter: cost >= 0 ? optional(normalizeOrganizationalValue(normalizeCell(values[cost]))) : undefined,
       cpf: cpfDigits,
+      admissionDate,
     };
   });
 }
@@ -86,7 +93,7 @@ export function planCollaboratorImport(rows: CollaboratorSheetRow[], existing: I
 
   const planned = rows.map((row): PlannedImportRow & { target: ImportCandidate | null; finalName?: string } => {
     const errors = [...row.errors];
-    const file = { id: row.id, officialName: row.officialName, jobTitle: row.jobTitle, department: row.department, costCenter: row.costCenter, cpf: row.cpf ? formatCpf(row.cpf) : undefined };
+    const file = { id: row.id, officialName: row.officialName, jobTitle: row.jobTitle, department: row.department, costCenter: row.costCenter, cpf: row.cpf ? formatCpf(row.cpf) : undefined, admissionDate: row.admissionDate ? formatDateOnlyBR(row.admissionDate) : undefined };
     const cpf = row.cpf && isValidCpf(row.cpf) ? row.cpf : undefined;
     const normalizedName = normalizeCollaboratorSearch(row.officialName);
     let target: ImportCandidate | null = null, review: ImportCandidate | null = null, matchedBy: ImportMatchedBy | null = null;
@@ -128,7 +135,7 @@ export function planCollaboratorImport(rows: CollaboratorSheetRow[], existing: I
         if (owner && owner.id !== target.id) errors.push(`CPF ${maskCpf(cpf)} já pertence a outro colaborador (${owner.officialName}).`);
         else if (target.cpf && target.cpf !== cpf && matchedBy !== "ID") errors.push("CPF da planilha diferente do CPF cadastrado. Para corrigir o CPF, use a máscara com a coluna ID.");
       }
-      const data: Partial<CollaboratorRow & { cpf: string }> = {};
+      const data: Partial<CollaboratorRow & { cpf: string; admissionDate: Date }> = {};
       if (normalizedName && normalizedName !== normalizeCollaboratorSearch(target.officialName)) {
         const other = byName.get(normalizedName);
         if (other && other.id !== target.id) errors.push(`Nome já pertence a outro colaborador (${other.officialName}).`);
@@ -138,6 +145,8 @@ export function planCollaboratorImport(rows: CollaboratorSheetRow[], existing: I
       if (row.department && row.department !== target.department) data.department = row.department;
       if (row.costCenter && row.costCenter !== target.costCenter) data.costCenter = row.costCenter;
       if (cpf && cpf !== target.cpf) data.cpf = cpf;
+      // Data de Admissão só é ATUALIZADA (nunca usada para localizar o colaborador); vazia não apaga.
+      if (row.admissionDate && row.admissionDate !== dateOnlyFromDb(target.admissionDate)) data.admissionDate = dateOnlyToDb(row.admissionDate);
       const changes = (Object.keys(data) as Array<keyof typeof data>).filter((key) => key !== "normalizedName").map((key) => FIELD_LABELS[key as keyof typeof FIELD_LABELS]);
       return { sourceRow: row.sourceRow, file, status: errors.length ? "ERROR" : changes.length ? "UPDATE" : "UNCHANGED", matchedBy, match: summary(target), changes, errors, target, finalName: data.normalizedName ?? target.normalizedName, ...(changes.length ? { update: { id: target.id, data } } : {}) };
     }
@@ -146,7 +155,7 @@ export function planCollaboratorImport(rows: CollaboratorSheetRow[], existing: I
       if (!row.department) errors.push("Departamento é obrigatório para novo colaborador.");
       if (normalizedName && byName.has(normalizedName)) errors.push("Já existe um colaborador com este nome.");
       if (cpf && byCpf.has(cpf)) errors.push(`CPF ${maskCpf(cpf)} já pertence a outro colaborador (${byCpf.get(cpf)!.officialName}).`);
-      const create = { officialName: row.officialName, normalizedName, jobTitle: row.jobTitle ?? "", department: row.department ?? "", costCenter: row.costCenter ?? "", cpf: cpf ?? null, active: true };
+      const create = { officialName: row.officialName, normalizedName, jobTitle: row.jobTitle ?? "", department: row.department ?? "", costCenter: row.costCenter ?? "", cpf: cpf ?? null, admissionDate: row.admissionDate ? dateOnlyToDb(row.admissionDate) : null, active: true };
       return { sourceRow: row.sourceRow, file, status: errors.length ? "ERROR" : "CREATE", matchedBy: null, match: summary(review), changes: [], errors, target: null, finalName: normalizedName, ...(errors.length ? {} : { create }) };
     }
     return { sourceRow: row.sourceRow, file, status: "ERROR", matchedBy, match: null, changes: [], errors, target: null };
@@ -171,25 +180,27 @@ export function planCollaboratorImport(rows: CollaboratorSheetRow[], existing: I
   return { total: result.length, counts, rows: result, blocked: counts.ERROR > 0 };
 }
 
-// Máscara oficial: as colunas de sempre + CPF + ID, pré-preenchida com a base atual para que a
-// reimportação localize cada colaborador pelo ID (sem depender do nome). Linha nova = sem ID.
-export async function generateCollaboratorTemplate(collaborators: Array<{ id: string; officialName: string; jobTitle: string; department: string; costCenter: string; cpf: string | null }> = []) {
+// Máscara oficial: as colunas de sempre + CPF + DATA DE ADMISSÃO + ID, pré-preenchida com a base atual
+// para que a reimportação localize cada colaborador pelo ID (sem depender do nome). Linha nova = sem ID.
+// DATA DE ADMISSÃO vai como célula de DATA real (dd/mm/yyyy), não texto — edição e reimportação diretas.
+export async function generateCollaboratorTemplate(collaborators: Array<{ id: string; officialName: string; jobTitle: string; department: string; costCenter: string; cpf: string | null; admissionDate?: Date | null }> = []) {
   const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet("COLABORADORES");
-  sheet.addRow(["NOME", "FUNÇÃO", "DEPARTAMENTO", "CENTRO DE CUSTO", "CPF", "ID"]);
+  sheet.addRow(["NOME", "FUNÇÃO", "DEPARTAMENTO", "CENTRO DE CUSTO", "CPF", "DATA DE ADMISSÃO", "ID"]);
   sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } }; sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAF1B1B" } };
-  sheet.getCell("F1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF6B7280" } };
-  [38, 30, 28, 24, 18, 30].forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
-  sheet.getColumn(5).numFmt = "@"; sheet.getColumn(6).numFmt = "@";
-  for (const item of collaborators) sheet.addRow([item.officialName, item.jobTitle, item.department, item.costCenter, item.cpf ? formatCpf(item.cpf) : "", item.id]);
-  for (let row = 2; row <= sheet.rowCount; row += 1) sheet.getCell(`F${row}`).font = { color: { argb: "FF6B7280" } };
-  sheet.views = [{ state: "frozen", ySplit: 1 }]; sheet.autoFilter = "A1:F1";
+  sheet.getCell("G1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF6B7280" } };
+  [38, 30, 28, 24, 18, 20, 30].forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
+  sheet.getColumn(5).numFmt = "@"; sheet.getColumn(6).numFmt = "dd/mm/yyyy"; sheet.getColumn(7).numFmt = "@";
+  for (const item of collaborators) { const admission = dateOnlyFromDb(item.admissionDate); sheet.addRow([item.officialName, item.jobTitle, item.department, item.costCenter, item.cpf ? formatCpf(item.cpf) : "", admission ? dateOnlyToDb(admission) : null, item.id]); }
+  for (let row = 2; row <= sheet.rowCount; row += 1) { sheet.getCell(`F${row}`).numFmt = "dd/mm/yyyy"; sheet.getCell(`G${row}`).font = { color: { argb: "FF6B7280" } }; }
+  sheet.views = [{ state: "frozen", ySplit: 1 }]; sheet.autoFilter = "A1:G1";
   const help = workbook.addWorksheet("INSTRUÇÕES");
   help.addRows([
     ["Como usar esta máscara"],
-    ["• Colaborador existente: mantenha a coluna ID como está e edite os demais campos (ex.: preencha o CPF)."],
+    ["• Colaborador existente: mantenha a coluna ID como está e edite os demais campos (ex.: preencha o CPF ou a Data de Admissão)."],
     ["• Colaborador novo: adicione uma linha com a coluna ID vazia (NOME e DEPARTAMENTO obrigatórios)."],
-    ["• Célula vazia não apaga o dado atual (Função, Centro de Custo e CPF permanecem como estão)."],
+    ["• Célula vazia não apaga o dado atual (Função, Centro de Custo, CPF e Data de Admissão permanecem como estão)."],
     ["• CPF aceita 12345678909 ou 123.456.789-09 e é validado pelos dígitos verificadores."],
+    ["• DATA DE ADMISSÃO: data no formato dd/mm/aaaa (ex.: 05/10/2026). Ela não identifica o colaborador."],
     ["• Não altere nem copie IDs entre linhas: cada ID identifica um único colaborador."],
   ]);
   help.getRow(1).font = { bold: true }; help.getColumn(1).width = 110;
