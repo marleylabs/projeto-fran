@@ -1376,3 +1376,39 @@ test("data de admissão na importação: atualiza (sem localizar), vazia não ap
   const [pointServer, flash] = await Promise.all([readFile(new URL("../src/modules/accounts-payable/breakfast/point-mirror-server.ts", import.meta.url), "utf8"), readFile(new URL("../src/modules/accounts-payable/breakfast/flash.ts", import.meta.url), "utf8")]);
   assert.doesNotMatch(pointServer, /admission/i); assert.doesNotMatch(flash, /admission/i);
 });
+test("data de admissão: célula XLSX com fórmula usa só o resultado salvo (sem avaliar fórmula nem vínculo externo)", async () => {
+  const { parseSpreadsheetDate, dateOnlyToDb, dateOnlyFromDb } = await import("../src/lib/date-only");
+  const { parseCollaboratorWorkbook, ADMISSION_FORMULA_WITHOUT_RESULT_MESSAGE } = await import("../src/modules/collaborators/import");
+  const formula = "_xlfn.XLOOKUP(A2,[1]!Tabela1[NOME],[1]!Tabela1[ADMISSÃO],0)";
+  // células diretas (inalterado)
+  assert.deepEqual(parseSpreadsheetDate(45553), { status: "date", iso: "2024-09-18" });
+  assert.deepEqual(parseSpreadsheetDate(new Date(Date.UTC(2024, 8, 18))), { status: "date", iso: "2024-09-18" });
+  assert.deepEqual(parseSpreadsheetDate("18/09/2024"), { status: "date", iso: "2024-09-18" });
+  assert.deepEqual(parseSpreadsheetDate("31/02/2026"), { status: "invalid" });
+  for (const empty of [null, undefined, "", "  "]) assert.deepEqual(parseSpreadsheetDate(empty), { status: "empty" });
+  // fórmula + resultado cacheado (número, Date, texto; também sharedFormula)
+  assert.deepEqual(parseSpreadsheetDate({ formula, result: 45553 }), { status: "date", iso: "2024-09-18" });
+  assert.deepEqual(parseSpreadsheetDate({ formula, result: new Date(Date.UTC(2012, 1, 1)) }), { status: "date", iso: "2012-02-01" });
+  assert.deepEqual(parseSpreadsheetDate({ formula, result: "22/07/2026" }), { status: "date", iso: "2026-07-22" });
+  assert.deepEqual(parseSpreadsheetDate({ sharedFormula: "F2", result: 45553 }), { status: "date", iso: "2024-09-18" });
+  assert.deepEqual(parseSpreadsheetDate({ formula, result: "31/02/2026" }), { status: "invalid" });
+  // XLOOKUP(...,0) sem correspondência: 0 (ou 30/12/1899 como o ExcelJS entrega) → sem data, nunca 1899
+  for (const zero of [0, new Date(Date.UTC(1899, 11, 30)), null, ""]) assert.deepEqual(parseSpreadsheetDate({ formula, result: zero }), { status: "empty" }, String(zero));
+  // sem resultado calculado ou erro do Excel → mensagem específica
+  for (const broken of [undefined, { error: "#N/A" }, Number.NaN, "#REF!", "#VALUE!"]) assert.deepEqual(parseSpreadsheetDate({ formula, ...(broken === undefined ? {} : { result: broken }) }), { status: "formula-without-result" }, String(broken));
+  // fuso: o resultado vira meia-noite UTC do mesmo dia
+  assert.equal(dateOnlyToDb("2024-09-18").toISOString(), "2024-09-18T00:00:00.000Z"); assert.equal(dateOnlyFromDb(dateOnlyToDb("2024-09-18")), "2024-09-18");
+
+  // ponta a ponta com XLSX sintético no formato da máscara (mesmo leitor do importador)
+  const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet("COLABORADORES");
+  sheet.addRow(["NOME", "FUNÇÃO", "DEPARTAMENTO", "CENTRO DE CUSTO", "CPF", "DATA DE ADMISSÃO", "ID"]);
+  sheet.addRow(["PESSOA FORMULA", "", "TOPOGEO", "", "", { formula, result: 45553 }, "id-1"]);
+  sheet.addRow(["PESSOA DIRETA", "", "TOPOGEO", "", "", 46078, "id-2"]);
+  sheet.addRow(["PESSOA SEM CORRESPONDENCIA", "", "TOPOGEO", "", "", { formula, result: 0 }, "id-3"]);
+  sheet.addRow(["PESSOA SEM RESULTADO", "", "TOPOGEO", "", "", { formula }, "id-4"]);
+  sheet.getColumn(6).numFmt = "dd/mm/yyyy";
+  const rows = await parseCollaboratorWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+  assert.deepEqual(rows.map((row) => [row.id, row.admissionDate ?? null, row.errors]), [
+    ["id-1", "2024-09-18", []], ["id-2", "2026-02-25", []], ["id-3", null, []], ["id-4", null, [ADMISSION_FORMULA_WITHOUT_RESULT_MESSAGE]],
+  ]);
+});

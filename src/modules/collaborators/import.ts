@@ -4,6 +4,7 @@ import { normalizeOrganizationalValue } from "@/lib/organizational-label";
 import { formatCpf, isValidCpf, maskCpf, normalizeCpf } from "@/lib/cpf";
 import { dateOnlyFromDb, dateOnlyToDb, formatDateOnlyBR, parseSpreadsheetDate } from "@/lib/date-only";
 
+export const ADMISSION_FORMULA_WITHOUT_RESULT_MESSAGE = "A Data de Admissão contém uma fórmula sem resultado calculado. Abra o arquivo no Excel, atualize os vínculos e salve novamente ou converta a fórmula em valor.";
 import { normalizeCollaboratorSearch, normalizeCollaboratorText } from "./schema";
 
 export type CollaboratorRow = { officialName: string; normalizedName: string; jobTitle: string; department: string; costCenter: string };
@@ -67,10 +68,12 @@ export async function parseCollaboratorWorkbook(buffer: Buffer): Promise<Collabo
     const hasCpf = rawCpf !== undefined && rawCpf !== null && normalizeCell(rawCpf) !== "";
     const cpfDigits = hasCpf ? normalizeCpf(rawCpf) : undefined;
     if (hasCpf && !isValidCpf(cpfDigits)) errors.push("CPF inválido.");
-    // Data de Admissão: dd/MM/yyyy, Date real da célula XLSX ou serial do Excel. Vazia = não alterar.
+    // Data de Admissão: dd/MM/yyyy, Date real da célula XLSX, serial do Excel ou fórmula com resultado
+    // salvo no arquivo (ex.: PROCX/XLOOKUP de outra planilha). Vazia = não alterar.
     const admissionCell = admission >= 0 ? parseSpreadsheetDate(values[admission]) : { status: "empty" as const };
     const admissionDate = admissionCell.status === "date" ? admissionCell.iso : undefined;
     if (admissionCell.status === "invalid") errors.push("Data de Admissão inválida.");
+    if (admissionCell.status === "formula-without-result") errors.push(ADMISSION_FORMULA_WITHOUT_RESULT_MESSAGE);
     return {
       sourceRow, officialName, errors,
       id: id >= 0 ? optional(normalizeCell(values[id])) : undefined,

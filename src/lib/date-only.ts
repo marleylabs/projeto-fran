@@ -27,10 +27,25 @@ export function parseDateOnly(value: unknown): string | null {
   return null;
 }
 
-// Célula de planilha (XLSX): Date/serial/texto. Vazia → "empty"; preenchida e inválida → "invalid".
-export type SpreadsheetDate = { status: "date"; iso: string } | { status: "empty" } | { status: "invalid" };
+// Célula de planilha (XLSX): além de Date/serial/texto, aceita célula com FÓRMULA usando só o resultado
+// já calculado e salvo no arquivo (ExcelJS: { formula | sharedFormula, result }). A fórmula nunca é
+// avaliada e vínculos externos não são acessados. Para fórmula:
+//   result ausente ou erro do Excel (#N/A, #REF!...) → "formula-without-result" (mensagem específica);
+//   result 0 (ex.: XLOOKUP(...,0) sem correspondência — o ExcelJS entrega 30/12/1899), null ou "" → vazio.
+export type SpreadsheetDate = { status: "date"; iso: string } | { status: "empty" } | { status: "invalid" } | { status: "formula-without-result" };
+type FormulaCell = { formula?: string; sharedFormula?: string; result?: unknown };
+const isFormulaCell = (value: unknown): value is FormulaCell => typeof value === "object" && value !== null && !(value instanceof Date) && ("formula" in value || "sharedFormula" in value);
+const isExcelZeroDate = (value: unknown) => value instanceof Date && value.getTime() === EXCEL_EPOCH_MS;
 
 export function parseSpreadsheetDate(value: unknown): SpreadsheetDate {
+  if (isFormulaCell(value)) {
+    const result = value.result;
+    if (result === undefined) return { status: "formula-without-result" };
+    if (result === null || result === 0 || (typeof result === "string" && !result.trim()) || isExcelZeroDate(result)) return { status: "empty" };
+    // erro do Excel: { error: "#N/A" } (leitura), NaN (round-trip do ExcelJS) ou o texto "#REF!"/"#VALUE!"...
+    if ((typeof result === "object" && !(result instanceof Date)) || (typeof result === "number" && !Number.isFinite(result)) || (typeof result === "string" && result.trim().startsWith("#"))) return { status: "formula-without-result" };
+    return parseSpreadsheetDate(result);
+  }
   if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return { status: "empty" };
   const iso = parseDateOnly(value);
   return iso ? { status: "date", iso } : { status: "invalid" };
