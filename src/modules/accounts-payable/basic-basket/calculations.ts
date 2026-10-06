@@ -37,19 +37,23 @@ const commercialDaysFrom = (iso: string) => BASIC_BASKET_CALCULATION_DAYS - comm
 //  B) RETROATIVO DO MÊS ANTERIOR — retroactiveDays de 30
 //     só quando pagamento anterior < admissão ≤ último dia do mês anterior → 30 − dia comercial + 1
 // Os dois usam o VALOR MENSAL cheio como base; o valor pago da Cesta é o proporcional.
-// Os limites de mês (start/end) são datas reais: servem só para decidir em qual mês caiu a admissão.
-
+//  C) ASSIDUIDADE (elegibilidade da Cesta da competência) — absenceReferenceMonth = MÊS CALENDÁRIO ANTERIOR
+//     COMPLETO (01 ao último dia; o pagamento anterior NÃO limita o início). Conceito próprio, separado do Retroativo,
+//     mesmo apontando hoje para o mesmo mês.
+// Os limites de mês (start/end) são datas reais: servem só para decidir em qual mês caiu cada data.
 export type BasicBasketContext = {
   previousPaymentDate: string; paymentDate: string;
   competenceYear: number; competenceMonth: number; currentMonthStart: string; currentMonthEnd: string;
   referenceYear: number; referenceMonth: number; referenceMonthStart: string; referenceMonthEnd: string;
+  absenceReferenceYear: number; absenceReferenceMonth: number; absenceReferenceMonthStart: string; absenceReferenceMonthEnd: string;
 };
 const monthBounds = (year: number, month: number) => ({ start: isoDate(year, month, 1), end: isoDate(year, month, daysInMonth(year, month)) });
 // Competência = mês do pagamento atual; mês de referência = mês do pagamento anterior (por construção).
 export function basicBasketContextFromPayments(previousPaymentDate: string, paymentDate: string): BasicBasketContext {
   const [competenceYear, competenceMonth] = parts(paymentDate), [referenceYear, referenceMonth] = parts(previousPaymentDate);
   const current = monthBounds(competenceYear, competenceMonth), reference = monthBounds(referenceYear, referenceMonth);
-  return { previousPaymentDate, paymentDate, competenceYear, competenceMonth, currentMonthStart: current.start, currentMonthEnd: current.end, referenceYear, referenceMonth, referenceMonthStart: reference.start, referenceMonthEnd: reference.end };
+  const absence = previousCompetence(competenceYear, competenceMonth), absenceBounds = monthBounds(absence.year, absence.month);
+  return { previousPaymentDate, paymentDate, competenceYear, competenceMonth, currentMonthStart: current.start, currentMonthEnd: current.end, referenceYear, referenceMonth, referenceMonthStart: reference.start, referenceMonthEnd: reference.end, absenceReferenceYear: absence.year, absenceReferenceMonth: absence.month, absenceReferenceMonthStart: absenceBounds.start, absenceReferenceMonthEnd: absenceBounds.end };
 }
 export function buildBasicBasketContext(year: number, month: number) {
   const previous = previousCompetence(year, month);
@@ -96,19 +100,96 @@ export function parseMoneyToCents(value: unknown, label: string): number {
   return Number(integer) * 100 + Number(fraction.padEnd(2, "0"));
 }
 
-export type BasicBasketLineInput = { driverBonusCents: number; agreementCents: number; monthlyBasketCents: number; currentBasketDays: number; retroactiveDays: number };
-// Cesta paga = mensal × dias de direito ÷ base (30) · Retroativo = mensal × dias retroativos ÷ base (30) ·
+// ---- Espelho de Ponto. Regras SEPARADAS sobre as mesmas datas importadas:
+//  • Cesta da competência — Falta Injustificada no MÊS DE APURAÇÃO (mês calendário anterior completo) corta a Cesta
+//    INTEGRALMENTE (não é desconto por dia; vence admissão proporcional e Férias). Falta no próprio mês da competência
+//    não corta esta Cesta (pertence à apuração da próxima competência).
+//  • Retroativo — regra própria, mantida: Falta Injustificada dentro do mês de referência do Retroativo zera o Retroativo.
+//  • Férias: as do mês da competência reduzem a Cesta; as do mês anterior, só o Retroativo. Reduzem os dias de direito
+//    por BLOCOS CONTÍNUOS convertidos para o mês comercial (ver buildBasicBasketVacationBlocks), só a partir da
+//    admissão e só na interseção com os dias de direito. Nunca passa do direito.
+// absenceDates: Faltas Injustificadas válidas no mês anterior e no mês da competência (as demais são descartadas).
+export type BasicBasketOccurrences = { absenceDates: string[]; currentVacationDates: string[]; referenceVacationDates: string[] };
+export type BasicBasketAdjustments = { currentVacationDays: number; currentUnjustifiedAbsence: boolean; retroactiveVacationDays: number; retroactiveUnjustifiedAbsence: boolean };
+export const NO_BASIC_BASKET_ADJUSTMENTS: BasicBasketAdjustments = { currentVacationDays: 0, currentUnjustifiedAbsence: false, retroactiveVacationDays: 0, retroactiveUnjustifiedAbsence: false };
+export const EMPTY_BASIC_BASKET_OCCURRENCES: BasicBasketOccurrences = { absenceDates: [], currentVacationDates: [], referenceVacationDates: [] };
+
+// Férias por BLOCOS CONTÍNUOS dentro de UM mês (nunca atravessam meses): datas reais deduplicadas e ordenadas; dias
+// de calendário consecutivos formam um bloco. Cada bloco vira dias FINANCEIROS (1..30, Set — sem dupla contagem):
+// dia comercial = min(dia, 30), então 30 e 31 viram {30}. Em mês com menos de 30 dias, um bloco de 2+ dias que
+// alcança o último dia real se estende até o dia comercial 30 (Fevereiro inteiro = 30); um dia ISOLADO no último dia
+// real não é estendido (sem prova de continuidade) e gera aviso. Datas antes de `fromDate` (admissão) são ignoradas.
+export type BasicBasketVacationBlock = { start: string; end: string; financialDays: number[]; extendedToMonthEnd: boolean; isolatedLastDay: boolean };
+export function buildBasicBasketVacationBlocks(dates: readonly string[], monthStart: string, monthEnd: string, fromDate: string = monthStart): BasicBasketVacationBlock[] {
+  const lowerBound = fromDate > monthStart ? fromDate : monthStart;
+  const sorted = [...new Set(dates)].filter((date) => date >= lowerBound && date <= monthEnd).sort();
+  const lastRealDay = parts(monthEnd)[2], shortMonth = lastRealDay < BASIC_BASKET_CALCULATION_DAYS;
+  const blocks: BasicBasketVacationBlock[] = [];
+  for (let index = 0; index < sorted.length; index += 1) {
+    let end = index; while (end + 1 < sorted.length && addDays(sorted[end], 1) === sorted[end + 1]) end += 1;
+    const start = sorted[index], last = sorted[end];
+    const reachesEnd = last === monthEnd, extended = shortMonth && reachesEnd && start < last;
+    const fromDay = commercialDay(start), toDay = extended ? BASIC_BASKET_CALCULATION_DAYS : commercialDay(last);
+    blocks.push({ start, end: last, financialDays: Array.from({ length: toDay - fromDay + 1 }, (_, offset) => fromDay + offset), extendedToMonthEnd: extended, isolatedLastDay: shortMonth && reachesEnd && start === last });
+    index = end;
+  }
+  return blocks;
+}
+// Férias aplicáveis = dias financeiros de Férias ∩ dias financeiros de direito (startDay..30); nunca passa do direito.
+function applicableVacationDays(dates: readonly string[], periodStart: string, monthStart: string, monthEnd: string, entitlementDays: number) {
+  if (entitlementDays <= 0) return 0;
+  const startDay = commercialDay(periodStart > monthStart ? periodStart : monthStart);
+  const vacation = new Set(buildBasicBasketVacationBlocks(dates, monthStart, monthEnd, periodStart).flatMap((block) => block.financialDays));
+  return Math.min([...vacation].filter((day) => day >= startDay).length, entitlementDays);
+}
+// Datas de ocorrência aplicáveis ao colaborador: só a partir da admissão (inclusive). Reutilizável por Falta e Férias.
+export const applicableOccurrenceDates = (dates: readonly string[], admissionDate: string) => dates.filter((date) => date >= admissionDate);
+
+export function resolveBasicBasketAdjustments(input: { context: BasicBasketContext; admissionDate: string | null | undefined; occurrences: BasicBasketOccurrences | null | undefined }): BasicBasketAdjustments {
+  const { context, admissionDate } = input; const occurrences = input.occurrences ?? EMPTY_BASIC_BASKET_OCCURRENCES;
+  if (!admissionDate) return NO_BASIC_BASKET_ADJUSTMENTS;
+  const current = calculateCurrentBasketDays({ context, admissionDate }), retro = calculateRetroactiveDays({ context, admissionDate });
+  // Regra fundamental: ocorrência ANTERIOR à admissão nunca afeta o benefício (data inclusiva: no dia da admissão já vale).
+  // Férias já respeitam isso pelo início do período de direito; aqui o mesmo corte vale para as Faltas.
+  const absenceDates = applicableOccurrenceDates(occurrences.absenceDates, admissionDate);
+  const inMonth = (dates: readonly string[], start: string, end: string) => dates.some((date) => date >= start && date <= end);
+  const currentStart = admissionDate > context.currentMonthStart ? admissionDate : context.currentMonthStart;
+  return {
+    currentVacationDays: applicableVacationDays(occurrences.currentVacationDates, currentStart, context.currentMonthStart, context.currentMonthEnd, current.currentBasketDays),
+    // currentUnjustifiedAbsence = Falta no MÊS DE APURAÇÃO da Cesta (não "falta dentro da competência").
+    currentUnjustifiedAbsence: current.currentBasketDays > 0 && inMonth(absenceDates, context.absenceReferenceMonthStart, context.absenceReferenceMonthEnd),
+    retroactiveVacationDays: applicableVacationDays(occurrences.referenceVacationDates, admissionDate, context.referenceMonthStart, context.referenceMonthEnd, retro.retroactiveDays),
+    retroactiveUnjustifiedAbsence: retro.retroactiveDays > 0 && inMonth(absenceDates, context.referenceMonthStart, context.referenceMonthEnd),
+  };
+}
+
+export type BasicBasketLineInput = { driverBonusCents: number; agreementCents: number; monthlyBasketCents: number; currentBasketDays: number; retroactiveDays: number; adjustments?: BasicBasketAdjustments };
+// Dias finais = direito − Férias aplicáveis (mínimo 0), ou 0 com Falta Injustificada.
+// Cesta paga = mensal × currentPayableDays ÷ base (30) · Retroativo = mensal × retroactivePayableDays ÷ base (30) ·
 // Total = Bonificação + Acordo + Cesta paga + Retroativo (Bonificação/Acordo sem proporção).
 export function calculateBasicBasketLine(input: BasicBasketLineInput) {
   for (const [value, label] of [[input.driverBonusCents, "Bonificação Condutor"], [input.agreementCents, "Acordo"], [input.monthlyBasketCents, "Cesta Básica"]] as const) {
     if (!Number.isInteger(value) || value < 0) throw new BasicBasketCalculationError(`${label} não pode ser negativo.`);
   }
-  const payableBasketCents = input.currentBasketDays > 0 ? prorateCents(input.monthlyBasketCents, input.currentBasketDays, BASIC_BASKET_CALCULATION_DAYS) : 0;
-  const retroactiveCents = input.retroactiveDays > 0 ? prorateCents(input.monthlyBasketCents, input.retroactiveDays, BASIC_BASKET_CALCULATION_DAYS) : 0;
-  return { payableBasketCents, retroactiveCents, totalCents: input.driverBonusCents + input.agreementCents + payableBasketCents + retroactiveCents };
+  const adjustments = input.adjustments ?? NO_BASIC_BASKET_ADJUSTMENTS;
+  for (const days of [adjustments.currentVacationDays, adjustments.retroactiveVacationDays]) if (!Number.isInteger(days) || days < 0) throw new BasicBasketCalculationError("Dias de Férias inválidos.");
+  const currentPayableDays = adjustments.currentUnjustifiedAbsence ? 0 : Math.max(input.currentBasketDays - adjustments.currentVacationDays, 0);
+  const retroactivePayableDays = adjustments.retroactiveUnjustifiedAbsence ? 0 : Math.max(input.retroactiveDays - adjustments.retroactiveVacationDays, 0);
+  const payableBasketCents = currentPayableDays > 0 ? prorateCents(input.monthlyBasketCents, currentPayableDays, BASIC_BASKET_CALCULATION_DAYS) : 0;
+  const retroactiveCents = retroactivePayableDays > 0 ? prorateCents(input.monthlyBasketCents, retroactivePayableDays, BASIC_BASKET_CALCULATION_DAYS) : 0;
+  return { currentPayableDays, retroactivePayableDays, payableBasketCents, retroactiveCents, totalCents: input.driverBonusCents + input.agreementCents + payableBasketCents + retroactiveCents };
 }
 
-export const centsToDecimalString = (cents: number) => `${cents < 0 ? "-" : ""}${Math.floor(Math.abs(cents) / 100)}.${String(Math.abs(cents) % 100).padStart(2, "0")}`;
+// Datas → texto curto para a tela ("01/10 a 15/10, 20/10"), agrupando dias consecutivos.
+export function summarizeDateRanges(dates: readonly string[]) {
+  const sorted = [...new Set(dates)].sort(); const ranges: string[] = [];
+  const label = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+  for (let index = 0; index < sorted.length; index += 1) {
+    let end = index; while (end + 1 < sorted.length && addDays(sorted[end], 1) === sorted[end + 1]) end += 1;
+    ranges.push(end > index ? `${label(sorted[index])} a ${label(sorted[end])}` : label(sorted[index])); index = end;
+  }
+  return ranges.join(", ");
+}export const centsToDecimalString = (cents: number) => `${cents < 0 ? "-" : ""}${Math.floor(Math.abs(cents) / 100)}.${String(Math.abs(cents) % 100).padStart(2, "0")}`;
 
 // Calendário só VISUAL: nacionais (helper compartilhado) + manuais do Vale Transporte e do Café da Manhã,
 // uma entrada por data (mesma data em várias fontes aparece uma vez, com a lista de fontes).

@@ -67,6 +67,7 @@ model User {
   basicBasketMaps BasicBasketMap[] @relation("BasicBasketMapCreator")
   cancelledBasicBasketMaps BasicBasketMap[] @relation("BasicBasketMapCanceller")
   deletedBasicBasketAllocations BasicBasketAllocation[] @relation("BasicBasketAllocationDeleter")
+  basicBasketPointMirrorImports BasicBasketPointMirrorImport[] @relation("BasicBasketPointMirrorImportCreator")
 }
 
 model PasswordResetToken {
@@ -1109,6 +1110,11 @@ model BasicBasketAllocation {
   // admissão ≤ fim do mês anterior (dia 31 conta como 30). retroactiveEligible = retroactiveDays > 0.
   referenceCalculationDays Int
   retroactiveDays        Int
+  // Espelho de Ponto (mês de referência): Falta Injustificada corta o Retroativo; Férias aplicáveis (dias comerciais
+  // dentro do direito) reduzem os dias. Retroativo = mensal × retroactivePayableDays ÷ 30 (0 se houver Falta).
+  retroactiveVacationDays Int                  @default(0)
+  retroactiveUnjustifiedAbsence Boolean        @default(false)
+  retroactivePayableDays Int
   retroactiveEligible    Boolean               @default(false)
   driverBonus            Decimal               @db.Decimal(19, 4)
   agreementAmount        Decimal               @db.Decimal(19, 4)
@@ -1117,6 +1123,13 @@ model BasicBasketAllocation {
   monthlyBasketAmount    Decimal               @db.Decimal(19, 4)
   currentCalculationDays Int
   currentBasketDays      Int
+  // Espelho de Ponto (mês da competência): Férias aplicáveis e Falta Injustificada (corta a Cesta do mês inteiro).
+  // basketAmount = mensal × currentPayableDays ÷ 30 (0 se houver Falta). Sem importação: 0 / false / = currentBasketDays.
+  currentVacationDays    Int                   @default(0)
+  currentUnjustifiedAbsence Boolean            @default(false)
+  currentPayableDays     Int
+  // Importação do Espelho de Ponto usada (ajustes processados, sem arquivo/CPF); null = lançamento sem importação.
+  pointMirrorImportId    String?
   basketAmount           Decimal               @db.Decimal(19, 4)
   retroactiveAmount      Decimal               @db.Decimal(19, 4)
   amount                 Decimal               @db.Decimal(19, 4)
@@ -1132,10 +1145,32 @@ model BasicBasketAllocation {
   employee               FoodEmployee?         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   companyRef             Company?              @relation(fields: [companyId], references: [id], onDelete: Restrict)
   deletedBy              User?                 @relation("BasicBasketAllocationDeleter", fields: [deletedByUserId], references: [id], onDelete: Restrict)
+  pointMirrorImport      BasicBasketPointMirrorImport? @relation(fields: [pointMirrorImportId], references: [id], onDelete: Restrict)
 
   @@index([mapId, deletedAt])
   @@index([employeeId])
   @@index([competenceId, administrativeEntityId])
+  @@index([pointMirrorImportId])
+}
+
+// Espelho de Ponto da Cesta Básica: SÓ os ajustes já processados (por colaborador: datas de Falta Injustificada e
+// de Férias no mês da competência e no mês anterior). O arquivo original, CPF e demais colunas NUNCA são gravados.
+// O salvamento do lançamento referencia este registro e o servidor recalcula tudo a partir dele (o cliente não
+// envia dias/valores). Registros sem lançamento vinculado são descartáveis.
+model BasicBasketPointMirrorImport {
+  id              String   @id @default(cuid())
+  year            Int
+  month           Int
+  sourceRows      Int
+  // { [employeeId]: { currentAbsenceDates: string[], currentVacationDates: string[], referenceAbsenceDates: string[], referenceVacationDates: string[] } }
+  occurrences     Json
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  createdBy       User     @relation("BasicBasketPointMirrorImportCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  allocations     BasicBasketAllocation[]
+
+  @@index([year, month])
+  @@index([createdAt])
 }
 
 // Padrão ATUAL do colaborador para a Cesta Básica (empresa e valores pré-preenchidos na próxima

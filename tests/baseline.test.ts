@@ -1440,7 +1440,7 @@ test("cesta básica: base financeira fixa de 30 dias (mês comercial) para a Ces
   assert.deepEqual(["2026-10-01", "2026-10-05", "2026-10-14", "2027-02-28", "2028-02-29", "2026-09-30", "2026-10-31"].map(commercialDay), [1, 5, 14, 28, 29, 30, 30]);
   assert.deepEqual([basicBasketDaysInMonth(2026, 10), basicBasketDaysInMonth(2027, 2), basicBasketDaysInMonth(2028, 2)], [31, 28, 29]); // calendário continua real
   const oct = buildBasicBasketContext(2026, 10);
-  assert.deepEqual(oct, { previousPaymentDate: "2026-09-09", paymentDate: "2026-10-14", competenceYear: 2026, competenceMonth: 10, currentMonthStart: "2026-10-01", currentMonthEnd: "2026-10-31", referenceYear: 2026, referenceMonth: 9, referenceMonthStart: "2026-09-01", referenceMonthEnd: "2026-09-30" });
+  assert.deepEqual(oct, { previousPaymentDate: "2026-09-09", paymentDate: "2026-10-14", competenceYear: 2026, competenceMonth: 10, currentMonthStart: "2026-10-01", currentMonthEnd: "2026-10-31", referenceYear: 2026, referenceMonth: 9, referenceMonthStart: "2026-09-01", referenceMonthEnd: "2026-09-30", absenceReferenceYear: 2026, absenceReferenceMonth: 9, absenceReferenceMonthStart: "2026-09-01", absenceReferenceMonthEnd: "2026-09-30" });
   assert.deepEqual(basicBasketContextFromPayments("2026-09-09", "2026-10-14"), oct); // correção reconstrói o mesmo contexto a partir do mapa
   const nov = buildBasicBasketContext(2026, 11);
   assert.deepEqual([nov.previousPaymentDate, nov.paymentDate, nov.referenceMonthEnd], ["2026-10-14", "2026-11-11", "2026-10-31"]);
@@ -1449,7 +1449,7 @@ test("cesta básica: base financeira fixa de 30 dias (mês comercial) para a Ces
   const calc = (admissionDate: string, context = oct, driverBonusCents = 0, agreementCents = 0) => {
     const current = calculateCurrentBasketDays({ context, admissionDate }), retro = calculateRetroactiveDays({ context, admissionDate });
     const line = calculateBasicBasketLine({ driverBonusCents, agreementCents, monthlyBasketCents: MONTHLY, currentBasketDays: current.currentBasketDays, retroactiveDays: retro.retroactiveDays });
-    return { current: current.status, days: current.currentBasketDays, retro: retro.status, retroDays: retro.retroactiveDays, ...line };
+    return { current: current.status, days: current.currentBasketDays, retro: retro.status, retroDays: retro.retroactiveDays, payableBasketCents: line.payableBasketCents, retroactiveCents: line.retroactiveCents, totalCents: line.totalCents };
   };
   // matriz OUTUBRO/2026 (31 dias no calendário; base 30; pagamento 14/10, anterior 09/09)
   assert.deepEqual(calc("2026-10-01"), { current: "FULL_MONTH", days: 30, retro: "CURRENT_OR_LATER", retroDays: 0, payableBasketCents: 40000, retroactiveCents: 0, totalCents: 40000 });
@@ -1486,7 +1486,7 @@ test("cesta básica: base financeira fixa de 30 dias (mês comercial) para a Ces
   assert.deepEqual(calculateCurrentBasketDays({ context: oct, admissionDate: null }), { status: "MISSING_ADMISSION", currentBasketDays: 0 });
   assert.deepEqual(calculateRetroactiveDays({ context: oct, admissionDate: null }), { status: "MISSING_ADMISSION", retroactiveDays: 0, retroactiveStart: null, retroactiveEnd: null });
   // valor mensal alterado → paga e Retroativo recalculados sobre o novo mensal
-  assert.deepEqual(calculateBasicBasketLine({ driverBonusCents: 0, agreementCents: 0, monthlyBasketCents: 45000, currentBasketDays: 26, retroactiveDays: 10 }), { payableBasketCents: 39000, retroactiveCents: 15000, totalCents: 54000 });
+  assert.deepEqual(calculateBasicBasketLine({ driverBonusCents: 0, agreementCents: 0, monthlyBasketCents: 45000, currentBasketDays: 26, retroactiveDays: 10 }), { currentPayableDays: 26, retroactivePayableDays: 10, payableBasketCents: 39000, retroactiveCents: 15000, totalCents: 54000 });
   // arredondamento comercial exato (metade para cima), conferido com aritmética racional em BigInt
   for (let base = 0; base <= 120000; base += 997) for (let d = 1; d <= 30; d += 1) {
     const n = BigInt(base) * BigInt(d), q = BigInt(30); const two = BigInt(2);
@@ -1505,46 +1505,179 @@ test("cesta básica: base financeira fixa de 30 dias (mês comercial) para a Ces
   for (const bad of ["-1", "12,345", "abc", "1,2,3"]) assert.throws(() => parseMoneyToCents(bad, "Cesta"), /Cesta inválido/);
 });
 
-test("cesta básica: rateio Empresa → Departamento → Colaborador, resumo Empresa → CC e XLSX auditável fecham (base 30)", async () => {
+test("cesta básica: rateio Empresa → Departamento → Colaborador, resumo Empresa → CC e XLSX auditável fecham (base 30 + Espelho de Ponto)", async () => {
   const { groupBasicBasketByCompanyDepartment, groupBasicBasketByCompanyCostCenter } = await import("../src/modules/accounts-payable/basic-basket/rateio");
   const { buildBasicBasketWorkbook } = await import("../src/modules/accounts-payable/basic-basket/workbook");
-  const row = (employeeId: string, company: string, department: string, costCenter: string | null, values: [string, string, string, string, string], retroactiveDays: number, admissionDate: string | null = null, observation: string | null = null, currentBasketDays = 30) => ({ id: employeeId, employeeId, employeeName: `PESSOA ${employeeId.toUpperCase()}`, company, department, costCenter, driverBonus: values[0], agreementAmount: values[1], monthlyBasketAmount: "400.0000", currentCalculationDays: 30, currentBasketDays, basketAmount: values[2], retroactiveAmount: values[3], amount: values[4], referenceCalculationDays: 30, retroactiveDays, admissionDate, observation });
+  type Extra = { currentBasketDays?: number; currentVacationDays?: number; currentUnjustifiedAbsence?: boolean; currentPayableDays?: number; retroactiveVacationDays?: number; retroactiveUnjustifiedAbsence?: boolean; retroactivePayableDays?: number };
+  const row = (employeeId: string, company: string, department: string, costCenter: string | null, values: [string, string, string, string, string], retroactiveDays: number, admissionDate: string | null = null, observation: string | null = null, extra: Extra = {}) => {
+    const currentBasketDays = extra.currentBasketDays ?? 30;
+    return { id: employeeId, employeeId, employeeName: `PESSOA ${employeeId.toUpperCase()}`, company, department, costCenter, driverBonus: values[0], agreementAmount: values[1], monthlyBasketAmount: "400.0000", currentCalculationDays: 30, currentBasketDays, basketAmount: values[2], retroactiveAmount: values[3], amount: values[4], referenceCalculationDays: 30, retroactiveDays, admissionDate, observation,
+      currentVacationDays: extra.currentVacationDays ?? 0, currentUnjustifiedAbsence: extra.currentUnjustifiedAbsence ?? false, currentPayableDays: extra.currentPayableDays ?? currentBasketDays,
+      retroactiveVacationDays: extra.retroactiveVacationDays ?? 0, retroactiveUnjustifiedAbsence: extra.retroactiveUnjustifiedAbsence ?? false, retroactivePayableDays: extra.retroactivePayableDays ?? retroactiveDays };
+  };
   const rows = [
-    row("a", "PROJETA", "TOPOGEO", "VALE BMSA", ["150.00", "100.00", "346.67", "0.00", "596.67"], 0, "2026-10-05T00:00:00.000Z", null, 26), // admissão na competência: 26 de 30
-    row("b", "PROJETA", "ADMINISTRATIVO", "VALE BMSA", ["0.00", "0.00", "400.00", "133.33", "533.33"], 10, "2026-09-21T00:00:00.000Z", "Ajuste conforme acordo"), // Retroativo parcial
-    row("c", "BOINGA", "TOPOGEO", null, ["150.00", "100.00", "400.0000", "280.0000", "930.0000"], 21, "2026-09-10T00:00:00.000Z"), // desde o dia seguinte ao pagamento anterior
+    row("a", "PROJETA", "TOPOGEO", "VALE BMSA", ["150.00", "100.00", "200.00", "0.00", "450.00"], 0, "2026-10-05T00:00:00.000Z", null, { currentBasketDays: 26, currentVacationDays: 11, currentPayableDays: 15 }), // admissão 05/10 + Férias 05–15/10
+    row("b", "PROJETA", "ADMINISTRATIVO", "VALE BMSA", ["0.00", "0.00", "400.00", "80.00", "480.00"], 10, "2026-09-21T00:00:00.000Z", "Ajuste conforme acordo", { retroactiveVacationDays: 4, retroactivePayableDays: 6 }), // Retroativo 10 − 4 Férias
+    row("c", "BOINGA", "TOPOGEO", null, ["150.00", "100.00", "0.0000", "280.0000", "530.0000"], 21, "2026-09-10T00:00:00.000Z", null, { currentUnjustifiedAbsence: true, currentPayableDays: 0 }), // Falta no mês de apuração: Cesta 0 (snapshot)
   ];
   const tree = groupBasicBasketByCompanyDepartment(rows);
-  assert.deepEqual(tree.companies.map((company) => [company.company, company.totals.totalCents, company.departments.map((department) => [department.department, department.totals.totalCents])]), [["BOINGA", 93000, [["TOPOGEO", 93000]]], ["PROJETA", 113000, [["ADMINISTRATIVO", 53333], ["TOPOGEO", 59667]]]]);
-  assert.equal(tree.totals.totalCents, 206000); assert.equal(tree.consistent, true);
+  assert.deepEqual(tree.companies.map((company) => [company.company, company.totals.totalCents, company.departments.map((department) => [department.department, department.totals.totalCents])]), [["BOINGA", 53000, [["TOPOGEO", 53000]]], ["PROJETA", 93000, [["ADMINISTRATIVO", 48000], ["TOPOGEO", 45000]]]]);
+  assert.equal(tree.totals.totalCents, 146000); assert.equal(tree.consistent, true);
   const summary = groupBasicBasketByCompanyCostCenter(rows);
-  assert.deepEqual(summary.companies.map((company) => [company.company, company.costCenters.map((cc) => [cc.costCenter, cc.totals.people, cc.totals.basketCents, cc.totals.retroactiveCents, cc.totals.totalCents])]), [["BOINGA", [["Sem centro de custo", 1, 40000, 28000, 93000]]], ["PROJETA", [["VALE BMSA", 2, 74667, 13333, 113000]]]]);
-  assert.deepEqual([summary.totals.driverBonusCents, summary.totals.agreementCents, summary.totals.basketCents, summary.totals.retroactiveCents, summary.totals.totalCents], [30000, 20000, 114667, 41333, 206000]); assert.equal(summary.consistent, true);
-  const map = { version: 1, createdAt: new Date("2026-10-01T12:00:00Z"), previousPaymentDate: "2026-09-09T00:00:00.000Z", paymentDate: "2026-10-14T00:00:00.000Z", daysInMonth: 31, totalAmount: "2060.00", competence: { year: 2026, month: 10 }, administrativeEntity: { tradeName: "Fornecedor QA" }, financialRecord: { identifier: "PG-QA", grossAmount: "2060.0000" }, allocations: rows };
+  assert.deepEqual(summary.companies.map((company) => [company.company, company.costCenters.map((cc) => [cc.costCenter, cc.totals.people, cc.totals.basketCents, cc.totals.retroactiveCents, cc.totals.totalCents])]), [["BOINGA", [["Sem centro de custo", 1, 0, 28000, 53000]]], ["PROJETA", [["VALE BMSA", 2, 60000, 8000, 93000]]]]);
+  assert.deepEqual([summary.totals.driverBonusCents, summary.totals.agreementCents, summary.totals.basketCents, summary.totals.retroactiveCents, summary.totals.totalCents], [30000, 20000, 60000, 36000, 146000]); assert.equal(summary.consistent, true); // Cesta PAGA, nunca o mensal
+  const map = { version: 1, createdAt: new Date("2026-10-01T12:00:00Z"), previousPaymentDate: "2026-09-09T00:00:00.000Z", paymentDate: "2026-10-14T00:00:00.000Z", daysInMonth: 31, totalAmount: "1460.00", competence: { year: 2026, month: 10 }, administrativeEntity: { tradeName: "Fornecedor QA" }, financialRecord: { identifier: "PG-QA", grossAmount: "1460.0000" }, allocations: rows };
   const workbook = buildBasicBasketWorkbook(map, "qa");
   assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Detalhado", "Resumo", "Auditoria"]);
   const detail = workbook.getWorksheet("Detalhado")!; const values = (n: number) => (detail.getRow(n).values as unknown[]).slice(1);
-  assert.deepEqual(values(1), ["Empresa", "Departamento", "Centro de Custo", "Colaborador", "Data de Admissão", "Pagamento Anterior", "Pagamento Atual", "Valor Mensal da Cesta", "Base de Cálculo da Cesta", "Dias de Direito à Cesta", "Mês de Referência Retroativo", "Base de Cálculo Retroativo", "Dias Retroativos", "Bonificação Condutor", "Acordo", "Cesta Paga", "Retroativo", "Total", "Observação", "Fornecedor"]);
+  assert.deepEqual(values(1), ["Empresa", "Departamento", "Centro de Custo", "Colaborador", "Data de Admissão", "Pagamento Anterior", "Pagamento Atual", "Valor Mensal da Cesta", "Base de Cálculo da Cesta", "Dias de Direito por Admissão", "Dias de Férias", "Falta Injustificada no Mês de Apuração", "Dias Finais da Cesta", "Mês de Referência Retroativo", "Base de Cálculo Retroativo", "Dias Retroativos Originais", "Dias de Férias no Retroativo", "Falta Injustificada no Mês do Retroativo", "Dias Retroativos Finais", "Bonificação Condutor", "Acordo", "Cesta Paga", "Retroativo", "Total", "Observação", "Fornecedor"]);
   const iso = (cell: string) => (detail.getCell(cell).value as Date).toISOString().slice(0, 10);
   const cells = (n: number, columns: string) => columns.split("").map((column) => detail.getCell(`${column}${n}`).value);
-  assert.deepEqual([iso("E2"), iso("F2"), iso("G2"), ...cells(2, "HIJKLMPQR")], ["2026-09-10", "2026-09-09", "2026-10-14", 400, 30, 30, "09/2026", 30, 21, 400, 280, 930]); // BOINGA
-  assert.deepEqual([iso("E3"), ...cells(3, "HIJLMPQR")], ["2026-09-21", 400, 30, 30, 30, 10, 400, 133.33, 533.33]); // Retroativo parcial
-  assert.deepEqual([iso("E4"), ...cells(4, "HIJMNOPQR")], ["2026-10-05", 400, 30, 26, 0, 150, 100, 346.67, 0, 596.67]); // Cesta proporcional 26 de 30
+  assert.deepEqual([iso("E2"), iso("F2"), iso("G2"), ...cells(2, "HIJKLMNOPQRSVWX")], ["2026-09-10", "2026-09-09", "2026-10-14", 400, 30, 30, 0, "Sim", 0, "09/2026", 30, 21, 0, "Não", 21, 0, 280, 530]); // Falta em outubro
+  assert.deepEqual([iso("E3"), ...cells(3, "JKLMPQRSVWX")], ["2026-09-21", 30, 0, "Não", 30, 10, 4, "Não", 6, 400, 80, 480]); // Retroativo com Férias
+  assert.deepEqual([iso("E4"), ...cells(4, "JKLMPSTUVWX")], ["2026-10-05", 26, 11, "Não", 15, 0, 0, 150, 100, 200, 0, 450]); // admissão + Férias
   for (const column of [5, 6, 7]) assert.equal(detail.getColumn(column).numFmt, "dd/mm/yyyy");
-  for (const column of [8, 14, 15, 16, 17, 18]) assert.equal(detail.getColumn(column).numFmt, "R$ #,##0.00");
-  assert.deepEqual(cells(5, "PQR"), [1146.67, 413.33, 2060]); // linha TOTAL: soma a Cesta PAGA
-  assert.equal(detail.getCell("S3").value, "Ajuste conforme acordo"); assert.equal(detail.getCell("T2").value, "Fornecedor QA");
+  for (const column of [8, 20, 21, 22, 23, 24]) assert.equal(detail.getColumn(column).numFmt, "R$ #,##0.00");
+  assert.deepEqual(cells(5, "VWX"), [600, 360, 1460]); // linha TOTAL: soma a Cesta PAGA
+  assert.equal(detail.getCell("Y3").value, "Ajuste conforme acordo"); assert.equal(detail.getCell("Z2").value, "Fornecedor QA");
   const resumo = workbook.getWorksheet("Resumo")!;
   assert.deepEqual((resumo.getRow(1).values as unknown[]).slice(1), ["Empresa", "Centro de Custo", "Colaboradores", "Bonificação Condutor", "Acordo", "Cesta Paga", "Retroativo", "Total"]);
-  assert.deepEqual((resumo.getRow(resumo.rowCount).values as unknown[]).slice(1), ["Total Geral", "", 3, 300, 200, 1146.67, 413.33, 2060]);
+  assert.deepEqual((resumo.getRow(resumo.rowCount).values as unknown[]).slice(1), ["Total Geral", "", 3, 300, 200, 600, 360, 1460]);
   const audit = workbook.getWorksheet("Auditoria")!;
   assert.deepEqual([audit.getCell("A2").value, audit.getCell("B2").value], ["Dias no mês (calendário)", 31]); // calendário real
   assert.equal(audit.getCell("B3").value, "09/09/2026"); assert.equal(audit.getCell("B4").value, "14/10/2026");
-  assert.equal(audit.getCell("B5").value, "09/2026 (01/09/2026 a 30/09/2026)"); assert.equal(audit.getCell("B10").value, 2060);
+  assert.equal(audit.getCell("B5").value, "09/2026 (01/09/2026 a 30/09/2026)"); assert.equal(audit.getCell("B10").value, 1460);
   const auditText = JSON.stringify(audit.getSheetValues());
   assert.match(auditText, /Os cálculos de Cesta Básica e Retroativo utilizam base financeira fixa de 30 dias, independentemente da quantidade de dias do mês calendário\./);
-  assert.doesNotMatch(auditText, /apuração|31 dias|dias corridos|Cesta integral/);
-  assert.throws(() => buildBasicBasketWorkbook({ ...map, totalAmount: "2059.99" }), /Inconsistência/);
+  assert.match(auditText, /A Cesta da competência é cortada quando existe Falta Injustificada no mês imediatamente anterior à competência\./);
+  assert.match(auditText, /Falta Injustificada = Jornada Considerada .Falta. \+ Evento .FALTA INJUSTIFICADA.\./); assert.match(auditText, /09\/2026 \(01\/09\/2026 a 30\/09\/2026\)/); // mês de apuração explícito
+  assert.match(auditText, /Férias reduzem os dias de direito à Cesta dentro da base financeira fixa de 30 dias\./);
+  assert.doesNotMatch(auditText, /31 dias|dias corridos|Cesta integral|D-15/);
+  assert.throws(() => buildBasicBasketWorkbook({ ...map, totalAmount: "1459.99" }), /Inconsistência/);
+});
+
+test("cesta básica: Espelho de Ponto — Falta Injustificada (Jornada + Eventos) corta o mês; Férias proporcionais dentro do direito", async () => {
+  const { buildBasicBasketContext, calculateBasicBasketLine, resolveBasicBasketAdjustments, summarizeDateRanges, NO_BASIC_BASKET_ADJUSTMENTS, EMPTY_BASIC_BASKET_OCCURRENCES } = await import("../src/modules/accounts-payable/basic-basket/calculations");
+  const { classifyBasicBasketPointMirrorRow, normalizeBasicBasketPointMirrorMatrix, buildBasicBasketPointMirror, parseStoredOccurrences, splitAbsenceDates, BasicBasketPointMirrorError } = await import("../src/modules/accounts-payable/basic-basket/point-mirror");
+  const oct = buildBasicBasketContext(2026, 10), nov = buildBasicBasketContext(2026, 11), feb = buildBasicBasketContext(2027, 2), mar = buildBasicBasketContext(2027, 3);
+  const range = (from: string, to: string) => { const out: string[] = []; for (let d = new Date(`${from}T00:00:00Z`); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 1)) out.push(d.toISOString().slice(0, 10)); return out; };
+  const occ = (patch: Partial<typeof EMPTY_BASIC_BASKET_OCCURRENCES>) => ({ ...EMPTY_BASIC_BASKET_OCCURRENCES, ...patch });
+  const run = (admissionDate: string, occurrences: typeof EMPTY_BASIC_BASKET_OCCURRENCES, context = oct) => resolveBasicBasketAdjustments({ context, admissionDate, occurrences });
+  const line = (current: number, retro: number, adjustments = NO_BASIC_BASKET_ADJUSTMENTS) => calculateBasicBasketLine({ driverBonusCents: 0, agreementCents: 0, monthlyBasketCents: 40000, currentBasketDays: current, retroactiveDays: retro, adjustments });
+  // classificação: as DUAS condições para Falta; Férias só pelo Evento; igualdade exata (sem "contém")
+  assert.deepEqual(classifyBasicBasketPointMirrorRow({ journey: "Falta", events: "FALTA INJUSTIFICADA" }), { absence: true, vacation: false, absenceEventWithoutJourney: false });
+  assert.deepEqual(classifyBasicBasketPointMirrorRow({ journey: " falta ", events: "falta injustificada" }).absence, true);
+  assert.deepEqual(classifyBasicBasketPointMirrorRow({ journey: "Falta", events: "FALTA JUSTIFICADA" }), { absence: false, vacation: false, absenceEventWithoutJourney: false }); // só Jornada
+  assert.deepEqual(classifyBasicBasketPointMirrorRow({ journey: "Trabalho Esperado", events: "FALTA INJUSTIFICADA" }), { absence: false, vacation: false, absenceEventWithoutJourney: true }); // só Evento → sinaliza
+  for (const events of ["Férias", "Ferias", "FERIAS", " férias "]) assert.equal(classifyBasicBasketPointMirrorRow({ journey: "Folga", events }).vacation, true);
+  for (const events of ["Férias Coletivas", "Pré-férias", "FERIAS PROPORCIONAIS", "FALTA INJUSTIFICADA PARCIAL"]) assert.deepEqual(classifyBasicBasketPointMirrorRow({ journey: "Falta", events }), { absence: false, vacation: false, absenceEventWithoutJourney: false });
+  assert.equal(classifyBasicBasketPointMirrorRow({ journey: "Falta", events: "Atraso, FALTA INJUSTIFICADA" }).absence, true); // lista de eventos: avaliação evento a evento
+  // 57 — sem ocorrência: 30/30 R$ 400
+  assert.deepEqual(line(30, 0, run("2020-01-01", EMPTY_BASIC_BASKET_OCCURRENCES)), { currentPayableDays: 30, retroactivePayableDays: 0, payableBasketCents: 40000, retroactiveCents: 0, totalCents: 40000 });
+  // 58 — 15 dias de Férias: 15/30 = R$ 200
+  const a58 = run("2020-01-01", occ({ currentVacationDates: range("2026-10-01", "2026-10-15") }));
+  assert.deepEqual([a58.currentVacationDays, line(30, 0, a58).currentPayableDays, line(30, 0, a58).payableBasketCents], [15, 15, 20000]);
+  // 59/30–34 — Falta Injustificada no MÊS DE APURAÇÃO (setembro inteiro, 01 a 30, sem limite do pagamento anterior 09/09) corta a Cesta de outubro
+  assert.deepEqual([oct.absenceReferenceMonthStart, oct.absenceReferenceMonthEnd, oct.previousPaymentDate], ["2026-09-01", "2026-09-30", "2026-09-09"]);
+  for (const dates of [["2026-09-14"], ["2026-09-01"], ["2026-09-05"], ["2026-09-30"], ["2026-09-05", "2026-09-12", "2026-09-20"]]) { const a = run("2020-01-01", occ({ absenceDates: dates })); assert.deepEqual([a.currentUnjustifiedAbsence, line(30, 0, a).payableBasketCents], [true, 0], dates.join()); }
+  // 16/35/36 — Falta no próprio mês da competência NÃO corta (pertence à apuração da próxima)
+  for (const date of ["2026-10-01", "2026-10-20", "2026-10-31"]) assert.deepEqual(run("2020-01-01", occ({ absenceDates: [date] })), NO_BASIC_BASKET_ADJUSTMENTS, date);
+  // 39 — mês mais antigo não corta
+  assert.deepEqual(run("2020-01-01", occ({ absenceDates: ["2026-08-31"] })), NO_BASIC_BASKET_ADJUSTMENTS);
+  // 37 — competência 11/2026: Falta 14/10 corta novembro; 38 — virada de ano: qualquer dia de 12/2026 corta 01/2027
+  assert.equal(run("2020-01-01", occ({ absenceDates: ["2026-10-14"] }), nov).currentUnjustifiedAbsence, true); assert.equal(line(30, 0, run("2020-01-01", occ({ absenceDates: ["2026-10-20"] }), nov)).payableBasketCents, 0);
+  const jan = buildBasicBasketContext(2027, 1);
+  assert.deepEqual([jan.absenceReferenceYear, jan.absenceReferenceMonth], [2026, 12]);
+  for (const date of ["2026-12-01", "2026-12-09", "2026-12-31"]) assert.equal(run("2020-01-01", occ({ absenceDates: [date] }), jan).currentUnjustifiedAbsence, true, date);
+  // Ocorrência ANTERIOR à admissão nunca afeta o benefício (data inclusiva)
+  // 18 — admissão 05/10 + Falta 14/09: ignorada → 26/30 = R$ 346,67 (qualquer data de setembro é anterior à admissão)
+  assert.equal(line(26, 0, run("2026-10-05", EMPTY_BASIC_BASKET_OCCURRENCES)).payableBasketCents, 34667);
+  for (const date of ["2026-09-01", "2026-09-14", "2026-09-30"]) assert.deepEqual([run("2026-10-05", occ({ absenceDates: [date] })).currentUnjustifiedAbsence, line(26, 0, run("2026-10-05", occ({ absenceDates: [date] }))).payableBasketCents], [false, 34667], date);
+  // 5 — admissão 01/09 + Falta 14/09: válida → R$ 0; 22 — colaborador antigo (01/01/2026) + Falta 05/09 (antes do pagamento 09/09): R$ 0
+  assert.equal(line(30, 0, run("2026-09-01", occ({ absenceDates: ["2026-09-14"] }))).payableBasketCents, 0);
+  assert.equal(line(30, 0, run("2026-01-01", occ({ absenceDates: ["2026-09-05"] }))).payableBasketCents, 0);
+  // 19 — admissão 21/09 + Falta 14/09: ignorada → Cesta R$ 400 e Retroativo 10/30 = R$ 133,33
+  const a19 = run("2026-09-21", occ({ absenceDates: ["2026-09-14"] }));
+  assert.deepEqual([a19, line(30, 10, a19).payableBasketCents, line(30, 10, a19).retroactiveCents], [NO_BASIC_BASKET_ADJUSTMENTS, 40000, 13333]);
+  // 20 — admissão 21/09 + Falta 21/09 (mesmo dia, inclusivo) e 21 — Falta 25/09: Cesta R$ 0 e Retroativo R$ 0
+  for (const date of ["2026-09-21", "2026-09-25"]) { const a = run("2026-09-21", occ({ absenceDates: [date] })); assert.deepEqual([a.currentUnjustifiedAbsence, a.retroactiveUnjustifiedAbsence, line(30, 10, a).payableBasketCents, line(30, 10, a).retroactiveCents], [true, true, 0, 0], date); }
+  // 23/24 — prévia: Falta no mês atual antes da admissão (20/10 × 05/10) é ignorada; depois (25/10) afeta a próxima competência
+  assert.deepEqual(splitAbsenceDates(["2026-10-05"], oct, "2026-10-20"), { beforeAdmission: ["2026-10-05"], apuration: [], nextCompetence: [] });
+  assert.deepEqual(splitAbsenceDates(["2026-10-25"], oct, "2026-10-20"), { beforeAdmission: [], apuration: [], nextCompetence: ["2026-10-25"] });
+  assert.equal(run("2026-10-20", occ({ absenceDates: ["2026-10-25"] }), nov).currentUnjustifiedAbsence, true); // em 11/2026 corta novembro
+  assert.equal(run("2026-10-20", occ({ absenceDates: ["2026-10-05"] }), nov).currentUnjustifiedAbsence, false); // anterior à admissão: nunca
+  // 62 — admissão 05/10 (26/30) + 10 dias de Férias aplicáveis → 16/30 = R$ 213,33
+  const a62 = run("2026-10-05", occ({ currentVacationDates: range("2026-10-06", "2026-10-15") }));
+  assert.deepEqual([a62.currentVacationDays, line(26, 0, a62).currentPayableDays, line(26, 0, a62).payableBasketCents], [10, 16, 21333]);
+  // 63 — Férias antes da admissão não reduzem
+  assert.equal(run("2026-10-05", occ({ currentVacationDates: range("2026-10-01", "2026-10-04") })).currentVacationDays, 0);
+  // 64 — Férias 01–15/10 com admissão 05/10: só 05–15 (11) → 15/30 = R$ 200
+  const a64 = run("2026-10-05", occ({ currentVacationDates: range("2026-10-01", "2026-10-15") }));
+  assert.deepEqual([a64.currentVacationDays, line(26, 0, a64).currentPayableDays, line(26, 0, a64).payableBasketCents], [11, 15, 20000]);
+  // 65/50 — Férias na competência + Falta no mês de apuração: Falta vence → 0
+  const a65 = run("2020-01-01", occ({ currentVacationDates: range("2026-10-01", "2026-10-15"), absenceDates: ["2026-09-20"] }));
+  assert.deepEqual([a65.currentVacationDays, a65.currentUnjustifiedAbsence, line(30, 0, a65).payableBasketCents], [15, true, 0]);
+  // 68 — Retroativo 10/30 (admissão 21/09) com 4 dias de Férias aplicáveis → 6/30 = R$ 80
+  const a68 = run("2026-09-21", occ({ referenceVacationDates: range("2026-09-21", "2026-09-24") }));
+  assert.deepEqual([a68.retroactiveVacationDays, a68.currentVacationDays, line(30, 10, a68).retroactivePayableDays, line(30, 10, a68).retroactiveCents, line(30, 10, a68).payableBasketCents], [4, 0, 6, 8000, 40000]);
+  // 22 — Férias 15–25/09 com admissão 21/09: só 21–25 (5) → 5/30 do Retroativo pagável
+  assert.equal(run("2026-09-21", occ({ referenceVacationDates: range("2026-09-15", "2026-09-25") })).retroactiveVacationDays, 5);
+  // 17/18 — regras SEPARADAS sobre a mesma Falta de setembro: flag da Cesta (mês de apuração) e flag do Retroativo
+  // (regra própria já validada: Falta dentro do mês do Retroativo zera o Retroativo)
+  const a69 = run("2026-09-21", occ({ absenceDates: ["2026-09-25"] }));
+  assert.deepEqual([a69.currentUnjustifiedAbsence, a69.retroactiveUnjustifiedAbsence, line(30, 10, a69).payableBasketCents, line(30, 10, a69).retroactiveCents], [true, true, 0, 0]);
+  // Falta de setembro ANTES da admissão (02/09 × 21/09): não corta a Cesta nem zera o Retroativo
+  assert.deepEqual(run("2026-09-21", occ({ absenceDates: ["2026-09-02"] })), NO_BASIC_BASKET_ADJUSTMENTS);
+  // Falta em outubro + Retroativo de setembro: nada muda em outubro (Cesta R$ 400, Retroativo R$ 133,33)
+  const a70 = run("2026-09-21", occ({ absenceDates: ["2026-10-05"] }));
+  assert.deepEqual([line(30, 10, a70).payableBasketCents, line(30, 10, a70).retroactiveCents], [40000, 13333]);
+  // Falta no mês de apuração SEM Retroativo (admitido antes): corta só a Cesta
+  assert.deepEqual(run("2020-01-01", occ({ absenceDates: ["2026-09-25"] })), { ...NO_BASIC_BASKET_ADJUSTMENTS, currentUnjustifiedAbsence: true });
+  // admitido após o pagamento: nada a cortar (continua "receberá na próxima competência")
+  assert.deepEqual(run("2026-10-20", occ({ absenceDates: ["2026-09-25", "2026-10-25"], currentVacationDates: ["2026-10-26"] })), NO_BASIC_BASKET_ADJUSTMENTS);
+  // 71 — dia 31: base 30, nunca > 30 dias; Férias no mês inteiro (31 datas) → 0/30; só o dia 31 → 1 dia
+  const full = run("2020-01-01", occ({ currentVacationDates: range("2026-10-01", "2026-10-31") }));
+  assert.deepEqual([full.currentVacationDays, line(30, 0, full).currentPayableDays], [30, 0]);
+  assert.deepEqual([run("2020-01-01", occ({ currentVacationDates: ["2026-10-31"] })).currentVacationDays, run("2020-01-01", occ({ currentVacationDates: ["2026-10-30", "2026-10-31"] })).currentVacationDays], [1, 1]);
+  // Retroativo de outubro em novembro (admissão 20/10 → 11/30) com Férias 25–31/10 → 6 dias comerciais (25..30)
+  assert.equal(run("2026-10-20", occ({ referenceVacationDates: range("2026-10-25", "2026-10-31") }), nov).retroactiveVacationDays, 6);
+  // 72 — fevereiro: base 30; Férias no mês inteiro zeram (28 datas alcançam o fim do mês → dias comerciais 29–30 também)
+  const febFull = run("2020-01-01", occ({ currentVacationDates: range("2027-02-01", "2027-02-28") }), feb);
+  assert.deepEqual([febFull.currentVacationDays, line(30, 0, febFull).currentPayableDays], [30, 0]);
+  assert.deepEqual([run("2020-01-01", occ({ currentVacationDates: range("2027-02-01", "2027-02-14") }), feb).currentVacationDays, line(30, 0, run("2020-01-01", occ({ currentVacationDates: range("2027-02-01", "2027-02-14") }), feb)).payableBasketCents], [14, 21333]);
+  assert.equal(run("2027-02-20", occ({ referenceVacationDates: range("2027-02-25", "2027-02-28") }), mar).retroactiveVacationDays, 6); // 25..30 comerciais, de 11 de direito
+  // parser: headers reais, CPF com zero perdido, datas únicas (duplicidade), meses separados, fora do período
+  const header = ["CNPJ", "Nome", "Matrícula", "PIS", "CPF", "Admissão", "Demissão", "Filial", "Departamento", "Cargo", "Data", "Dia", "Jornada Esperada", "Horas Esperadas", "Nome Escala", "Natureza Dia", "Marcações Válidas", "Jornada Considerada", "Horas Trabalhadas", "Eventos", "Centro Custo", "Grupos"];
+  const mk = (cpf: string, date: string, journey: string, events: string) => { const r = header.map(() => ""); r[1] = "PESSOA"; r[4] = cpf; r[10] = date; r[17] = journey; r[19] = events; return r; };
+  const withCheckDigits = (base: string) => { let digits = base; for (const size of [9, 10]) { const sum = digits.split("").reduce((total, digit, index) => total + Number(digit) * (size + 1 - index), 0); const rest = (sum * 10) % 11; digits += String(rest === 10 ? 0 : rest); } return digits; };
+  const cpf = "52998224725", lost = "99999999999" /* inválido */, zeroCpf = withCheckDigits("012345678");
+  const rows = normalizeBasicBasketPointMirrorMatrix([header, mk(cpf, "05/10/2026", "Trabalho Esperado", "Férias"), mk(cpf, "05/10/2026", "Trabalho Esperado", "Férias"), mk(cpf, "06/10/2026", "Folga", "Ferias"), mk(cpf, "25/09/2026", "Falta", "FALTA INJUSTIFICADA"), mk(cpf, "20/08/2026", "Falta", "FALTA INJUSTIFICADA"), mk(cpf, "07/10/2026", "Trabalho Esperado", "FALTA INJUSTIFICADA"), mk(lost, "05/10/2026", "Falta", "FALTA INJUSTIFICADA"), []]);
+  assert.equal(rows.length, 7);
+  const parsed = buildBasicBasketPointMirror(rows, oct);
+  const person = parsed.people.find((item) => item.cpf === cpf)!;
+  assert.deepEqual([person.currentVacationDates, person.absenceDates, person.duplicateVacationRows, person.outOfPeriodRows, person.absenceEventWithoutJourney], [["2026-10-05", "2026-10-06"], ["2026-09-25"], 1, 1, 1]); // 20/08: fora do período de apuração
+  const nextRows = normalizeBasicBasketPointMirrorMatrix([header, mk(cpf, "14/09/2026", "Falta", "FALTA INJUSTIFICADA"), mk(cpf, "20/10/2026", "Falta", "FALTA INJUSTIFICADA"), mk(cpf, "31/08/2026", "Falta", "FALTA INJUSTIFICADA"), mk(cpf, "15/09/2026", "Falta", "Atestado"), mk(cpf, "16/09/2026", "Trabalho Esperado", "FALTA INJUSTIFICADA")]);
+  const nextPerson = buildBasicBasketPointMirror(nextRows, oct).people[0];
+  assert.deepEqual([nextPerson.absenceDates, nextPerson.outOfPeriodRows, nextPerson.absenceEventWithoutJourney], [["2026-09-14", "2026-10-20"], 1, 1]); // 40/41: Jornada sem Evento / Evento sem Jornada não contam
+  assert.deepEqual(splitAbsenceDates(nextPerson.absenceDates, oct, "2020-01-01"), { beforeAdmission: [], apuration: ["2026-09-14"], nextCompetence: ["2026-10-20"] });
+  assert.deepEqual(splitAbsenceDates(nextPerson.absenceDates, oct, "2026-10-05"), { beforeAdmission: ["2026-09-14"], apuration: [], nextCompetence: ["2026-10-20"] });
+  assert.equal(person.cpfMasked.includes("52998224725"), false);
+  assert.deepEqual([parsed.totals.invalidCpf, parsed.totals.duplicateVacationRows, parsed.totals.outOfPeriodRows], [1, 1, 1]);
+  assert.throws(() => normalizeBasicBasketPointMirrorMatrix([["Nome", "CPF", "Data", "Jornada Considerada"]]), /Eventos/);
+  assert.throws(() => normalizeBasicBasketPointMirrorMatrix([]), BasicBasketPointMirrorError);
+  // CPF com zero à esquerda perdido pelo Excel (mesma normalização do Café)
+  assert.equal(zeroCpf.startsWith("0"), true);
+  assert.equal(normalizeBasicBasketPointMirrorMatrix([header, mk(zeroCpf.slice(1), "05/10/2026", "Falta", "FALTA INJUSTIFICADA")])[0].cpf, zeroCpf);
+  // célula XLSX com fórmula → só o resultado salvo
+  const formulaRow = header.map(() => "" as unknown); formulaRow[4] = cpf; formulaRow[10] = { formula: "A1", result: "05/10/2026" }; formulaRow[17] = "Falta"; formulaRow[19] = { formula: "B1", result: "FALTA INJUSTIFICADA" };
+  assert.equal(normalizeBasicBasketPointMirrorMatrix([header, formulaRow])[0].date, "2026-10-05");
+
+  // JSON guardado é validado ao reler
+  assert.deepEqual(parseStoredOccurrences({ e1: { absenceDates: ["2026-09-14"], currentVacationDates: ["2026-10-05"], referenceVacationDates: [] } }).e1, { absenceDates: ["2026-09-14"], currentVacationDates: ["2026-10-05"], referenceVacationDates: [] });
+  assert.throws(() => parseStoredOccurrences({ e1: { absenceDates: "x" } }), BasicBasketPointMirrorError);
+  assert.throws(() => parseStoredOccurrences([]), BasicBasketPointMirrorError);
+  // resumo de datas na prévia
+  assert.equal(summarizeDateRanges(["2026-10-03", "2026-10-01", "2026-10-02", "2026-10-12", "2026-10-02"]), "01/10 a 03/10, 12/10");
 });
 test("cesta básica: backend autoritativo, padrões, observação, soft cancel, correção e isolamento", async () => {
   const [server, deletion, section, page, schema, migration, proration, referenceMonth, currentMonth, commercial, workbook] = await Promise.all([
@@ -1603,4 +1736,93 @@ test("cesta básica: backend autoritativo, padrões, observação, soft cancel, 
   assert.doesNotMatch(commercialSql, /DROP|DELETE|ALTER TABLE "(?!BasicBasketAllocation)|UPDATE "(?!BasicBasketAllocation)|"(retroactiveAmount|amount|basketAmount|monthlyBasketAmount|totalAmount|grossAmount)" =/);
   assert.match(schema, /previousPaymentDate\s+DateTime\s+@db\.Date/); assert.match(schema, /retroactiveDays\s+Int/); assert.match(schema, /monthlyBasketAmount\s+Decimal\s+@db\.Decimal\(19, 4\)/); assert.match(schema, /currentBasketDays\s+Int/);
   assert.match(schema, /currentCalculationDays\s+Int/); assert.match(schema, /referenceCalculationDays\s+Int/); assert.doesNotMatch(schema, /accrualPeriodDays|currentMonthDays\s+Int|referenceMonthDays\s+Int/);
+  // Espelho de Ponto: o cliente só envia o id da importação; Férias/Falta/dias/valores vêm do servidor (importação gravada ou snapshot na correção)
+  const [pointServer, pointRoute, pointMigration, entriesRoute] = await Promise.all([
+    readFile(new URL("../src/modules/accounts-payable/basic-basket/point-mirror-server.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/api/accounts-payable/basic-basket/point-mirror/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20261006120000_basic_basket_point_mirror/migration.sql", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/api/accounts-payable/basic-basket/entries/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.doesNotMatch(server, /entry\.(\w*[Vv]acation\w*|\w*[Aa]bsence\w*|\w*PayableDays|adjustments|occurrences)/); assert.doesNotMatch(entriesRoute, /vacation|absence|adjustments|occurrences/i);
+  assert.match(server, /resolveBasicBasketAdjustments\(\{ context: cycle, admissionDate: employeeById\.get\(employeeId\)!\.admissionDate, occurrences \}\)/);
+  assert.match(server, /record\.createdByUserId !== input\.userId \|\| record\.year !== input\.year \|\| record\.month !== input\.month/); // mesma competência e usuário
+  assert.match(server, /currentVacationDays: original\.currentVacationDays, currentUnjustifiedAbsence: original\.currentUnjustifiedAbsence/); // correção usa o snapshot
+  assert.match(server, /if \(total\.lte\(0\)\) throw new BasicBasketValidationError/); // lote zerado não gera obrigação
+  assert.doesNotMatch(pointServer, /writeFile|storePrivateFile|console\.|cpf: person\.cpf|cpf: employee\.cpf/); assert.match(pointServer, /where: \{ cpf: \{ in: cpfs \} \}/); assert.doesNotMatch(pointServer, /officialName: \{|normalizedName/); // só CPF, nada do arquivo persistido/logado
+  assert.match(pointRoute, /MAX_POINT_MIRROR_FILE_SIZE/); assert.match(pointRoute, /console\.error\("BASIC_BASKET_POINT_MIRROR_ERROR"\)/);
+  assert.match(section, /Aplicar Faltas e Férias/); assert.match(section, /pointMirrorImportId: activeApplied\?\.importId \?\? null/); assert.match(section, /setApplied\(\{ importId: pointPreview\.importId, competence, byEmployee \}\)/); // substitui, não soma
+  const pointSql = strip(pointMigration);
+  assert.match(pointSql, /CREATE TABLE "BasicBasketPointMirrorImport"/); assert.match(pointSql, /SET "currentPayableDays" = "currentBasketDays", "retroactivePayableDays" = "retroactiveDays"/);
+  assert.doesNotMatch(pointSql, /DROP |RENAME |DELETE FROM|TRUNCATE|ALTER TABLE "(?!BasicBasket)|UPDATE "(?!BasicBasketAllocation)|"(retroactiveAmount|amount|basketAmount|monthlyBasketAmount|totalAmount|grossAmount)" =/);
+  assert.match(schema, /model BasicBasketPointMirrorImport \{/); assert.doesNotMatch(schema.slice(schema.indexOf("model BasicBasketPointMirrorImport {"), schema.indexOf("model BasicBasketEmployeeConfig {")), /cpf|fileName|buffer|content\s/i);
+  // Falta Injustificada: mês de apuração = mês calendário anterior completo (sem previousPaymentDate), flag separada do Retroativo
+  const calcSource = await readFile(new URL("../src/modules/accounts-payable/basic-basket/calculations.ts", import.meta.url), "utf8");
+  assert.match(calcSource, /currentUnjustifiedAbsence: current\.currentBasketDays > 0 && inMonth\(absenceDates, context\.absenceReferenceMonthStart, context\.absenceReferenceMonthEnd\)/);
+  assert.match(calcSource, /retroactiveUnjustifiedAbsence: retro\.retroactiveDays > 0 && inMonth\(absenceDates, context\.referenceMonthStart, context\.referenceMonthEnd\)/);
+  assert.match(calcSource, /const absenceDates = applicableOccurrenceDates\(occurrences\.absenceDates, admissionDate\)/); assert.match(calcSource, /dates\.filter\(\(date\) => date >= admissionDate\)/); // corte pela admissão no domínio (backend)
+  assert.match(section, /anterior à admissão, ignorada/); assert.match(section, /Ocorrência anterior à admissão — ignorada/);
+  assert.match(calcSource, /const absence = previousCompetence\(competenceYear, competenceMonth\), absenceBounds = monthBounds\(absence\.year, absence\.month\)/);
+  assert.match(section, /Afeta a próxima competência/); assert.match(section, /Fora do período de apuração/); assert.doesNotMatch(section, /Fora do período relevante/);
+});
+test("cesta básica: Férias por blocos contínuos no mês comercial de 30 dias (fevereiro, dia 31, admissão, Retroativo)", async () => {
+  const { buildBasicBasketContext, buildBasicBasketVacationBlocks, calculateBasicBasketLine, resolveBasicBasketAdjustments, EMPTY_BASIC_BASKET_OCCURRENCES } = await import("../src/modules/accounts-payable/basic-basket/calculations");
+  const { classifyBasicBasketPointMirrorRow } = await import("../src/modules/accounts-payable/basic-basket/point-mirror");
+  const range = (from: string, to: string) => { const out: string[] = []; for (let d = new Date(`${from}T00:00:00Z`); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 1)) out.push(d.toISOString().slice(0, 10)); return out; };
+  const fin = (dates: string[], start: string, end: string, from?: string) => new Set(buildBasicBasketVacationBlocks(dates, start, end, from).flatMap((block) => block.financialDays)).size;
+  const feb27 = ["2027-02-01", "2027-02-28"] as const, feb28 = ["2028-02-01", "2028-02-29"] as const, oct = ["2026-10-01", "2026-10-31"] as const;
+  // 49/16 — fevereiro/2027 completo → 30 dias financeiros (bloco contínuo até o último dia real)
+  assert.equal(fin(range("2027-02-01", "2027-02-28"), ...feb27), 30);
+  // 50/17 — 20/02 → 28/02 → 20..30 = 11; 51/18 — bissexto 20/02 → 29/02 → 11
+  assert.equal(fin(range("2027-02-20", "2027-02-28"), ...feb27), 11); assert.equal(fin(range("2028-02-20", "2028-02-29"), ...feb28), 11);
+  // 52/53/19/20 — último dia ISOLADO não estende (1 dia) e sinaliza aviso
+  for (const [date, bounds] of [["2027-02-28", feb27], ["2028-02-29", feb28]] as const) { const blocks = buildBasicBasketVacationBlocks([date], bounds[0], bounds[1]); assert.deepEqual([blocks.length, blocks[0].financialDays.length, blocks[0].extendedToMonthEnd, blocks[0].isolatedLastDay], [1, 1, false, true], date); }
+  // 54/21 — 27 e 28/02 → 27..30 = 4; 55/22 — bloco que não chega ao fim → 3; 56/23 — buraco → 2 blocos, 4 dias (22 não é preenchido)
+  assert.equal(fin(["2027-02-27", "2027-02-28"], ...feb27), 4);
+  assert.equal(fin(range("2027-02-20", "2027-02-22"), ...feb27), 3);
+  const gap = buildBasicBasketVacationBlocks(["2027-02-20", "2027-02-21", "2027-02-23", "2027-02-24"], ...feb27);
+  assert.deepEqual(gap.map((block) => [block.start, block.end, block.financialDays]), [["2027-02-20", "2027-02-21", [20, 21]], ["2027-02-23", "2027-02-24", [23, 24]]]);
+  // 60/3 — duplicidades: 20,20,21,21,22 → bloco 20→22 = 3
+  const dup = buildBasicBasketVacationBlocks(["2027-02-20", "2027-02-20", "2027-02-21", "2027-02-21", "2027-02-22"], ...feb27);
+  assert.deepEqual(dup.map((block) => [block.start, block.end, block.financialDays.length]), [["2027-02-20", "2027-02-22", 3]]);
+  // 57–59/10–12 — mês de 31 dias: 31/10 → 1; 30+31 → {30} = 1; 29+30+31 → {29,30} = 2 (nada passa de 30)
+  assert.deepEqual([fin(["2026-10-31"], ...oct), fin(["2026-10-30", "2026-10-31"], ...oct), fin(["2026-10-29", "2026-10-30", "2026-10-31"], ...oct), fin(range("2026-10-01", "2026-10-31"), ...oct)], [1, 1, 2, 30]);
+  assert.equal(buildBasicBasketVacationBlocks(["2026-10-31"], ...oct)[0].isolatedLastDay, false); // mês com 31 dias: sem aviso de continuidade
+  // 5 — nunca atravessa meses: 31/01 + 01/02 não formam bloco (cada mês é calculado separado)
+  assert.deepEqual(buildBasicBasketVacationBlocks(["2027-01-31", "2027-02-01"], ...feb27).map((block) => [block.start, block.end]), [["2027-02-01", "2027-02-01"]]);
+  // Cesta da competência 02/2027 (pagamento 10/02): interseção com o direito pela admissão
+  const febCtx = buildBasicBasketContext(2027, 2), marCtx = buildBasicBasketContext(2027, 3);
+  const adj = (admissionDate: string, patch: Partial<typeof EMPTY_BASIC_BASKET_OCCURRENCES>, context = febCtx) => resolveBasicBasketAdjustments({ context, admissionDate, occurrences: { ...EMPTY_BASIC_BASKET_OCCURRENCES, ...patch } });
+  const line = (current: number, retro: number, adjustments: ReturnType<typeof adj>) => calculateBasicBasketLine({ driverBonusCents: 0, agreementCents: 0, monthlyBasketCents: 40000, currentBasketDays: current, retroactiveDays: retro, adjustments });
+  // 49 — mês completo de Férias em fevereiro: 30/30 de Férias → 0/30, R$ 0
+  const full = adj("2020-01-01", { currentVacationDates: range("2027-02-01", "2027-02-28") });
+  assert.deepEqual([full.currentVacationDays, line(30, 0, full).currentPayableDays, line(30, 0, full).payableBasketCents], [30, 0, 0]);
+  // 61/62/63 — admissão 20/02 (direito 20..30 = 11; a admissão é após o pagamento de 10/02, então vale no Retroativo de 03/2027)
+  assert.deepEqual([adj("2027-02-20", { referenceVacationDates: range("2027-02-01", "2027-02-28") }, marCtx).retroactiveVacationDays, adj("2027-02-20", { referenceVacationDates: range("2027-02-01", "2027-02-22") }, marCtx).retroactiveVacationDays, adj("2027-02-20", { referenceVacationDates: range("2027-02-01", "2027-02-19") }, marCtx).retroactiveVacationDays], [11, 3, 0]);
+  assert.deepEqual([line(30, 11, adj("2027-02-20", { referenceVacationDates: range("2027-02-01", "2027-02-28") }, marCtx)).retroactivePayableDays, line(30, 11, adj("2027-02-20", { referenceVacationDates: range("2027-02-01", "2027-02-22") }, marCtx)).retroactivePayableDays, line(30, 11, adj("2027-02-20", { referenceVacationDates: range("2027-02-01", "2027-02-19") }, marCtx)).retroactivePayableDays], [0, 8, 11]);
+  // 64 — Retroativo 20..30 (11) com Férias 20/02 → fim do mês: 0 dias retroativos finais
+  const r64 = adj("2027-02-20", { referenceVacationDates: range("2027-02-20", "2027-02-28") }, marCtx);
+  assert.deepEqual([r64.retroactiveVacationDays, line(30, 11, r64).retroactivePayableDays, line(30, 11, r64).retroactiveCents], [11, 0, 0]);
+  // mesma lógica na Cesta proporcional (competência): admissão 05/02/2027 (≤ pagamento 10/02, direito 05..30 = 26)
+  assert.deepEqual([adj("2027-02-05", { currentVacationDates: range("2027-02-01", "2027-02-28") }).currentVacationDays, adj("2027-02-05", { currentVacationDates: range("2027-02-01", "2027-02-10") }).currentVacationDays, adj("2027-02-05", { currentVacationDates: range("2027-02-01", "2027-02-04") }).currentVacationDays], [26, 6, 0]);
+  // 27–29 — outubro: admissão 05/10 + Férias 01–15/10 → 11 (05..15) → 15/30 = R$ 200; 01–04 → 0; 01–10 → 6
+  const octCtx = buildBasicBasketContext(2026, 10);
+  assert.deepEqual([adj("2026-10-05", { currentVacationDates: range("2026-10-01", "2026-10-15") }, octCtx).currentVacationDays, adj("2026-10-05", { currentVacationDates: range("2026-10-01", "2026-10-04") }, octCtx).currentVacationDays, adj("2026-10-05", { currentVacationDates: range("2026-10-01", "2026-10-10") }, octCtx).currentVacationDays], [11, 0, 6]);
+  assert.equal(line(26, 0, adj("2026-10-05", { currentVacationDates: range("2026-10-01", "2026-10-15") }, octCtx)).payableBasketCents, 20000);
+  // 31 — Retroativo 21..30 com Férias 15..25/09 → 21..25 = 5 → 5/30
+  const r31 = adj("2026-09-21", { referenceVacationDates: range("2026-09-15", "2026-09-25") }, octCtx);
+  assert.deepEqual([r31.retroactiveVacationDays, line(30, 10, r31).retroactivePayableDays], [5, 5]);
+  // 36 — Falta vence Férias, mas os dias de Férias continuam auditados
+  const r36 = adj("2020-01-01", { currentVacationDates: range("2026-10-01", "2026-10-15"), absenceDates: ["2026-09-10"] }, octCtx);
+  assert.deepEqual([r36.currentVacationDays, r36.currentUnjustifiedAbsence, line(30, 0, r36).payableBasketCents], [15, true, 0]);
+  // 65–67 — Falta não regride
+  assert.equal(line(26, 0, adj("2026-10-05", { absenceDates: ["2026-09-14"] }, octCtx)).payableBasketCents, 34667);
+  const r66 = adj("2026-09-21", { absenceDates: ["2026-09-25"] }, octCtx), r67 = adj("2026-09-21", { absenceDates: ["2026-09-14"] }, octCtx);
+  assert.deepEqual([line(30, 10, r66).payableBasketCents, line(30, 10, r66).retroactiveCents, line(30, 10, r67).payableBasketCents, line(30, 10, r67).retroactiveCents], [0, 0, 40000, 13333]);
+  // 37/38/68 — separadores , ; | e quebra de linha; match exato
+  for (const events of ["OUTRO, Férias", "OUTRO; Férias", "OUTRO | Férias", "OUTRO\nFérias"]) assert.equal(classifyBasicBasketPointMirrorRow({ journey: "Folga", events }).vacation, true, events);
+  for (const events of ["OUTRO; Férias Coletivas", "FERIAS PROGRAMADAS", "Férias Coletivas"]) assert.equal(classifyBasicBasketPointMirrorRow({ journey: "Folga", events }).vacation, false, events);
+  assert.equal(classifyBasicBasketPointMirrorRow({ journey: "Falta", events: "Atraso; FALTA INJUSTIFICADA" }).absence, true);
+  assert.equal(classifyBasicBasketPointMirrorRow({ journey: "Falta", events: "FALTA INJUSTIFICADA PARCIAL" }).absence, false);
+  // continuidade com aritmética só-dia (sem fuso/horário de verão): bloco atravessando a antiga virada de 04/11/2018
+  assert.deepEqual(buildBasicBasketVacationBlocks(["2018-11-03", "2018-11-04", "2018-11-05"], "2018-11-01", "2018-11-30").map((block) => block.financialDays), [[3, 4, 5]]);
 });
