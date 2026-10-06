@@ -1867,3 +1867,212 @@ test("cesta básica: Férias por blocos contínuos no mês comercial de 30 dias 
   // continuidade com aritmética só-dia (sem fuso/horário de verão): bloco atravessando a antiga virada de 04/11/2018
   assert.deepEqual(buildBasicBasketVacationBlocks(["2018-11-03", "2018-11-04", "2018-11-05"], "2018-11-01", "2018-11-30").map((block) => block.financialDays), [[3, 4, 5]]);
 });
+
+// ---- Fase 7D: fundação para telas com muitos dados (componentes isolados; sem snapshot de HTML).
+test("DataTable: semântica (caption, thead/tbody, scope), números à direita com tabular-nums, estados e seleção", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { DataTable, nextSort, selectionState, toggleAllSelection } = await import("../src/components/ui/DataTable");
+  type Row = { id: string; name: string; total: number };
+  const rows: Row[] = [{ id: "a", name: "Linha A", total: 10 }, { id: "b", name: "Linha B", total: 20 }];
+  const columns = [
+    { id: "name", header: "Nome", rowHeader: true, sticky: "start" as const, width: "10rem", sortable: true, cell: (row: Row) => row.name },
+    { id: "total", header: "Total", numeric: true, cell: (row: Row) => String(row.total) },
+  ];
+  const html = renderToStaticMarkup(createElement(DataTable<Row>, {
+    caption: "Lançamentos", columns, rows, getRowId: (row) => row.id, sort: { key: "name", direction: "asc" }, onSortChange: () => undefined,
+    selection: { selectedIds: ["a"], onChange: () => undefined, getRowLabel: (row) => row.name }, rowActions: () => "…", stickyActions: true, maxHeight: "20rem",
+  }));
+  assert.match(html, /<caption class="sr-only">Lançamentos<\/caption>/);
+  assert.match(html, /<thead>/); assert.match(html, /<tbody>/);
+  assert.equal((html.match(/<th scope="col"/g) ?? []).length, 4); // seleção + 2 colunas + ações
+  assert.equal((html.match(/<th scope="row"/g) ?? []).length, 2);
+  assert.match(html, /aria-sort="ascending"/);
+  assert.match(html, /<td class="[^"]*text-right[^"]*tabular-nums[^"]*"[^>]*>10<\/td>/);
+  assert.doesNotMatch(html, /text-center[^"]*tabular-nums/);
+  assert.match(html, /aria-label="Selecionar Linha A"/); assert.match(html, /data-selected="true"/);
+  assert.match(html, /class="[^"]*sticky top-0/); // cabeçalho fixo com maxHeight
+  assert.match(html, /overflow-x-auto/);
+  assert.doesNotMatch(html, /odd:|even:|zebra/);
+  // estados: loading (skeleton + aria-busy), vazio (EmptyState) e erro (alerta) — sem renderizar as linhas
+  const loading = renderToStaticMarkup(createElement(DataTable<Row>, { caption: "X", columns, rows, getRowId: (row) => row.id, loading: true, loadingRows: 3 }));
+  assert.match(loading, /aria-busy="true"/); assert.equal((loading.match(/<tr aria-hidden="true">/g) ?? []).length, 3); assert.doesNotMatch(loading, /Linha A/);
+  assert.match(renderToStaticMarkup(createElement(DataTable<Row>, { caption: "X", columns, rows: [], getRowId: (row) => row.id, empty: { title: "Nada por aqui" } })), /Nada por aqui/);
+  const failed = renderToStaticMarkup(createElement(DataTable<Row>, { caption: "X", columns, rows, getRowId: (row) => row.id, error: "Falhou" }));
+  assert.match(failed, /role="alert"/); assert.doesNotMatch(failed, /Linha A/);
+  // dense = linhas de 36px (h-9); padrão = 44px (h-11)
+  assert.match(renderToStaticMarkup(createElement(DataTable<Row>, { caption: "X", columns, rows, getRowId: (row) => row.id, density: "dense" })), /<td class="h-9 /);
+  assert.match(renderToStaticMarkup(createElement(DataTable<Row>, { caption: "X", columns, rows, getRowId: (row) => row.id })), /<td class="h-11 /);
+  // ordenação só visual/controlada; seleção preserva outras páginas
+  assert.deepEqual(nextSort(null, "name"), { key: "name", direction: "asc" });
+  assert.deepEqual(nextSort({ key: "name", direction: "asc" }, "name"), { key: "name", direction: "desc" });
+  assert.deepEqual(nextSort({ key: "name", direction: "desc" }, "total"), { key: "total", direction: "asc" });
+  assert.equal(selectionState(["a", "b"], ["a"]), "some"); assert.equal(selectionState(["a", "b"], ["a", "b", "z"]), "all"); assert.equal(selectionState([], ["a"]), "none");
+  assert.deepEqual(toggleAllSelection(["a", "b"], ["z"]), ["z", "a", "b"]);
+  assert.deepEqual(toggleAllSelection(["a", "b"], ["z", "a", "b"]), ["z"]);
+  const source = await readFile(new URL("../src/components/ui/DataTable.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /@tanstack|\.sort\(/); // sem TanStack e sem sort client-side automático
+});
+
+test("Pagination: nav rotulada, aria-current, anterior/próxima desabilitados nas pontas e janela de páginas", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { Pagination, paginationRange, paginationSummary } = await import("../src/components/ui/Pagination");
+  const first = renderToStaticMarkup(createElement(Pagination, { page: 1, pageCount: 6, onPageChange: () => undefined, totalItems: 57, pageSize: 10 }));
+  assert.match(first, /<nav aria-label="Paginação"/);
+  assert.match(first, /aria-current="page" aria-label="Página 1"/);
+  assert.match(first, /disabled="" aria-label="Página anterior"/);
+  assert.doesNotMatch(first, /disabled="" aria-label="Próxima página"/);
+  assert.match(first, /Mostrando 1–10 de 57/);
+  const last = renderToStaticMarkup(createElement(Pagination, { page: 6, pageCount: 6, onPageChange: () => undefined }));
+  assert.match(last, /disabled="" aria-label="Próxima página"/);
+  assert.deepEqual(paginationRange(1, 5), [1, 2, 3, 4, 5]);
+  assert.deepEqual(paginationRange(6, 20), [1, "ellipsis-start", 5, 6, 7, "ellipsis-end", 20]);
+  assert.deepEqual(paginationRange(1, 20), [1, 2, "ellipsis-end", 20]);
+  assert.deepEqual(paginationRange(20, 20), [1, "ellipsis-start", 19, 20]);
+  assert.deepEqual(paginationRange(1, 0), []);
+  assert.equal(paginationSummary(6, 10, 57), "Mostrando 51–57 de 57");
+  assert.equal(paginationSummary(1, 10, 0), "Nenhum registro");
+});
+
+test("SearchInput: rótulo real (não só placeholder), botão limpar com nome e sem largura fixa", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { SearchInput } = await import("../src/components/ui/SearchInput");
+  const empty = renderToStaticMarkup(createElement(SearchInput, { label: "Buscar colaboradores", placeholder: "Nome", value: "", onValueChange: () => undefined, id: "busca" }));
+  assert.match(empty, /<label for="busca" class="sr-only">Buscar colaboradores<\/label>/);
+  assert.match(empty, /id="busca" type="search"/);
+  assert.doesNotMatch(empty, /Limpar busca/);
+  const filled = renderToStaticMarkup(createElement(SearchInput, { label: "Buscar", value: "ana", onValueChange: () => undefined, hideLabel: false }));
+  assert.match(filled, /aria-label="Limpar busca"/);
+  assert.match(filled, /class="text-label text-foreground"/);
+  assert.doesNotMatch(filled, /\bw-\[\d|\bw-(64|72|80|96)\b/);
+  const source = await readFile(new URL("../src/components/ui/SearchInput.tsx", import.meta.url), "utf8");
+  assert.match(source, /from "lucide-react"/); assert.match(source, /Escape/);
+});
+
+test("CurrencyInput: controlado pelo módulo, inputMode decimal, prefixo R$, sem arredondamento silencioso", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { CurrencyInput, formatCurrencyInput, parseCurrencyInput, isAcceptableCurrencyDraft } = await import("../src/components/ui/CurrencyInput");
+  const html = renderToStaticMarkup(createElement(CurrencyInput, { id: "valor", value: 1234.5, onValueChange: () => undefined, "aria-invalid": true }));
+  assert.match(html, /inputMode="decimal"/); assert.match(html, />R\$<\/span>/); assert.match(html, /value="1\.234,50"/); assert.match(html, /aria-invalid="true"/);
+  assert.match(renderToStaticMarkup(createElement(CurrencyInput, { value: null, onValueChange: () => undefined, disabled: true })), /disabled=""/);
+  assert.match(renderToStaticMarkup(createElement(CurrencyInput, { value: 5, onValueChange: () => undefined, readOnly: true })), /readOnly=""/);
+  // parse pt-BR
+  assert.equal(parseCurrencyInput(""), null);
+  assert.equal(parseCurrencyInput("1.234,56"), 1234.56);
+  assert.equal(parseCurrencyInput("1234,5"), 1234.5);
+  assert.equal(parseCurrencyInput("12.5"), 12.5);
+  assert.equal(parseCurrencyInput("1.234"), 1234);
+  assert.equal(parseCurrencyInput("1,234"), undefined); // 3 casas > limite: inválido, nunca arredonda
+  assert.equal(parseCurrencyInput("1,2,3"), undefined);
+  assert.equal(parseCurrencyInput("-5,00"), undefined);
+  assert.equal(parseCurrencyInput("-5,00", { allowNegative: true }), -5);
+  // digitação além das casas permitidas é recusada (o texto não muda)
+  assert.equal(isAcceptableCurrencyDraft("10,55"), true);
+  assert.equal(isAcceptableCurrencyDraft("10,555"), false);
+  assert.equal(isAcceptableCurrencyDraft("10,5a"), false);
+  assert.equal(isAcceptableCurrencyDraft("12,"), true);
+  // formatação nunca corta casas de um valor recebido
+  assert.equal(formatCurrencyInput(10.555), "10,555");
+  assert.equal(formatCurrencyInput(10), "10,00");
+  assert.equal(formatCurrencyInput(null), "");
+  const source = await readFile(new URL("../src/components/ui/CurrencyInput.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /Math\.round|toFixed/);
+});
+
+test("ImportFlow: etapas com texto/ícone, erro bloqueia, aviso não bloqueia, prévia arbitrária e sem lógica de domínio", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { ImportFlow, importStepStates, canApplyImport } = await import("../src/components/ui/ImportFlow");
+  assert.deepEqual(importStepStates("select"), ["current", "upcoming", "upcoming", "upcoming", "upcoming"]);
+  assert.deepEqual(importStepStates("preview"), ["complete", "complete", "current", "upcoming", "upcoming"]);
+  assert.deepEqual(importStepStates("done"), ["complete", "complete", "complete", "complete", "complete"]);
+  assert.equal(canApplyImport({ step: "preview" }), true);
+  assert.equal(canApplyImport({ step: "preview", errors: [{ id: "e", message: "x" }] }), false);
+  assert.equal(canApplyImport({ step: "preview", canApply: false }), false);
+  assert.equal(canApplyImport({ step: "select" }), false);
+  const base = { file: null, onSelect: () => undefined, onApply: () => undefined, onReset: () => undefined };
+  const select = renderToStaticMarkup(createElement(ImportFlow, { ...base, step: "select", accept: ".xlsx" }));
+  assert.match(select, /<ol aria-label="Etapas da importação"/);
+  assert.match(select, /<li aria-current="step"[^>]*>.*?Selecionar<span class="sr-only"> \(etapa atual\)/);
+  assert.match(select, /type="file"/);
+  const blocked = renderToStaticMarkup(createElement(ImportFlow, {
+    ...base, step: "preview", preview: createElement("table", { "data-preview": "" }),
+    errors: [{ id: "e1", message: "Coluna obrigatória vazia" }], warnings: [{ id: "w1", message: "Linhas duplicadas" }],
+  }));
+  assert.match(blocked, /data-preview=""/);
+  assert.match(blocked, /role="alert"[^]*1 erro impede a aplicação[^]*Bloqueia/);
+  assert.match(blocked, /role="status"[^]*1 aviso para revisar[^]*Não bloqueia/);
+  assert.match(blocked, /disabled=""[^>]*>Aplicar<\/button>/);
+  const warningOnly = renderToStaticMarkup(createElement(ImportFlow, { ...base, step: "preview", warnings: [{ id: "w1", message: "Aviso" }] }));
+  assert.doesNotMatch(warningOnly, /disabled=""[^>]*>Aplicar<\/button>/);
+  const done = renderToStaticMarkup(createElement(ImportFlow, { ...base, step: "done", result: "3 registros aplicados" }));
+  assert.match(done, /Resultado da importação/); assert.match(done, /3 registros aplicados/);
+  for (const file of ["ImportFlow", "UploadDropzone", "DataTable", "FilterBar", "CurrencyInput", "CalculatedValue", "SearchInput", "Pagination", "Skeleton", "Tooltip"]) {
+    const source = await readFile(new URL(`../src/components/ui/${file}.tsx`, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /fetch\(|\/api\//, `${file} não chama API`);
+    assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ""), /\b(cpf|cesta|basket|caf[eé]|breakfast|f[eé]rias|vacation|vale[- ]transporte|transit[- ]?voucher|alimenta[cç][aã]o)\b/i, `${file} sem domínio`);
+    assert.doesNotMatch(source, /\b(slate|emerald|amber|red)-\d|#[0-9a-f]{3,6}\b/i, `${file} usa tokens`);
+  }
+});
+
+test("UploadDropzone: input nativo focável (teclado), rótulo ligado, valida só accept/maxSize recebidos", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { UploadDropzone, validateUploadFile, matchesAccept, formatFileSize } = await import("../src/components/ui/UploadDropzone");
+  const html = renderToStaticMarkup(createElement(UploadDropzone, { id: "up", label: "Arquivo", file: { name: "dados.csv", size: 2048 }, onFileSelect: () => undefined, onClear: () => undefined, accept: ".csv,.xlsx", maxSize: 1024 * 1024, helperText: "Ajuda" }));
+  assert.match(html, /<input id="up" type="file" accept=".csv,.xlsx"[^>]*class="peer sr-only"/); // focável por Tab; Enter/Espaço abrem o seletor
+  assert.match(html, /<label for="up"/);
+  assert.match(html, /aria-describedby="up-hint"/);
+  assert.match(html, /dados\.csv/); assert.match(html, /2 KB/); assert.match(html, /aria-label="Remover dados.csv"/);
+  assert.match(html, /peer-focus-visible:outline/);
+  const disabled = renderToStaticMarkup(createElement(UploadDropzone, { id: "d", label: "Arquivo", file: null, onFileSelect: () => undefined, disabled: true }));
+  assert.match(disabled, /type="file" disabled=""/);
+  const external = renderToStaticMarkup(createElement(UploadDropzone, { id: "e", label: "Arquivo", file: null, onFileSelect: () => undefined, error: "Recusado pelo servidor" }));
+  assert.match(external, /aria-describedby="e-error e-hint" aria-invalid="true"/); assert.match(external, /role="alert"/);
+  assert.equal(matchesAccept({ name: "A.XLSX", size: 1 }, ".xlsx"), true);
+  assert.equal(matchesAccept({ name: "a.png", size: 1, type: "image/png" }, "image/*"), true);
+  assert.equal(matchesAccept({ name: "a.pdf", size: 1, type: "application/pdf" }, ".csv,text/csv"), false);
+  assert.equal(matchesAccept({ name: "qualquer.bin", size: 1 }), true);
+  assert.match(validateUploadFile({ name: "a.pdf", size: 1 }, { accept: ".csv" }) ?? "", /Formato não aceito/);
+  assert.match(validateUploadFile({ name: "a.csv", size: 3 * 1024 * 1024 }, { accept: ".csv", maxSize: 1024 * 1024 }) ?? "", /3 MB; o limite é 1 MB/);
+  assert.equal(validateUploadFile({ name: "a.csv", size: 10 }, { accept: ".csv", maxSize: 1024 }), null);
+  assert.equal(formatFileSize(512), "512 B"); assert.equal(formatFileSize(1536), "1,5 KB");
+});
+
+test("Tooltip: descrição sempre no DOM via aria-describedby, abre no foco, Esc fecha; posição presa à viewport", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { Tooltip, tooltipPosition } = await import("../src/components/ui/Tooltip");
+  const html = renderToStaticMarkup(createElement(Tooltip, { content: "Valor calculado pelo sistema", children: createElement("button", { type: "button", "aria-describedby": "ajuda" }, "i") }));
+  const describedBy = html.match(/aria-describedby="([^"]+)"/)?.[1] ?? "";
+  assert.match(describedBy, /^ajuda \S+-tooltip$/); // preserva o aria-describedby do gatilho
+  assert.ok(html.includes(`<span id="${describedBy.split(" ")[1]}" class="sr-only">Valor calculado pelo sistema</span>`));
+  const source = await readFile(new URL("../src/components/ui/Tooltip.tsx", import.meta.url), "utf8");
+  assert.match(source, /onFocus=/); assert.match(source, /onBlur=/); assert.match(source, /onPointerEnter=/); assert.match(source, /"Escape"/);
+  assert.match(source, /aria-hidden="true"/); // balão visual não duplica a leitura
+  const viewport = { width: 1000, height: 800 };
+  assert.deepEqual(tooltipPosition({ top: 100, left: 100, bottom: 120, width: 20 }, { width: 100, height: 30 }, viewport), { top: 64, left: 60, placement: "top" });
+  assert.equal(tooltipPosition({ top: 10, left: 100, bottom: 30, width: 20 }, { width: 100, height: 30 }, viewport).placement, "bottom"); // sem espaço acima
+  assert.equal(tooltipPosition({ top: 100, left: 990, bottom: 120, width: 10 }, { width: 100, height: 30 }, viewport).left, 892); // preso à direita
+});
+
+test("Skeleton, CalculatedValue e FilterBar: movimento reduzido, valor calculado não editável e filtros com quebra de linha", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { Skeleton, SkeletonGroup, SkeletonTableRows } = await import("../src/components/ui/Skeleton");
+  const { CalculatedValue } = await import("../src/components/ui/CalculatedValue");
+  const { FilterBar } = await import("../src/components/ui/FilterBar");
+  const skeleton = renderToStaticMarkup(createElement(SkeletonGroup, null, createElement(Skeleton, { variant: "block" })));
+  assert.match(skeleton, /role="status" aria-busy="true"/); assert.match(skeleton, /aria-hidden="true"/); assert.match(skeleton, /motion-reduce:animate-none/);
+  assert.equal((renderToStaticMarkup(createElement("table", null, createElement("tbody", null, createElement(SkeletonTableRows, { columns: 4, rows: 2 })))).match(/<td/g) ?? []).length, 8);
+  const calculated = renderToStaticMarkup(createElement(CalculatedValue, { label: "Total", value: "R$ 10,00", helper: "Soma das linhas", status: { tone: "success", label: "Conferido" } }));
+  assert.match(calculated, /bg-calc-surface/); assert.match(calculated, /tabular-nums/); assert.match(calculated, /\(calculado\)/); assert.match(calculated, /Conferido/);
+  assert.doesNotMatch(calculated, /<input|tabindex|border-border-strong/);
+  const bar = renderToStaticMarkup(createElement(FilterBar, { search: createElement("input", { "aria-label": "Buscar" }), onClear: () => undefined, activeCount: 0, advanced: { content: "x", activeCount: 2 } }, createElement("select", { "aria-label": "Status" })));
+  assert.match(bar, /<section aria-label="Filtros"/); assert.match(bar, /flex flex-wrap/); assert.doesNotMatch(bar, /overflow-x/);
+  assert.match(bar, /disabled=""[^>]*>.*?Limpar filtros/); // nada ativo: Limpar desabilitado
+  assert.match(bar, /2<span class="sr-only"> filtros ativos<\/span>/);
+});
