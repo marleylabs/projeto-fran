@@ -2,12 +2,15 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, FeedbackAlert } from "@/components/ui";
+import { Eye, EyeOff } from "lucide-react";
+import { AuthLayout } from "@/components/auth/AuthLayout";
+import { Button, FeedbackAlert, Field, TextInput } from "@/components/ui";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -39,51 +42,65 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-base-200 px-4 py-10 text-neutral">
-      <section className="card w-full max-w-sm border border-base-300 bg-base-100 shadow-sm">
-        <div className="card-body p-6 sm:p-8">
-          <div className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-xl bg-primary text-xs font-extrabold text-white">GA</div><h1 className="text-center text-xl font-bold text-neutral">Gestão Administrativa</h1>
-          <p className="mb-2 mt-1 text-center text-sm text-secondary">
-            Entre para acessar a plataforma
-          </p>
+    <AuthLayout>
+      <h1 className="text-page-title text-foreground">Entrar</h1>
+      <p className="mt-1.5 text-body text-foreground-muted">Acesse a plataforma com seu e-mail corporativo e senha.</p>
 
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <label className="fieldset">
-              <span className="fieldset-legend text-secondary">Email</span>
-              <input
-                type="email"
-                required
-                autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="input input-bordered w-full border-base-300 bg-base-100"
-              />
-            </label>
+      <form onSubmit={handleSubmit} aria-busy={loading} className="mt-8 grid gap-5">
+        <Field label="E-mail" required>
+          {(control) => (
+            <TextInput
+              {...control}
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          )}
+        </Field>
 
-            <label className="fieldset">
-              <span className="fieldset-legend text-secondary">Senha</span>
-              <input
-                type="password"
-                required
+        <Field label="Senha" required>
+          {(control) => (
+            <div className="relative">
+              <TextInput
+                {...control}
+                type={showPassword ? "text" : "password"}
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="input input-bordered w-full border-base-300 bg-base-100"
+                className="pr-11"
               />
-            </label>
+              <button
+                type="button"
+                onClick={() => setShowPassword((current) => !current)}
+                aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                aria-pressed={showPassword}
+                aria-controls={control.id}
+                className="absolute inset-y-0 right-0.5 my-auto grid size-9 cursor-pointer place-items-center rounded-control text-foreground-muted transition-colors hover:text-foreground"
+              >
+                {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+              </button>
+            </div>
+          )}
+        </Field>
 
-            {error && (
-              <FeedbackAlert status="error" title="Não foi possível entrar">
-                {error}
-              </FeedbackAlert>
-            )}
+        {error && (
+          <FeedbackAlert status="error" title="Não foi possível entrar">
+            {error}
+          </FeedbackAlert>
+        )}
 
-            <Button type="submit" loading={loading} aura className="mt-2 w-full">
-              {loading ? "Entrando..." : "Entrar"}
-            </Button>
-          </form>
-        </div>
-      </section>
-    </main>
+        <Button type="submit" loading={loading} className="mt-1 h-11 w-full text-body">
+          {loading ? "Entrando..." : "Entrar"}
+        </Button>
+      </form>
+
+      <p className="mt-6 text-caption text-foreground-muted">
+        Problemas de acesso? Solicite ao administrador do sistema um link de redefinição de senha.
+      </p>
+    </AuthLayout>
   );
 }

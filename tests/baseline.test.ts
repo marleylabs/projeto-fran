@@ -536,7 +536,7 @@ test("shell corporativo centraliza identidade, navegação, sessão e responsivi
     readFile(new URL("../src/components/CorporateHeader.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(layout, /Manrope/);assert.doesNotMatch(layout,/Cause/);assert.match(layout,/<AppShell>/);
-  for(const token of ["--color-sidebar: #0a0a0a","--color-background: #f5f5f5","--color-surface: #ffffff","--color-primary: #af1b1b"])assert.ok(styles.toLowerCase().includes(token));
+  for(const token of ["--color-sidebar: #0a0a0a","--color-background: #f7f7f5","--color-surface: #ffffff","--color-primary: #af1b1b"])assert.ok(styles.toLowerCase().includes(token));
   assert.match(styles,/\.app-sidebar/);assert.match(styles,/@media \(min-width: 1024px\)/);assert.match(styles,/width: 15\.5rem/);
   assert.match(shell,/NAVIGATION_MODULES/);assert.match(shell,/\/api\/auth\/me/);assert.match(shell,/\/api\/auth\/logout/);assert.match(shell,/app-drawer/);
   assert.doesNotMatch(header,/Módulos da plataforma/);
@@ -568,8 +568,8 @@ test("design system mantém densidade compacta com alvos móveis acessíveis", a
     "--density-text-title: 1.25rem",
   ]) assert.ok(styles.includes(token));
   assert.match(styles, /font-size: var\(--density-text-base\)/);
-  assert.match(styles, /\.btn \{ min-height: var\(--density-control-md\)/);
-  assert.match(styles, /\.table :where\(td,th\).*padding: \.45rem \.75rem/);
+  assert.match(styles, /:where\(\.btn\) \{ min-height: var\(--density-control-md\)/);
+  assert.match(styles, /:where\(\.table td,\.table th\) \{[^}]*padding: \.45rem \.75rem/);
   assert.match(styles, /@media \(max-width: 639px\).*min-height: 2\.5rem/);
   assert.match(surface, /gap-3 p-3 sm:p-4/);
   assert.match(toast, /h-5 w-5/);
