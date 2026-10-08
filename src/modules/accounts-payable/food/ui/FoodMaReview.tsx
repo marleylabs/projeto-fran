@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, ConfirmModal, DeletionModal, FloatingActionMenu, useToast } from "@/components/ui";
+import { X } from "lucide-react";
+import { Button, ConfirmModal, DeletionModal, FeedbackAlert, FloatingActionMenu, StatusBadge, useToast } from "@/components/ui";
 import { CollaboratorCombobox } from "@/components/CollaboratorCombobox";
 import { comparePtBr, sortedPtBr } from "@/lib/sorting/ptBr";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
@@ -182,16 +183,16 @@ export function FoodMaReview({
   }
   return (
     <>
-    <article className="rounded-lg border border-border bg-white p-3 shadow-sm sm:p-4">
+    <article className="rounded-lg border border-border bg-surface p-3 shadow-sm sm:p-4">
       <p className="text-xs font-bold uppercase tracking-[.12em] text-primary">Revisão de colaboradores</p>
       <div className="mt-1.5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div><h3 className="font-bold text-neutral">{batch.administrativeEntity.tradeName}</h3><p className="text-xs text-secondary">{batch.originalName}</p><div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-secondary"><span>{activeOccurrenceCount} registros · {activeGroups.length} grupos</span><span className="badge border-0 bg-emerald-100 text-emerald-800">✓ {identifiedCount} identificados</span><span className="badge border-0 bg-amber-100 text-amber-800">⚠ {pendingCount} pendentes</span></div><p className="mt-1.5 text-xs text-secondary">{pendingCount?"Revisão necessária antes da geração da obrigação.":"Revisão concluída. Confira os dados antes de gerar a obrigação."}</p></div>
+        <div><h3 className="font-bold text-neutral">{batch.administrativeEntity.tradeName}</h3><p className="text-xs text-secondary">{batch.originalName}</p><div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-secondary"><span>{activeOccurrenceCount} registros · {activeGroups.length} grupos</span><StatusBadge tone="success">{identifiedCount} identificados</StatusBadge><StatusBadge tone={pendingCount ? "warning" : "neutral"}>{pendingCount} pendentes</StatusBadge></div><p className="mt-1.5 text-xs text-secondary">{pendingCount?"Revisão necessária antes da geração da obrigação.":"Revisão concluída. Confira os dados antes de gerar a obrigação."}</p></div>
         <div className="flex flex-col-reverse gap-2 sm:flex-row"><Button type="button" variant="secondary" onClick={()=>setCancelOpen(true)}>Cancelar importação</Button><Button type="button" aura onClick={()=>setReviewOpen(true)}>{pendingCount?"Revisar colaboradores":"Conferir revisão"}</Button></div>
       </div>
     </article>
     <dialog ref={dialogRef} className="modal food-review-dialog" onCancel={(event)=>{if(busy||removing||cancelling)event.preventDefault();else setReviewOpen(false)}} onClose={()=>setReviewOpen(false)} aria-labelledby={`food-review-title-${batch.id}`} aria-describedby={`food-review-description-${batch.id}`}>
     <article className="food-review-workspace border border-border bg-base-200">
-      <header className="food-review-header flex flex-wrap justify-between gap-3 bg-white">
+      <header className="food-review-header flex flex-wrap justify-between gap-3 bg-surface">
         <div>
           <h3 id={`food-review-title-${batch.id}`} className="font-bold">
             Revisar colaboradores · {batch.administrativeEntity.tradeName}
@@ -201,14 +202,14 @@ export function FoodMaReview({
             obrigação ainda não gerada
           </p>
         </div>
-        <div className="flex items-start gap-2"><div className="flex flex-wrap gap-1.5 text-xs font-semibold"><span className="badge border-0 bg-emerald-100 text-emerald-800">{identifiedCount} identificados</span><span className="badge border-0 bg-amber-100 text-amber-800">{pendingCount} pendentes</span></div><button type="button" className="grid h-8 w-8 place-items-center rounded-md text-lg text-secondary hover:bg-base-200" aria-label="Fechar revisão" onClick={()=>setReviewOpen(false)}>×</button></div>
+        <div className="flex items-start gap-2"><div className="flex flex-wrap gap-1.5 text-xs font-semibold"><StatusBadge tone="success">{identifiedCount} identificados</StatusBadge><StatusBadge tone={pendingCount ? "warning" : "neutral"}>{pendingCount} pendentes</StatusBadge></div><button type="button" className="grid h-8 w-8 cursor-pointer place-items-center rounded-control text-foreground-muted hover:bg-surface-muted" aria-label="Fechar revisão" onClick={()=>setReviewOpen(false)}><X size={18} aria-hidden="true" /></button></div>
       </header>
-      <div className="food-review-filters flex flex-col gap-2 border-b border-border bg-white sm:flex-row sm:items-center">
-        <div className="flex flex-wrap rounded-md border border-border bg-white p-0.5"><button type="button" onClick={()=>setFilter("ALL")} className={`h-8 rounded px-2.5 text-xs ${filter==="ALL"?"bg-primary text-white":""}`}>Todos ({activeGroups.length})</button><button type="button" onClick={()=>setFilter("PENDING")} className={`h-8 rounded px-2.5 text-xs ${filter==="PENDING"?"bg-primary text-white":""}`}>Pendentes ({pendingCount})</button><button type="button" onClick={()=>setFilter("IDENTIFIED")} className={`h-8 rounded px-2.5 text-xs ${filter==="IDENTIFIED"?"bg-primary text-white":""}`}>Identificados ({identifiedCount})</button></div>
-        <input value={search} onChange={(event)=>setSearch(event.target.value)} placeholder="Buscar nome ou setor" className="input min-w-0 flex-1 border border-border bg-white" />
+      <div className="food-review-filters flex flex-col gap-2 border-b border-border bg-surface sm:flex-row sm:items-center">
+        <div className="flex flex-wrap rounded-md border border-border bg-surface p-0.5"><button type="button" onClick={()=>setFilter("ALL")} className={`h-8 rounded px-2.5 text-xs ${filter==="ALL"?"bg-primary text-white":""}`}>Todos ({activeGroups.length})</button><button type="button" onClick={()=>setFilter("PENDING")} className={`h-8 rounded px-2.5 text-xs ${filter==="PENDING"?"bg-primary text-white":""}`}>Pendentes ({pendingCount})</button><button type="button" onClick={()=>setFilter("IDENTIFIED")} className={`h-8 rounded px-2.5 text-xs ${filter==="IDENTIFIED"?"bg-primary text-white":""}`}>Identificados ({identifiedCount})</button></div>
+        <input value={search} onChange={(event)=>setSearch(event.target.value)} placeholder="Buscar nome ou setor" className="input min-w-0 flex-1 border border-border bg-surface" />
       </div>
       <div className="food-review-body grid overflow-y-auto">
-        {batch.issues?.map((issue) => <p key={issue.id} className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{issue.sourceRow ? `Linha ${issue.sourceRow}: ` : ""}{issue.message}</p>)}
+        {batch.issues?.map((issue) => <FeedbackAlert key={issue.id} status="warning">{issue.sourceRow ? `Linha ${issue.sourceRow}: ` : ""}{issue.message}</FeedbackAlert>)}
         {visibleGroups.map(([key, rows]) => {
           const value = values[key];
           const variants = [...new Set(rows.map((row) => row.receivedName))].sort(comparePtBr);
@@ -219,7 +220,7 @@ export function FoodMaReview({
           return (
             <div
               key={key}
-              className="rounded-md border border-border bg-white p-2.5"
+              className="rounded-md border border-border bg-surface p-2.5"
             >
               <div className="grid min-w-0 gap-2.5 md:grid-cols-2">
                 <div className="flex min-w-0 items-start gap-2 border-b border-border pb-2 md:col-span-2">
@@ -244,7 +245,7 @@ export function FoodMaReview({
                         employeeId: "",
                       })
                     }
-                    className="input mt-1 w-full border border-border bg-white read-only:bg-slate-50"
+                    className="input mt-1 w-full border border-border bg-surface read-only:bg-surface-muted"
                   />
                 </label>
                 <label className="text-xs">
@@ -280,7 +281,7 @@ export function FoodMaReview({
                               | "KEEP_FIRST",
                           })
                         }
-                        className="mt-1 w-full rounded-md border border-amber-300 px-2 py-1"
+                        className="mt-1 w-full rounded-md border border-warning/40 px-2 py-1"
                       >
                         <option value="KEEP_ALL">Manter todas</option>
                         <option value="KEEP_FIRST">Uma por dia</option>
@@ -292,10 +293,10 @@ export function FoodMaReview({
             </div>
           );
         })}
-        {!visibleGroups.length && <p className="rounded-md border border-dashed border-border bg-white p-6 text-center text-sm text-text-muted">Nenhum colaborador encontrado neste filtro.</p>}
+        {!visibleGroups.length && <p className="rounded-md border border-dashed border-border bg-surface p-6 text-center text-sm text-text-muted">Nenhum colaborador encontrado neste filtro.</p>}
       </div>
-      <footer className="food-review-footer flex flex-col gap-3 border-t border-border bg-white sm:flex-row sm:items-center sm:justify-between"><Button type="button" variant="secondary" disabled={busy||removing} onClick={()=>setCancelOpen(true)}>Cancelar importação</Button><div className="flex flex-col gap-2 text-right sm:items-end"><span className={`text-xs ${pendingCount?"text-amber-700":"text-emerald-700"}`}>{pendingCount?`${pendingCount} pendência(s) precisam ser resolvidas`:"0 pendências · revisão pronta para confirmar"}</span><Button type="button" onClick={finalize} loading={busy} disabled={pendingCount>0} aura>Confirmar revisão e gerar rateio</Button></div></footer>
-      {error && <p className="absolute bottom-24 left-4 right-4 z-10 rounded-md bg-red-50 p-3 text-sm text-red-700 shadow">{error}</p>}
+      <footer className="food-review-footer flex flex-col gap-3 border-t border-border bg-surface sm:flex-row sm:items-center sm:justify-between"><Button type="button" variant="secondary" disabled={busy||removing} onClick={()=>setCancelOpen(true)}>Cancelar importação</Button><div className="flex flex-col gap-2 text-right sm:items-end"><span className={`text-xs ${pendingCount?"text-warning-text":"text-success-text"}`}>{pendingCount?`${pendingCount} pendência(s) precisam ser resolvidas`:"0 pendências · revisão pronta para confirmar"}</span><Button type="button" onClick={finalize} loading={busy} disabled={pendingCount>0} aura>Confirmar revisão e gerar rateio</Button></div></footer>
+      {error && <FeedbackAlert status="error" className="absolute bottom-24 left-4 right-4 z-10 shadow-elevation-sm">{error}</FeedbackAlert>}
     </article>
     <form method="dialog" className="modal-backdrop"><button aria-label="Fechar revisão" disabled={busy||removing||cancelling}>Fechar</button></form>
     </dialog>

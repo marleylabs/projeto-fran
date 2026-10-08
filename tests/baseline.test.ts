@@ -1181,7 +1181,8 @@ test("alimentação manual: valor por refeição editável no PA (mesma regra do
   ]);
   // regressão: o input do lançamento manual não pode voltar a ficar somente leitura/desabilitado por localidade
   const input = page.slice(page.indexOf("id={`food-manual-amount-${locality}`}"), page.indexOf("/>", page.indexOf("id={`food-manual-amount-${locality}`}")));
-  assert.ok(input.includes("value={manualAmount}") && input.includes("setManualAmount(e.target.value)"));
+  // Fase 7H: CurrencyInput controlado pelo mesmo texto (manualAmount); a digitação volta a ser texto com 2 casas
+  assert.ok(input.includes("<CurrencyInput") && input.includes("value={currencyValue(manualAmount)}") && input.includes("setManualAmount(currencyText(value))"));
   assert.doesNotMatch(input, /readOnly|disabled/);
   // o valor digitado é enviado também no PA e o servidor não força o valor do cadastro por localidade
   assert.match(page, /\r?\n\s+amount: manualAmount,\r?\n\s+\}\),/); // enviado também no PA (fora do ramo MA)
@@ -1254,8 +1255,10 @@ test("alimentação PA manual: NF individual na etapa 2, sem campo global, valid
     readFile(new URL("../src/modules/accounts-payable/food/server.ts", import.meta.url), "utf8"),
   ]);
   // etapa 2: coluna Emissão NF (select por colaborador) entre Refeições e Subtotal; etapa 3 sem campo global
-  assert.match(page, /<span>Refeições<\/span>\s*<span>Emissão NF<\/span>\s*<span>Subtotal<\/span>/);
-  assert.match(page, /aria-label=\{`Emissão NF de \$\{employee\?\.officialName/); assert.match(page, /FOOD_PA_INVOICE_CODES\.map/);
+  // (Fase 7H: tabela PA na FoodPaManualTable — colunas Refeições → Emissão NF → … → Subtotal, select de NF por colaborador)
+  const paTable = await readFile(new URL("../src/modules/accounts-payable/food/ui/FoodPaManualTable.tsx", import.meta.url), "utf8");
+  assert.ok(paTable.indexOf('header: "Refeições"') < paTable.indexOf('header: "Emissão NF"') && paTable.indexOf('header: "Emissão NF"') < paTable.indexOf('header: "Subtotal"'));
+  assert.match(paTable, /aria-label=\{`Emissão NF de \$\{row\.employee\?\.officialName/); assert.match(paTable, /FOOD_PA_INVOICE_CODES\.map/); assert.match(page, /<FoodPaManualTable/);
   assert.doesNotMatch(page, /manualInvoice\b|food-manual-invoice/);
   assert.match(page, /invoiceEmission: manualInvoices\[collaboratorId\]/); assert.doesNotMatch(page, /company:\s*foodInvoiceEmissionToCompany/);
   assert.match(page, /paQuantitiesValid && paInvoicesValid/);
@@ -2569,6 +2572,31 @@ test("DeletionModal 7G: devolve o foco ao gatilho ao fechar (sem focar elemento 
   assert.match(source, /const ready=\(!requireKeyword\|\|confirmation==="EXCLUIR"\)&&\(!requireKeyword\|\|Boolean\(reason\)\);/);
   assert.match(source, /onCancel=\{busy\?event=>event\.preventDefault\(\):onClose\}/); assert.match(source, /onClick=\{\(\)=>onConfirm\(reason\)\}/);
   assert.match(source, /export function DeletionModal\(props:DeletionModalProps\)\{return props\.open\?<OpenDeletionModal \{\.\.\.props\}\/>:null;\}/);
+});
+
+// ---- Fase 7H: Alimentação MA/PA no Design System (só apresentação; regras, payloads e chamadas seguem na página/servidor).
+test("alimentação 7H: MA/PA no Design System, regras na página e componentes visuais sem cálculo nem regra de NF", async () => {
+  const base = "../src/modules/accounts-payable/food/ui/";
+  const [page, paTable, rateio, occurrences, summary, editor, review] = await Promise.all(["../src/app/pagamentos/alimentacao/page.tsx", base + "FoodPaManualTable.tsx", base + "FoodRateioParts.tsx", base + "FoodOccurrenceTable.tsx", base + "FoodLocalitySummary.tsx", base + "FoodMaEditor.tsx", base + "FoodMaReview.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  // navegação: Tabs da foundation para estado (MA/PA mantidos montados), ciclo do MA e forma de entrada
+  assert.match(page, /<Tabs label="Estado do processamento de alimentação"/); assert.match(page, /<TabPanel value="MA" keepMounted/); assert.match(page, /<TabPanel value="PA" keepMounted/);
+  assert.match(page, /<Tabs label="Ciclo de alimentação do Maranhão"/); assert.match(page, /<Tabs label="Forma de entrada"/);
+  assert.doesNotMatch(page, /role="tablist"|AllocationCard|AllocationDepartment|ManualEntrySection|<FileInput\s|modal-box|<table/);
+  // upload no padrão (UploadDropzone) com reset preservado; rateio pelas 4 perspectivas compartilhadas, padrão Departamento
+  assert.match(page, /<UploadDropzone\s+key=\{fileInputKey\}/); assert.match(page, /<AllocationViews/); assert.match(page, /useState<AllocationViewId>\("department"\)/);
+  // regras/payloads seguem na página e no servidor (NF só enviada; empresa nunca no payload)
+  assert.match(page, /invoiceEmission: manualInvoices\[collaboratorId\]/); assert.match(page, /paQuantitiesValid && paInvoicesValid/); assert.doesNotMatch(page, /company:\s*FOOD_PA_INVOICES|company:\s*foodInvoiceEmissionToCompany/);
+  // componentes visuais: sem fetch, sem cálculo financeiro, empresa PA só lida do helper único da regra
+  for (const [name, source] of Object.entries({ paTable, rateio, occurrences, summary })) {
+    assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ""), /fetch\(|prisma|amountToCents|buildFoodPaCompanyRateio|parseFoodPaInvoice/, name);
+    assert.doesNotMatch(source, /\b(emerald|amber|slate|orange|red|blue)-\d|#[0-9a-fA-F]{3,6}\b|<[a-z][a-z0-9]*\s[^>]*\btitle=|[✓⚠×↳⌕☑]/, name);
+  }
+  assert.match(paTable, /FOOD_PA_INVOICES\[row\.invoice\]\.company/); assert.doesNotMatch(paTable, /"BOINGA"|"PROJETA"/);
+  // revisão (workspace) e editor no Design System sem perder a estrutura testada
+  for (const [name, source] of Object.entries({ editor, review })) assert.doesNotMatch(source, /\b(emerald|amber|slate|red|blue|violet)-\d|[✓⚠⌕⌄×]/, name);
+  assert.match(review, /<dialog ref=\{dialogRef\}/); assert.match(review, /<StatusBadge/); assert.match(editor, /<StatusBadge tone=\{info\.tone\}>/);
+  // não importa visual específico de outros módulos
+  assert.doesNotMatch(page + paTable + rateio + occurrences, /basic-basket\/ui|breakfast\/ui|transit-voucher\/ui/);
 });
 
 test("Tabs 7H: keepMounted mantém o painel inativo no DOM (oculto); sem a prop, só o painel ativo é renderizado", async () => {
