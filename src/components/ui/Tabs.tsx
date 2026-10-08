@@ -91,12 +91,14 @@ export function Tabs({ label, items, value, onValueChange, variant = "underline"
   );
 }
 
-export function TabPanel({ value, children, className }: { value: string; children: ReactNode; className?: string }) {
+/** keepMounted: o painel inativo fica no DOM com `hidden` (preserva o estado de formulários ao trocar de aba). */
+export function TabPanel({ value, children, className, keepMounted = false }: { value: string; children: ReactNode; className?: string; keepMounted?: boolean }) {
   const context = useContext(TabsContext);
   if (!context) throw new Error("TabPanel deve ficar dentro de <Tabs>.");
-  if (context.value !== value) return null;
+  const active = context.value === value;
+  if (!active && !keepMounted) return null;
   return (
-    <div role="tabpanel" id={panelId(context.baseId, value)} aria-labelledby={tabId(context.baseId, value)} tabIndex={0} className={clsx("focus-visible:outline-offset-4", className)}>
+    <div role="tabpanel" id={panelId(context.baseId, value)} aria-labelledby={tabId(context.baseId, value)} hidden={!active} tabIndex={0} className={clsx("focus-visible:outline-offset-4", className)}>
       {children}
     </div>
   );

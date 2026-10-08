@@ -2570,3 +2570,14 @@ test("DeletionModal 7G: devolve o foco ao gatilho ao fechar (sem focar elemento 
   assert.match(source, /onCancel=\{busy\?event=>event\.preventDefault\(\):onClose\}/); assert.match(source, /onClick=\{\(\)=>onConfirm\(reason\)\}/);
   assert.match(source, /export function DeletionModal\(props:DeletionModalProps\)\{return props\.open\?<OpenDeletionModal \{\.\.\.props\}\/>:null;\}/);
 });
+
+test("Tabs 7H: keepMounted mantém o painel inativo no DOM (oculto); sem a prop, só o painel ativo é renderizado", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { Tabs, TabPanel } = await import("../src/components/ui/Tabs");
+  const items = [{ value: "a", label: "A" }, { value: "b", label: "B" }];
+  const kept = renderToStaticMarkup(createElement(Tabs, { label: "X", items, value: "a", onValueChange: () => undefined }, createElement(TabPanel, { value: "a", keepMounted: true, children: "painel-a" }), createElement(TabPanel, { value: "b", keepMounted: true, children: "painel-b" })));
+  assert.match(kept, /painel-a/); assert.match(kept, /<div role="tabpanel"[^>]*hidden=""[^>]*>painel-b/);
+  const plain = renderToStaticMarkup(createElement(Tabs, { label: "X", items, value: "a", onValueChange: () => undefined }, createElement(TabPanel, { value: "a", children: "painel-a" }), createElement(TabPanel, { value: "b", children: "painel-b" })));
+  assert.match(plain, /painel-a/); assert.doesNotMatch(plain, /painel-b/);
+});

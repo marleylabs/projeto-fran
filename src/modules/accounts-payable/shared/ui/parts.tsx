@@ -42,10 +42,10 @@ export function InfoTip({ label, content }: { label: string; content: ReactNode 
 export function Disclosure({ title, meta, level = 1, defaultOpen = false, children }: { title: ReactNode; meta?: ReactNode; level?: 1 | 2; defaultOpen?: boolean; children: ReactNode }) {
   return (
     <details open={defaultOpen} className={clsx("group min-w-0 rounded-control border border-border", level === 1 ? "bg-surface" : "bg-surface-muted/60")}>
-      <summary className={clsx("flex cursor-pointer list-none items-center gap-2 rounded-control px-3 hover:bg-surface-muted [&::-webkit-details-marker]:hidden", level === 1 ? "min-h-11" : "min-h-10")}>
+      <summary className={clsx("flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-0.5 rounded-control px-3 py-1.5 hover:bg-surface-muted [&::-webkit-details-marker]:hidden", level === 1 ? "min-h-11" : "min-h-10")}>
         <ChevronRight size={16} aria-hidden="true" className="shrink-0 text-foreground-muted transition-transform group-open:rotate-90 motion-reduce:transition-none" />
-        <span className={clsx("min-w-0 flex-1 truncate", level === 1 ? "text-card-title" : "text-body font-semibold")}>{title}</span>
-        {meta && <span className="shrink-0 text-caption text-foreground-muted tabular-nums">{meta}</span>}
+        <span className={clsx("min-w-[9rem] flex-1 truncate", level === 1 ? "text-card-title" : "text-body font-semibold")}>{title}</span>
+        {meta && <span className="ml-auto shrink-0 text-caption text-foreground-muted tabular-nums">{meta}</span>}
       </summary>
       <div className="border-t border-border p-2 sm:p-3">{children}</div>
     </details>
