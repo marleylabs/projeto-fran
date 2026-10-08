@@ -1028,13 +1028,15 @@ test("café da manhã: Máscara Flash (CNPJ | NOME COMPLETO | CPF | FLEXIVEL) po
   assert.throws(() => buildBreakfastFlashRows({ ...map, financialRecord: { grossAmount: "737.49" } }), BreakfastFlashExportError);
   assert.throws(() => buildBreakfastFlashRows({ ...map, allocations: [...allocations, { ...allocations[0], id: "c2" }] }), /mais de uma vez/);
   // isolamento: só Café da Manhã ganha o botão/rota; rota usa a mesma permissão do download
-  const [route, section, transit] = await Promise.all([
+  const [route, section, transit, cafeView] = await Promise.all([
     readFile(new URL("../src/app/api/accounts-payable/breakfast/[mapId]/flash/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/modules/accounts-payable/breakfast/BreakfastSection.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/pagamentos/vale-transporte/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/breakfast/ui/BreakfastAllocationView.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(route, /requirePermission\(PERMISSIONS\.FINANCIAL_RECORDS_READ\)/); assert.match(route, /deletedAt: null/);
-  assert.match(section, /Download do rateio XLSX/); assert.match(section, /Download da Máscara Flash/);
+  // Fase 7F: botões na view do Rateio (apresentação); a chamada da rota segue na seção
+  assert.match(cafeView, /Download do rateio XLSX/); assert.match(cafeView, /Download da Máscara Flash/); assert.match(section, /\/api\/accounts-payable\/breakfast\/\$\{mapId\}\/flash/);
   assert.doesNotMatch(transit, /Flash/);
 });
 
@@ -1335,8 +1337,11 @@ test("espelho de ponto: aplicar ATRIBUI (idempotente), só selecionados aptos, e
     readFile(new URL("../src/modules/accounts-payable/breakfast/point-mirror-server.ts", import.meta.url), "utf8"),
   ]);
   // input de extras continua editável e só muda pelo clique explícito (sem effect reaplicando)
-  assert.match(section, /aria-label="Quantidade extras"[^>]*value=\{value\.extra\} onChange=\{\(event\) => patchValue\(row\.id, \{ extra: event\.target\.value \}\)\}/);
-  assert.doesNotMatch(section, /useEffect\([^)]*applyBreakfastExtraSuggestions/); assert.match(section, /onClick=\{applyPointMirror\}/);
+  // (Fase 7F: input na BreakfastFillTable, repassado à seção por onPatch=patchValue)
+  const fillTable = await readFile(new URL("../src/modules/accounts-payable/breakfast/ui/BreakfastFillTable.tsx", import.meta.url), "utf8");
+  assert.match(fillTable, /quantityInput\(row, "extra", "Quantidade extras"\)/); assert.match(fillTable, /value=\{value\[key\]\} onChange=\{\(event\) => onPatch\(row\.id, \{ \[key\]: event\.target\.value \}\)\}/);
+  assert.match(section, /onPatch=\{patchValue\}/); assert.doesNotMatch(fillTable, /applyBreakfastExtraSuggestions|useEffect/);
+  assert.doesNotMatch(section, /useEffect\([^)]*applyBreakfastExtraSuggestions/); assert.match(section, /onApply=\{applyPointMirror\}/); // ImportFlow: botão "Aplicar Quantidades Extras" (clique explícito)
   // segurança: mesma permissão do lançamento, limite de tamanho, nada persistido, sem log de conteúdo
   assert.match(route, /requirePermission\(PERMISSIONS\.FINANCIAL_RECORDS_CREATE\)/); assert.match(route, /MAX_POINT_MIRROR_FILE_SIZE/);
   assert.doesNotMatch(server, /\.create\(|\.update\(|\.upsert\(|writeFile|storePrivateFile|console\./);
@@ -2477,4 +2482,31 @@ test("cesta básica 7E.4: servidor corrige só o manual — importado/efetivo/Fa
   // Dialog da foundation: só o corpo rola (sr-only/absolutos não estendem o <dialog>; sem barra dupla nem vazio no mobile)
   const dialog = await readFile(new URL("../src/components/ui/Dialog.tsx", import.meta.url), "utf8");
   assert.match(dialog, /m-auto w-\[calc\(100%-2rem\)\] overflow-hidden rounded-modal/); assert.match(dialog, /"relative min-h-0 flex-1 overflow-y-auto/);
+});
+
+// ---- Fase 7F: Café da Manhã no Design System (só apresentação; regras e chamadas seguem na seção).
+test("café da manhã 7F: apresentação no Design System, regras na seção e componentes visuais sem cálculo", async () => {
+  const base = "../src/modules/accounts-payable/breakfast/";
+  const [section, fill, mirror, view, summary] = await Promise.all(["BreakfastSection.tsx", "ui/BreakfastFillTable.tsx", "ui/BreakfastPointMirror.tsx", "ui/BreakfastAllocationView.tsx", "ui/BreakfastSummaryView.tsx"].map((path) => readFile(new URL(base + path, import.meta.url), "utf8")));
+  // estrutura: Tabs da foundation, Dialog na correção, componentes visuais extraídos
+  assert.match(section, /<Tabs label="Etapas do Café da Manhã" items=\{STAGES\}/); assert.match(section, /<Dialog\s/); assert.doesNotMatch(section, /modal-box|role="tablist"|<table/);
+  for (const name of ["BreakfastFillTable", "BreakfastPointMirror", "BreakfastAllocationView", "BreakfastSummaryView"]) assert.match(section, new RegExp(`<${name}\\s`), name);
+  // regras e payloads continuam na seção (Quantidade Final = base + extras − desconto; Total = final × valor unitário)
+  assert.match(section, /calculateFinalQuantity\(baseDays, Number\(value\.extra\), Number\(value\.discount\)\)/); assert.match(section, /calculateBreakfastEmployeeTotal\(priceCents, finalQuantity\)/);
+  assert.match(section, /entries = selectedIds\.map\(\(id\) => \{ const value = values\[id\]; return \{ employeeId: id, companyId: value\.companyId, extraQuantity: Number\(value\.extra\), discountQuantity: Number\(value\.discount\)/);
+  assert.match(section, /method: "PATCH"/); assert.match(section, /fixedDepartment=\{BREAKFAST_ALLOWED_DEPARTMENT\}/);
+  // componentes visuais: sem cálculo, sem fetch, sem tokens crus de cor/hex nem title=
+  for (const [name, source] of Object.entries({ fill, mirror, view, summary })) {
+    assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ""), /calculateFinalQuantity|calculateBreakfastEmployeeTotal|parseUnitPriceToCents|fetch\(/, name);
+    // title= de elemento HTML (tooltip nativo); title de componente (Card/ImportFlow/FeedbackAlert) é cabeçalho
+    assert.doesNotMatch(source, /\b(emerald|amber|slate|orange|red)-\d|#[0-9a-fA-F]{3,6}\b|<[a-z][a-z0-9]*\s[^>]*\btitle=/, name);
+  }
+  assert.doesNotMatch(section, /\b(emerald|amber|slate|orange|red)-\d|title=\{/);
+  // Espelho do Café: 5 etapas (sem Revisar), CSV/XLSX até 10 MB, aplicar só por clique
+  assert.doesNotMatch(mirror, /\sreview=|onReview/); assert.match(mirror, /accept=".csv,.xlsx"/); assert.match(mirror, /maxSize=\{MAX_POINT_MIRROR_FILE_SIZE\}/);
+  // Rateio: quatro perspectivas compartilhadas, padrão Empresa/Departamento, Corrigir só em linhas calculadas
+  assert.match(view, /<AllocationViews/); assert.match(view, /useState<AllocationViewId>\("companyDepartment"\)/); assert.match(view, /rowActions=\{\(row\) => row\.finalQuantity !== null &&/);
+  assert.match(view, /expectedCents=\{amountToCents\(map\.totalAmount\)\}/);
+  // Resumo: Empresa → Centro de Custo (não é perspectiva do Rateio)
+  assert.match(summary, /caption="Resumo por Empresa e Centro de Custo"/); assert.doesNotMatch(summary, /AllocationViews/);
 });

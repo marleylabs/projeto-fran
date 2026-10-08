@@ -5,61 +5,41 @@
 // rateio, resumo, XLSX) via os componentes compartilhados em @/components/allocation e as
 // funções puras de calendário/feriados em @/modules/shared — mas com domínio de dados próprio
 // (BreakfastCompetence/Map/Allocation), sem nenhuma relação com TransitVoucher*.
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList } from "@/components/allocation/AllocationCard";
-import { AllocationViews } from "@/components/allocation/AllocationViews";
-import { normalizeAllocationRow, type AllocationViewId } from "@/modules/accounts-payable/shared/allocation-views";
-import { CompetenceCalendar, HolidayModal, type Holiday } from "@/components/allocation/CompetenceHolidays";
+// Fase 7F: apresentação no Design System (Tabs, DataTable, CalculatedValue, ImportFlow, Dialog, AllocationViews).
+// Estado, chamadas de API, prévia de cálculo e save continuam AQUI; os componentes em ./ui só exibem.
+import { FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { CalendarDays } from "lucide-react";
+import { CompetenceCalendar, HolidayModal } from "@/components/allocation/CompetenceHolidays";
 import { CompanyModal, companyLabel, normalizeText as normalize, type Company } from "@/components/allocation/CompanyPicker";
-import { Badge, Button, DeletionModal, EmptyState, FileInput, MetricCard, buttonClassName, useToast } from "@/components/ui";
+import { Button, CalculatedValue, Card, CardHeader, DeletionModal, Dialog, FeedbackAlert, Field, TabPanel, Tabs, TextInput, textInputClassName, useToast } from "@/components/ui";
 import { type CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
-import { ManualEntrySection } from "@/components/ManualEntryLayout";
-import { BREAKFAST_ALLOWED_DEPARTMENT, calculateBreakfastEmployeeTotal, calculateFinalQuantity, formatBreakfastObservation, parseUnitPriceToCents, type BreakfastObservationKind } from "./calculations";
-import { comparePtBr } from "@/lib/sorting/ptBr";
-import { amountToCents, groupBreakfastByCompanyCostCenter } from "./rateio";
+import { BasicBasketCompetenceSummary as CompetenceSummary } from "@/modules/accounts-payable/basic-basket/ui/BasicBasketCompetenceSummary";
+import { BREAKFAST_ALLOWED_DEPARTMENT, calculateBreakfastEmployeeTotal, calculateFinalQuantity, parseUnitPriceToCents, type BreakfastObservationKind } from "./calculations";
+import { groupBreakfastByCompanyCostCenter } from "./rateio";
 import { applyBreakfastExtraSuggestions } from "./point-mirror";
-
-type PointMirrorStatus = "APPLY" | "NOT_SELECTED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "INVALID_CPF" | "NOT_IN_FILE";
-type PointMirrorPreview = {
-  period: { from: string; to: string } | null;
-  totals: { rows: number; people: number; saturdays: number; sundays: number; holidays: number; extraDates: number; peopleWithExtras: number; located: number; notFound: number; apply: number; notSelected: number; notEligible: number; notInFile: number; invalidCpf: number };
-  warnings: string[];
-  people: Array<{ employeeId: string | null; employeeName: string; cpfMasked: string; saturdays: number; sundays: number; holidays: number; extraQuantity: number; status: PointMirrorStatus }>;
-};
-const pointStatusLabel = (status: PointMirrorStatus, extra: number) => ({ APPLY: extra ? "Será aplicado" : "Presente no arquivo com 0 extras", NOT_SELECTED: "Encontrado no arquivo, mas não selecionado", NOT_ELIGIBLE: "Fora do TOPOGEO ou inativo", NOT_FOUND: "Não localizado (CPF)", INVALID_CPF: "CPF inválido", NOT_IN_FILE: "Selecionado, não está no arquivo — mantém o valor atual" })[status];
-const isoBr = (iso: string) => iso.split("-").reverse().join("/");
 import { triggerDownload } from "@/lib/export/download";
+import { BreakfastAllocationView } from "./ui/BreakfastAllocationView";
+import { BreakfastFillTable } from "./ui/BreakfastFillTable";
+import { BreakfastPointMirror, type BreakfastPointMirrorPreview as PointMirrorPreview } from "./ui/BreakfastPointMirror";
+import { BreakfastSummaryView } from "./ui/BreakfastSummaryView";
+import { dayMonth, money, moneyCents, people } from "./ui/format";
+import type { BreakfastAllocationRow as Allocation, BreakfastContext as Context, BreakfastEntity as Entity, BreakfastEntryValue as EntryValue, BreakfastMapData as MapData } from "./ui/types";
 
-type Entity = { id: string; cnpj: string | null; tradeName: string; legalName: string; activityArea: string; locality: string };
-type Context = { year: number; month: number; unitPrice: string; unitPriceDefined: boolean; holidays: Holiday[]; weekdays: number; holidaysInMonth: number; holidaysOnWeekdays: number; workingDays: number };
-type Allocation = {
-  id: string; employeeId: string | null; company: string; companyId?: string | null; employeeName: string; department: string | null; costCenter: string | null;
-  amount: string; workingDays: number | null; baseQuantity: number | null; extraQuantity: number | null; discountQuantity: number; finalQuantity: number | null; unitPrice: string | null;
-  observationType: BreakfastObservationKind | null; observationDetails: string | null;
-};
-type MapData = { id: string; version: number; totalAmount: string; administrativeEntity: Entity; financialRecord: { identifier: string } | null; allocations: Allocation[] };
-type EntryValue = { companyText: string; companyId: string; extra: string; discount: string; obsType: "" | BreakfastObservationKind; obsDetails: string };
-
-const money = (value: string | number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value));
+const STAGES = [{ value: "preenchimento", label: "Preenchimento" }, { value: "rateio", label: "Rateio" }, { value: "resumo", label: "Resumo" }];
 const cents = (value: string | number) => Math.round(Number(value) * 100);
 // O mapa é a fonte histórica: valor unitário e dias úteis vêm dos registros do próprio mapa, nunca da competência atual.
 const mapBase = (map: MapData | undefined) => { const row = map?.allocations.find((item) => item.workingDays !== null && item.unitPrice !== null); return row ? { workingDays: row.workingDays as number, unitPrice: Number(row.unitPrice).toFixed(2) } : null; };
-const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
-const people = (count: number) => `${count} ${count === 1 ? "colaborador" : "colaboradores"}`;
 const isInt = (value: string) => /^-?\d+$/.test(value.trim());
 // Cadastros compatíveis com Alimentação ou Café da Manhã (nunca nome de fornecedor fixo no componente).
 const matchesActivity = (activityArea: string) => { const value = normalize(activityArea); return value.includes("alimenta") || value.includes("cafe"); };
 
 function CorrectionModal({ target, companies, onClose, onSaved }: { target: { mapId: string; row: Allocation } | null; companies: Company[]; onClose: () => void; onSaved: () => Promise<void> }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const formId = `${useId()}-correction`;
   const [form, setForm] = useState({ companyText: "", extra: "0", discount: "0", obsType: "" as "" | BreakfastObservationKind, obsDetails: "", reason: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    const dialog = dialogRef.current; if (!dialog) return;
-    if (target && !dialog.open) dialog.showModal();
-    if (!target && dialog.open) dialog.close();
     if (target) { const row = target.row; setError(null); setForm({ companyText: row.company, extra: String(row.extraQuantity ?? 0), discount: String(row.discountQuantity ?? 0), obsType: row.observationType ?? "", obsDetails: row.observationDetails ?? "", reason: "" }); }
   }, [target]);
   const company = companies.find((item) => normalize(companyLabel(item)) === normalize(form.companyText) || normalize(item.legalName) === normalize(form.companyText));
@@ -75,25 +55,39 @@ function CorrectionModal({ target, companies, onClose, onSaved }: { target: { ma
       await onSaved(); onClose();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao corrigir."); } finally { setBusy(false); }
   }
+  const row = target?.row;
   return (
-    <dialog ref={dialogRef} className="modal" onCancel={onClose} onClose={onClose}>
-      <form onSubmit={submit} className="modal-box max-w-lg border border-base-300 bg-base-100">
-        <h2 className="text-lg font-bold text-neutral">Corrigir lançamento</h2>
-        <p className="mt-1 text-sm text-secondary">{target?.row.employeeName} · o registro atual é cancelado (com histórico) e um novo é gerado, preservando a base histórica do lançamento; só os campos que você alterar mudam o resultado.</p>
-        {target && <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg border border-base-300 bg-base-200/60 p-3 text-xs sm:grid-cols-4" aria-label="Base histórica preservada"><div><dt className="text-secondary">Valor unitário</dt><dd className="font-semibold">{target.row.unitPrice ? money(target.row.unitPrice) : "—"}</dd></div><div><dt className="text-secondary">Dias úteis / Quantidade</dt><dd className="font-semibold">{target.row.workingDays ?? "—"}</dd></div><div><dt className="text-secondary">Departamento</dt><dd className="font-semibold">{target.row.department ?? "—"}</dd></div><div><dt className="text-secondary">Centro de custo</dt><dd className="font-semibold">{target.row.costCenter ?? "—"}</dd></div></dl>}
-        {error && <p className="mt-3 rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">{error}</p>}
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <label className="form-control sm:col-span-2"><span className="label-text mb-1">Empresa</span><input list="cafe-companies-correction" className="input input-bordered w-full" value={form.companyText} onChange={(event) => setForm({ ...form, companyText: event.target.value })} /><datalist id="cafe-companies-correction">{companies.map((item) => <option key={item.id} value={companyLabel(item)} />)}</datalist></label>
-          <label className="form-control"><span className="label-text mb-1">Desconto</span><input inputMode="numeric" className="input input-bordered w-full text-center" value={form.discount} onChange={(event) => setForm({ ...form, discount: event.target.value })} /></label>
-          <label className="form-control"><span className="label-text mb-1">Quantidade extras</span><input inputMode="numeric" className="input input-bordered w-full text-center" value={form.extra} onChange={(event) => setForm({ ...form, extra: event.target.value })} /></label>
-          <label className="form-control"><span className="label-text mb-1">Observação</span><select className="select select-bordered w-full" value={form.obsType} onChange={(event) => setForm({ ...form, obsType: event.target.value as "" | BreakfastObservationKind })}><option value="">—</option><option value="RETROACTIVE">Retroativo</option><option value="OTHER">Outros</option></select></label>
-          {form.obsType && <label className="form-control sm:col-span-2"><span className="label-text mb-1">Detalhes</span><input className="input input-bordered w-full" value={form.obsDetails} onChange={(event) => setForm({ ...form, obsDetails: event.target.value })} /></label>}
-          <label className="form-control sm:col-span-2"><span className="label-text mb-1">Motivo da correção *</span><input required className="input input-bordered w-full" value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} /></label>
+    <Dialog
+      open={target !== null}
+      onClose={onClose}
+      dismissible={!busy}
+      size="lg"
+      title="Corrigir lançamento"
+      description={`${row?.employeeName ?? ""} · o registro atual é cancelado (com histórico) e um novo é gerado, preservando a base histórica do lançamento; só os campos que você alterar mudam o resultado.`}
+      footer={<><Button variant="secondary" onClick={onClose} disabled={busy}>Cancelar</Button><Button type="submit" form={formId} loading={busy} disabled={busy || !form.reason.trim()}>Salvar correção</Button></>}
+    >
+      <form id={formId} onSubmit={submit} className="grid gap-4">
+        {row && (
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-control border border-border bg-surface-muted p-3 text-caption sm:grid-cols-4" aria-label="Base histórica preservada">
+            <div><dt className="text-foreground-muted">Valor unitário</dt><dd className="font-semibold tabular-nums">{row.unitPrice ? money(row.unitPrice) : "—"}</dd></div>
+            <div><dt className="text-foreground-muted">Dias úteis / Quantidade</dt><dd className="font-semibold tabular-nums">{row.workingDays ?? "—"}</dd></div>
+            <div><dt className="text-foreground-muted">Departamento</dt><dd className="font-semibold">{row.department ?? "—"}</dd></div>
+            <div><dt className="text-foreground-muted">Centro de custo</dt><dd className="font-semibold">{row.costCenter ?? "—"}</dd></div>
+          </dl>
+        )}
+        {error && <FeedbackAlert status="error">{error}</FeedbackAlert>}
+        <Field label="Empresa">{(control) => <><input {...control} list="cafe-companies-correction" className={textInputClassName} value={form.companyText} onChange={(event) => setForm({ ...form, companyText: event.target.value })} /><datalist id="cafe-companies-correction">{companies.map((item) => <option key={item.id} value={companyLabel(item)} />)}</datalist></>}</Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Desconto (quantidade)">{(control) => <TextInput {...control} type="number" inputMode="numeric" min={0} step={1} className="tabular-nums" value={form.discount} onChange={(event) => setForm({ ...form, discount: event.target.value })} />}</Field>
+          <Field label="Quantidade extras">{(control) => <TextInput {...control} type="number" inputMode="numeric" min={0} step={1} className="tabular-nums" value={form.extra} onChange={(event) => setForm({ ...form, extra: event.target.value })} />}</Field>
         </div>
-        <div className="modal-action"><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>Cancelar</Button><Button type="submit" loading={busy} disabled={busy || !form.reason.trim()}>Salvar correção</Button></div>
+        <div className="grid gap-3 sm:grid-cols-[12rem_minmax(0,1fr)]">
+          <Field label="Observação">{(control) => <select {...control} className={textInputClassName} value={form.obsType} onChange={(event) => setForm({ ...form, obsType: event.target.value as "" | BreakfastObservationKind })}><option value="">—</option><option value="RETROACTIVE">Retroativo</option><option value="OTHER">Outros</option></select>}</Field>
+          {form.obsType && <Field label="Detalhes">{(control) => <TextInput {...control} value={form.obsDetails} onChange={(event) => setForm({ ...form, obsDetails: event.target.value })} />}</Field>}
+        </div>
+        <Field label="Motivo da correção" required>{(control) => <TextInput {...control} required value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} />}</Field>
       </form>
-      <form method="dialog" className="modal-backdrop"><button aria-label="Fechar">Fechar</button></form>
-    </dialog>
+    </Dialog>
   );
 }
 
@@ -157,8 +151,6 @@ export function BreakfastSection() {
   // Máscara Flash: gerada no backend a partir do lançamento salvo; erros de validação (sem CNPJ,
   // sem colaboradores, total divergente) chegam como JSON e viram toast — nenhum arquivo parcial.
   const [flashBusy, setFlashBusy] = useState<string | null>(null);
-  // Perspectiva do Rateio por lançamento (local; padrão = Empresa → Departamento, a visão que já existia).
-  const [rateioView, setRateioView] = useState<Record<string, AllocationViewId>>({});
   async function downloadFlash(mapId: string) {
     setFlashBusy(mapId);
     try {
@@ -187,8 +179,10 @@ export function BreakfastSection() {
   const [pointFile, setPointFile] = useState<File | null>(null);
   const [pointBusy, setPointBusy] = useState(false);
   const [pointMirror, setPointMirror] = useState<(PointMirrorPreview & { competence: string }) | null>(null);
+  // Só exibição: quantos colaboradores receberam as extras desta prévia (etapa "Resultado" do ImportFlow).
+  const [pointApplied, setPointApplied] = useState<number | null>(null);
   async function processPointMirror() {
-    if (!pointFile) return; setPointBusy(true);
+    if (!pointFile) return; setPointBusy(true); setPointApplied(null);
     try {
       const data = new FormData(); data.set("file", pointFile); data.set("selectedIds", JSON.stringify(selectedIds));
       const response = await fetch("/api/accounts-payable/breakfast/point-mirror", { method: "POST", body: data });
@@ -202,8 +196,10 @@ export function BreakfastSection() {
     if (!pointMirror) return;
     const applicable = pointMirror.people.filter((person) => person.status === "APPLY" && person.employeeId && selectedIds.includes(person.employeeId)) as Array<PointMirrorPreview["people"][number] & { employeeId: string }>;
     setValues((current) => applyBreakfastExtraSuggestions(current, applicable));
+    setPointApplied(applicable.length);
     toast.success(`Quantidade Extras aplicada para ${applicable.length} colaborador(es). Os valores continuam editáveis.`);
   }
+  const resetPointMirror = () => { setPointFile(null); setPointMirror(null); setPointApplied(null); };
   function applyCompany(text: string) { setBulkCompany(text); const company = companyByText(text); if (company) setValues((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, selectedIds.includes(id) ? { ...value, companyText: companyLabel(company), companyId: company.id } : value]))); }
 
   const entityBase = useMemo(() => mapBase(maps.find((map) => map.administrativeEntity.id === entityId)), [maps, entityId]);
@@ -243,8 +239,8 @@ export function BreakfastSection() {
     catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Não foi possível excluir."); } finally { setDeleting(false); }
   }
 
-  // ---- Agregações de leitura; nada persistido/duplicado. Rateio (aba Rateio) mantém o detalhamento
-  // Empresa → Departamento → Colaborador; o consolidado do Resumo é Empresa → Centro de Custo (snapshot).
+  // ---- Agregações de leitura; nada persistido/duplicado. Rateio (aba Rateio) mantém as quatro perspectivas
+  // (padrão Empresa → Departamento → Colaborador); o consolidado do Resumo é Empresa → Centro de Custo (snapshot).
   const all = maps.flatMap((map) => map.allocations);
   const rateio = useMemo(() => groupBreakfastByCompanyCostCenter(all), [all]);
   const sum = (rows: Allocation[]) => rows.reduce((total, row) => total + cents(row.amount), 0);
@@ -253,150 +249,143 @@ export function BreakfastSection() {
   const difference = (grand - rateio.companiesCents) + (grand - rateio.costCentersCents) + (grand - mapsTotal);
   const uniquePeople = new Set(all.map((row) => row.employeeId ?? normalize(row.employeeName))).size;
   const totalMeals = all.reduce((total, row) => total + (row.finalQuantity ?? 0), 0);
-
-  const tabButton = (id: typeof tab, label: string) => <Button type="button" role="tab" aria-selected={tab === id} variant={tab === id ? "primary" : "ghost"} onClick={() => setTab(id)}>{label}</Button>;
   const monthLabel = `${String(month).padStart(2, "0")}/${year}`;
+  const severalDays = [...new Set(maps.map((map) => mapBase(map)?.workingDays))].length > 1;
+  const severalPrices = [...new Set(maps.map((map) => mapBase(map)?.unitPrice))].length > 1;
 
-  return <div className="grid gap-6">
-    <div className="rounded-lg border border-base-300 bg-base-100 p-1"><div role="tablist" aria-label="Etapas do Café da Manhã" className="grid grid-cols-3 gap-1">{tabButton("preenchimento", "Preenchimento")}{tabButton("rateio", "Rateio")}{tabButton("resumo", "Resumo")}</div></div>
-
-    {tab === "preenchimento" && <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-5" role="tabpanel">
-      <ManualEntrySection eyebrow="1. Dados necessários" title="Competência, calendário e valor">
-        <div className="grid gap-4 md:grid-cols-2">
-          <label className="form-control"><span className="label-text mb-1">Competência *</span><input type="month" className="input input-bordered w-full" value={competence} onChange={(event) => { setCompetence(event.target.value); setPointMirror(null); }} /></label>
-          <label className="form-control"><span className="label-text mb-1">Cadastro da obrigação *</span><select required className="select select-bordered w-full" value={entityId} onChange={(event) => setEntityId(event.target.value)}><option value="">Selecionar cadastro</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select></label>
-        </div>
-        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,22rem)_1fr]">
-          <div><CompetenceCalendar year={year} month={month} holidays={ctx?.holidays ?? []} onSelect={setHolidayDate} /><p className="mt-2 text-xs text-secondary">Feriados nacionais são automáticos. Clique em uma data para cadastrar feriados estaduais, municipais ou internos (ou para editar/remover os manuais).</p></div>
-          <div className="grid content-start gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2"><MetricCard label="Competência" value={monthLabel} /></div>
-              <MetricCard label="Dias úteis" value={String(ctx?.workingDays ?? "—")} description={ctx ? `${ctx.weekdays} seg–sex − ${ctx.holidaysOnWeekdays} feriado(s)` : undefined} accent />
-              <MetricCard label="Feriados" value={String(ctx?.holidaysInMonth ?? "—")} />
+  return <div className="grid gap-5">
+    <div>
+      <h2 className="text-section-title text-foreground">Café da Manhã</h2>
+      <p className="mt-0.5 text-body text-foreground-muted">Quantidade por dias úteis da competência, com Desconto e Quantidade Extras (Espelho de Ponto) por colaborador do {BREAKFAST_ALLOWED_DEPARTMENT}.</p>
+    </div>
+    <Tabs label="Etapas do Café da Manhã" items={STAGES} value={tab} onValueChange={(value) => setTab(value as typeof tab)} variant="segmented">
+      <TabPanel value="preenchimento" className="mt-4">
+        <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-4">
+          <Card padding="none">
+            <div className="grid gap-4 p-4 sm:p-5">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <CardHeader titleAs="h3" title="Competência, calendário e valor" description="Dias úteis = segunda a sexta menos os feriados em dias úteis." />
+                <div className="grid w-full gap-3 sm:w-auto sm:grid-cols-[12rem_16rem]">
+                  <Field label="Competência" required>{(control) => <input {...control} type="month" className={textInputClassName} value={competence} onChange={(event) => { setCompetence(event.target.value); setPointMirror(null); setPointApplied(null); }} />}</Field>
+                  <Field label="Cadastro da obrigação" required>{(control) => <select {...control} required className={textInputClassName} value={entityId} onChange={(event) => setEntityId(event.target.value)}><option value="">Selecionar cadastro</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select>}</Field>
+                </div>
+              </div>
+              <CompetenceSummary items={[
+                { label: "Competência", value: monthLabel },
+                { label: "Dias úteis", value: String(ctx?.workingDays ?? "—"), helper: ctx ? `${ctx.weekdays} seg–sex − ${ctx.holidaysOnWeekdays} feriado(s)` : undefined },
+                { label: "Feriados", value: String(ctx?.holidaysInMonth ?? "—"), helper: "No mês" },
+                { label: "Valor unitário", value: basePrice ? money(basePrice) : "—", helper: entityBase ? "Base histórica do mapa" : ctx?.unitPriceDefined ? "Salvo na competência" : "Padrão (não salvo)" },
+                { label: "Colaboradores", value: selectedIds.length, helper: "Selecionados" },
+                { label: "Prévia do total", value: moneyCents(previewTotal), helper: "Recalculado ao salvar", emphasis: true },
+              ]} />
             </div>
-            <div className="rounded-lg border border-base-300 p-3">
-              <span className="text-xs font-semibold uppercase tracking-wide text-secondary">Feriados cadastrados</span>
-              {ctx?.holidays.length ? <ul className="mt-2 grid gap-1 text-sm">{ctx.holidays.map((holiday) => <li key={holiday.date}><button type="button" className="text-left hover:text-primary" onClick={() => setHolidayDate(holiday.date)}><strong>{dayMonth(holiday.date)}</strong> — {holiday.name}<span className="ml-2 text-xs text-secondary">{holiday.source === "NATIONAL" ? "Nacional" : "Manual"}</span></button></li>)}</ul> : <p className="mt-1 text-sm text-secondary">Nenhum feriado marcado.</p>}
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-5 border-t border-border p-4 sm:p-5 lg:grid-cols-[minmax(0,22rem)_1fr]">
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-2">
+                <CompetenceCalendar year={year} month={month} holidays={ctx?.holidays ?? []} onSelect={setHolidayDate} />
+                <p className="text-caption text-foreground-muted">Feriados nacionais são automáticos. Clique em uma data para cadastrar feriados estaduais, municipais ou internos (ou para editar/remover os manuais).</p>
+              </div>
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-4">
+                <div>
+                  <h4 className="mb-2 text-label text-foreground-muted">Feriados cadastrados{ctx ? ` (${ctx.holidays.length})` : ""}</h4>
+                  {ctx?.holidays.length ? (
+                    <ul className="grid gap-1">
+                      {ctx.holidays.map((holiday) => (
+                        <li key={holiday.date}>
+                          <button type="button" className="flex w-full cursor-pointer items-start gap-2 rounded-control px-1.5 py-1 text-left text-body hover:bg-surface-muted" onClick={() => setHolidayDate(holiday.date)}>
+                            <CalendarDays size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-success-text" />
+                            <span className="min-w-0"><strong className="tabular-nums">{dayMonth(holiday.date)}</strong> — {holiday.name}<span className="block text-caption text-foreground-muted">{holiday.source === "NATIONAL" ? "Nacional" : "Manual"}</span></span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : <p className="text-body text-foreground-muted">Nenhum feriado marcado.</p>}
+                </div>
+                <div className="grid gap-2 rounded-control border border-border p-3">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <Field label="Valor unitário do café da manhã (R$)" className="min-w-40 flex-1">{(control) => <TextInput {...control} inputMode="decimal" className="tabular-nums" value={priceInput} onChange={(event) => setPriceInput(event.target.value)} />}</Field>
+                    <Button variant="secondary" onClick={savePrice} disabled={!priceDirty}>Salvar valor</Button>
+                  </div>
+                  <p className="text-caption text-foreground-muted">{ctx?.unitPriceDefined ? "Valor salvo nesta competência; lançamentos antigos não mudam se ele for alterado." : "Valor padrão R$ 12,50 (ainda não salvo para esta competência)."}</p>
+                </div>
+              </div>
             </div>
-            <div className="flex flex-wrap items-end gap-2 rounded-lg border border-base-300 p-3">
-              <label className="form-control min-w-40 flex-1"><span className="label-text mb-1">Valor unitário do café da manhã</span><input inputMode="decimal" className="input input-bordered w-full" value={priceInput} onChange={(event) => setPriceInput(event.target.value)} /></label>
-              <Button type="button" variant="secondary" onClick={savePrice} disabled={!priceDirty}>Salvar valor</Button>
-              <span className="basis-full text-xs text-secondary">{ctx?.unitPriceDefined ? "Valor salvo nesta competência; lançamentos antigos não mudam se ele for alterado." : "Valor padrão R$ 12,50 (ainda não salvo para esta competência)."}</span>
+          </Card>
+
+          <Card className="grid gap-4">
+            <CardHeader titleAs="h3" title="Colaboradores" description={`Somente ${BREAKFAST_ALLOWED_DEPARTMENT}. A empresa começa com o padrão de cada colaborador e continua editável por linha.`} />
+            {entityBase && <FeedbackAlert status="info">Este lançamento já possui mapa: novos colaboradores usarão a base histórica do mapa ({entityBase.workingDays} dias úteis · {money(entityBase.unitPrice)} por café), mesmo que a competência tenha sido alterada depois.</FeedbackAlert>}
+            <CollaboratorMultiCombobox value={selectedIds} options={topogeoCollaborators} onChange={changeSelection} fixedDepartment={BREAKFAST_ALLOWED_DEPARTMENT} />
+            {selectedIds.length > 0 && (
+              <div className="flex flex-wrap items-end gap-3 rounded-control border border-border bg-surface-muted p-3" role="group" aria-label="Aplicar a todos os selecionados">
+                <datalist id="cafe-companies">{companies.map((company) => <option key={company.id} value={companyLabel(company)} />)}</datalist>
+                <Field label="Empresa para todos os selecionados" className="min-w-56 flex-1">{(control) => <input {...control} list="cafe-companies" className={textInputClassName} value={bulkCompany} onChange={(event) => applyCompany(event.target.value)} placeholder="Digite para buscar" />}</Field>
+                <Button variant="secondary" onClick={() => setCompanyModal(true)}>Cadastrar empresa</Button>
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <BreakfastPointMirror
+              description="Sugere Quantidade Extras: +1 por data trabalhada em sábado, domingo ou feriado (Horas Trabalhadas > 00:00 e Jornada diferente de “Trabalho Esperado”), no máximo +1 por colaborador/data. Identificação somente por CPF. Nada é alterado antes de aplicar."
+              file={pointFile}
+              busy={pointBusy}
+              preview={pointMirror}
+              stale={Boolean(pointMirror && pointMirror.competence !== competence)}
+              appliedCount={pointApplied}
+              monthLabel={monthLabel}
+              currentExtra={(employeeId) => (employeeId && values[employeeId] && selectedIds.includes(employeeId) ? values[employeeId].extra : undefined)}
+              onSelect={(file) => { setPointFile(file); setPointMirror(null); setPointApplied(null); }}
+              onClearFile={resetPointMirror}
+              onProcess={processPointMirror}
+              onApply={applyPointMirror}
+              onReset={resetPointMirror}
+            />
+          </Card>
+
+          {selectedIds.length > 0 && (
+            <BreakfastFillTable
+              rows={preview}
+              values={values}
+              baseDays={baseDays}
+              unitPrice={basePrice}
+              companyListId="cafe-companies"
+              previewTotal={previewTotal}
+              onPatch={patchValue}
+              onCompanyText={(id, text) => { const company = companyByText(text); patchValue(id, { companyText: text, companyId: company?.id ?? "" }); }}
+            />
+          )}
+
+          <Card className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+            <CalculatedValue label="Prévia do Total Geral" value={moneyCents(previewTotal)} helper={`${people(selectedIds.length)} · recalculado pelo servidor ao salvar`} size="lg" live />
+            <div className="grid gap-1.5 md:justify-items-end">
+              <Button type="submit" disabled={busy || !canSave} loading={busy} aura={canSave} className="w-full md:w-auto md:min-w-56">Salvar / Gerar Rateio</Button>
+              {hint && <p className="text-caption text-foreground-muted">{hint}</p>}
             </div>
-          </div>
-        </div>
-      </ManualEntrySection>
+            {error && <FeedbackAlert status="error" className="md:col-span-2">{error}</FeedbackAlert>}
+          </Card>
+        </form>
+      </TabPanel>
 
-      <ManualEntrySection eyebrow="2. Pessoas" title="Colaboradores">
-        {entityBase && <p className="mb-3 rounded-lg border border-base-300 bg-base-100 p-3 text-sm text-secondary" role="note">Este lançamento já possui mapa: novos colaboradores usarão a base histórica do mapa ({entityBase.workingDays} dias úteis · {money(entityBase.unitPrice)} por café), mesmo que a competência tenha sido alterada depois.</p>}
-        <CollaboratorMultiCombobox value={selectedIds} options={topogeoCollaborators} onChange={changeSelection} fixedDepartment={BREAKFAST_ALLOWED_DEPARTMENT} />
-        <div className="mt-4 rounded-lg border border-base-300 p-3" aria-label="Importar Espelho de Ponto">
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="min-w-56 flex-1"><span className="label-text mb-1 block">Importar Espelho de Ponto (opcional)</span><FileInput accept=".csv,.xlsx" fileName={pointFile?.name ?? ""} loading={pointBusy} aria-label="Selecionar Espelho de Ponto" onChange={(event) => { setPointFile(event.target.files?.[0] ?? null); setPointMirror(null); }} /></div>
-            <Button type="button" variant="secondary" disabled={!pointFile || pointBusy} loading={pointBusy} onClick={processPointMirror}>Processar arquivo</Button>
-          </div>
-          <p className="mt-2 text-xs text-secondary">Sugere Quantidade Extras: +1 por data trabalhada em sábado, domingo ou feriado (Horas Trabalhadas &gt; 00:00 e Jornada diferente de “Trabalho Esperado”). Identificação somente por CPF. Nada é alterado antes de aplicar, e o arquivo não é armazenado.</p>
-          {pointMirror && <div className="mt-3 grid gap-3">
-            <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-8">{([["Período do ponto", pointMirror.period ? `${isoBr(pointMirror.period.from)} a ${isoBr(pointMirror.period.to)}` : "—"], ["Competência", `${String(month).padStart(2, "0")}/${year}`], ["Linhas analisadas", pointMirror.totals.rows], ["Colaboradores no arquivo", pointMirror.totals.people], ["Localizados (CPF)", pointMirror.totals.located], ["Não localizados", pointMirror.totals.notFound + pointMirror.totals.invalidCpf], ["Dias extras", `${pointMirror.totals.extraDates} (Sáb ${pointMirror.totals.saturdays} · Dom ${pointMirror.totals.sundays} · Fer ${pointMirror.totals.holidays})`], ["Serão aplicados", pointMirror.totals.apply]] as const).map(([label, value]) => <div key={label} className="rounded-md bg-base-200 p-2"><dt className="text-secondary">{label}</dt><dd className="font-semibold">{value}</dd></div>)}</dl>
-            {pointMirror.competence !== competence && <p role="alert" className="text-xs text-warning">A competência mudou depois do processamento; processe o arquivo novamente.</p>}
-            {pointMirror.warnings.length > 0 && <details className="text-xs text-warning"><summary>{pointMirror.warnings.length} aviso(s) de conferência (coluna Dia × Data)</summary><ul className="mt-1 list-inside list-disc">{pointMirror.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}
-            <div className="max-h-80 overflow-auto rounded-lg border border-base-300">
-              <table className="w-full min-w-[760px] text-sm">
-                <thead className="sticky top-0 bg-base-200 text-left text-xs"><tr><th className="p-2">Colaborador</th><th className="p-2">CPF</th><th className="p-2 text-center">Sáb.</th><th className="p-2 text-center">Dom.</th><th className="p-2 text-center">Feriado</th><th className="p-2 text-center">Sugerido</th><th className="p-2 text-center">Atual</th><th className="p-2">Situação</th></tr></thead>
-                <tbody>{[...pointMirror.people].sort((a, b) => Number(b.status === "APPLY") - Number(a.status === "APPLY") || comparePtBr(a.employeeName, b.employeeName)).map((person, index) => <tr key={`${person.employeeId ?? person.cpfMasked}-${index}`} className="border-t border-border">
-                  <td className="p-2 font-medium">{person.employeeName}</td><td className="p-2 text-xs tabular-nums text-secondary">{person.cpfMasked || "—"}</td>
-                  <td className="p-2 text-center">{person.status === "NOT_IN_FILE" ? "—" : person.saturdays}</td><td className="p-2 text-center">{person.status === "NOT_IN_FILE" ? "—" : person.sundays}</td><td className="p-2 text-center">{person.status === "NOT_IN_FILE" ? "—" : person.holidays}</td>
-                  <td className="p-2 text-center font-semibold">{person.status === "NOT_IN_FILE" ? "—" : person.extraQuantity}</td>
-                  <td className="p-2 text-center">{person.employeeId && values[person.employeeId] && selectedIds.includes(person.employeeId) ? values[person.employeeId].extra : "—"}</td>
-                  <td className={`p-2 text-xs ${person.status === "APPLY" ? "text-success" : "text-secondary"}`}>{pointStatusLabel(person.status, person.extraQuantity)}</td>
-                </tr>)}</tbody>
-              </table>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2"><span className="text-xs text-secondary">Substitui (não soma) a Quantidade Extras dos {pointMirror.totals.apply} colaborador(es) selecionados encontrados; os demais não mudam.</span><Button type="button" disabled={!pointMirror.totals.apply || pointMirror.competence !== competence} onClick={applyPointMirror}>Aplicar Quantidades Extras</Button></div>
-          </div>}
-        </div>
-        {selectedIds.length > 0 && <>
-          <datalist id="cafe-companies">{companies.map((company) => <option key={company.id} value={companyLabel(company)} />)}</datalist>
-          <div className="mt-4 flex flex-wrap items-end gap-2">
-            <label className="form-control min-w-56 flex-1"><span className="label-text mb-1">Empresa para todos os selecionados</span><input list="cafe-companies" className="input input-bordered w-full" value={bulkCompany} onChange={(event) => applyCompany(event.target.value)} placeholder="Digite para buscar" /></label>
-            <Button type="button" variant="secondary" onClick={() => setCompanyModal(true)}>Cadastrar empresa</Button>
-          </div>
-          <div className="mt-4 overflow-x-auto rounded-lg border border-base-300">
-            <table className="w-full min-w-[980px] text-sm">
-              <thead><tr className="border-b border-border bg-base-200 text-left text-xs">
-                <th className="p-2">Empresa</th>
-                <th className="p-2">Colaborador</th>
-                <th className="p-2">Departamento</th>
-                <th className="w-16 p-2 text-center">Quantidade</th>
-                <th className="w-16 p-2 text-center">Desconto</th>
-                <th className="w-20 p-2 text-center"><span className="block">Quantidade</span><span className="block">Extras</span></th>
-                <th className="w-20 p-2 text-center"><span className="block">Quantidade</span><span className="block">Final</span></th>
-                <th className="w-28 p-2 text-right">Valor Total</th>
-                <th className="p-2">Observação</th>
-              </tr></thead>
-              <tbody>
-                {preview.map((row) => { const value = values[row.id]; if (!value) return null; const unmatched = value.companyText.trim() && !value.companyId; return <tr key={row.id} className="border-b border-border align-top last:border-0">
-                  <td className="p-2"><input list="cafe-companies" aria-label={`Empresa de ${row.employee?.officialName}`} className={`input input-bordered input-sm w-40 ${unmatched || !value.companyId ? "input-warning" : ""}`} value={value.companyText} onChange={(event) => { const company = companyByText(event.target.value); patchValue(row.id, { companyText: event.target.value, companyId: company?.id ?? "" }); }} />{unmatched && <span className="mt-1 block text-xs text-warning">Selecione uma empresa cadastrada.</span>}</td>
-                  <td className="p-2 font-medium">{row.employee?.officialName}</td>
-                  <td className="p-2">{row.employee?.department}<span className="block text-xs text-secondary">{row.employee?.costCenter || "Sem CC"}</span></td>
-                  <td className="w-16 p-2 text-center"><span className="badge badge-ghost">{baseDays}</span></td>
-                  <td className="w-16 p-2 text-center"><input aria-label="Desconto" inputMode="numeric" className="input input-bordered input-sm w-16 text-center" value={value.discount} onChange={(event) => patchValue(row.id, { discount: event.target.value })} /></td>
-                  <td className="w-20 p-2 text-center"><input aria-label="Quantidade extras" inputMode="numeric" className="input input-bordered input-sm w-16 text-center" value={value.extra} onChange={(event) => patchValue(row.id, { extra: event.target.value })} /></td>
-                  <td className={`w-20 p-2 text-center font-semibold ${row.error ? "text-error" : ""}`}>{row.error ? "—" : row.finalQuantity}</td>
-                  <td className="w-28 whitespace-nowrap p-2 text-right font-semibold text-primary">{row.error ? <span className="text-xs font-normal text-error">{row.error}</span> : money(row.total / 100)}</td>
-                  <td className="p-2"><div className="flex gap-1"><select aria-label="Tipo de observação" className="select select-bordered select-sm w-24" value={value.obsType} onChange={(event) => patchValue(row.id, { obsType: event.target.value as EntryValue["obsType"] })}><option value="">—</option><option value="RETROACTIVE">Retroativo</option><option value="OTHER">Outros</option></select>{value.obsType && <input aria-label="Detalhes da observação" className="input input-bordered input-sm w-36" placeholder={value.obsType === "RETROACTIVE" ? "2 cafés referentes ao mês anterior" : "Detalhes"} value={value.obsDetails} onChange={(event) => patchValue(row.id, { obsDetails: event.target.value })} />}</div>{value.obsType && value.obsDetails.trim() && <span className="mt-1 block text-xs text-secondary">{formatBreakfastObservation(value.obsType, value.obsDetails)}</span>}</td>
-                </tr>; })}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-3 text-sm">Prévia do Total Geral: <strong className="text-primary">{money(previewTotal / 100)}</strong> · {selectedIds.length} colaborador(es) · o servidor recalcula tudo ao salvar.</p>
-        </>}
-      </ManualEntrySection>
+      <TabPanel value="rateio" className="mt-4">
+        <BreakfastAllocationView maps={maps} monthLabel={monthLabel} baseOf={(map) => mapBase(map) ?? { workingDays: ctx?.workingDays ?? null, unitPrice: ctx?.unitPrice ?? null }} onCorrect={(mapId, row) => setCorrecting({ mapId, row })} onCancel={(mapId) => setDeleteTarget({ mapId })} onFlash={downloadFlash} flashBusy={flashBusy} />
+      </TabPanel>
 
-      {error && <div role="alert" className="alert alert-error text-sm">{error}</div>}
-      <div className="flex flex-col gap-2 md:items-end"><Button type="submit" disabled={busy || !canSave} loading={busy} aura={canSave} className="w-full md:w-auto md:min-w-64">Salvar / Gerar Rateio</Button>{hint && <p className="text-xs text-secondary">{hint}</p>}</div>
-    </form>}
-
-    {tab === "rateio" && <section role="tabpanel" className="grid gap-4">
-      {maps.length ? maps.map((map) => {
-        const rows = map.allocations; const mapTree = new Map<string, Map<string, Allocation[]>>();
-        for (const row of rows) { const departments = mapTree.get(row.company) ?? new Map<string, Allocation[]>(); const key = row.department ?? "Não informado"; departments.set(key, [...(departments.get(key) ?? []), row]); mapTree.set(row.company, departments); }
-        const mapSum = sum(rows); const diff = mapSum - cents(map.totalAmount);
-        // Linhas do colaborador (mesma tabela de sempre), reaproveitada nas perspectivas de rateio.
-        const rowsTable = (deptRows: Allocation[]) => <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead><tr className="border-b border-border text-left text-xs text-secondary"><th className="py-2 pr-2">Colaborador</th><th className="w-16 py-2 pr-2 text-center">Quantidade</th><th className="w-16 py-2 pr-2 text-center">Desconto</th><th className="w-16 py-2 pr-2 text-center">Extras</th><th className="w-16 py-2 pr-2 text-center">Final</th><th className="w-24 py-2 pr-2 text-right">Valor</th><th className="py-2 pr-2">Observação</th><th /></tr></thead><tbody>{[...deptRows].sort((a, b) => comparePtBr(a.employeeName, b.employeeName)).map((row) => <tr key={row.id} className="border-b border-border last:border-0"><td className="py-2 pr-2">{row.employeeName}</td><td className="py-2 pr-2 text-center">{row.baseQuantity ?? "—"}</td><td className="py-2 pr-2 text-center">{row.discountQuantity}</td><td className="py-2 pr-2 text-center">{row.extraQuantity ?? "—"}</td><td className="py-2 pr-2 text-center">{row.finalQuantity ?? "—"}</td><td className="whitespace-nowrap py-2 pr-2 text-right">{money(row.amount)}</td><td className="py-2 pr-2">{formatBreakfastObservation(row.observationType, row.observationDetails) || "—"}</td><td className="whitespace-nowrap py-2 text-right">{row.finalQuantity !== null && <button type="button" className="text-xs font-semibold text-primary" onClick={() => setCorrecting({ mapId: map.id, row })}>Corrigir</button>}</td></tr>)}</tbody></table></div>;
-        const viewRows = rows.map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: amountToCents(row.amount), source: row }));
-        return <AllocationCard key={map.id} title={map.administrativeEntity.tradeName} subtitle={`competência ${String(month).padStart(2, "0")}/${year} · v${map.version}`} badge={<Badge tone="success">Concluído</Badge>}
-          indicators={[{ label: "Empresas / setores", value: `${mapTree.size} / ${[...mapTree.values()].reduce((total, departments) => total + departments.size, 0)}` }, { label: "Colaboradores", value: new Set(rows.map((row) => row.employeeId ?? row.employeeName)).size }, { label: "Dias úteis · valor", value: `${mapBase(map)?.workingDays ?? ctx?.workingDays ?? "—"} · ${mapBase(map) ? money(mapBase(map)!.unitPrice) : ctx ? money(ctx.unitPrice) : "—"}` }, { label: "Valor total · obrigação", value: `${money(map.totalAmount)}${map.financialRecord ? ` · ${map.financialRecord.identifier}` : ""}` }]}>
-          <AllocationViews
-            rows={viewRows}
-            value={rateioView[map.id] ?? "companyDepartment"}
-            onValueChange={(value) => setRateioView((current) => ({ ...current, [map.id]: value }))}
-            expectedCents={amountToCents(map.totalAmount)}
-            custom={{ companyDepartment: <AllocationDepartmentList>{[...mapTree].sort(([a], [b]) => comparePtBr(a, b)).map(([company, departments]) => { const companyRows = [...departments.values()].flat(); return <AllocationDepartmentAccordion key={company} name={company} summary={`${people(new Set(companyRows.map((row) => row.employeeId ?? row.employeeName)).size)} · ${money(sum(companyRows) / 100)}`}>
-            <div className="grid gap-3">{[...departments].sort(([a], [b]) => comparePtBr(a, b)).map(([department, deptRows]) => <AllocationDepartmentAccordion key={department} name={department} summary={`${people(deptRows.length)} · ${money(sum(deptRows) / 100)}`}>
-              {rowsTable(deptRows)}
-            </AllocationDepartmentAccordion>)}</div>
-          </AllocationDepartmentAccordion>; })}</AllocationDepartmentList> }}
-            renderLeaf={(leafRows) => rowsTable(leafRows.map((row) => row.source))}
-          />
-          <div className={`mt-4 flex flex-wrap gap-x-6 gap-y-1 rounded-md border px-3 py-2 text-sm ${diff !== 0 ? "border-error/40 bg-error/5 text-error" : "border-border"}`} role={diff !== 0 ? "alert" : undefined}><span>Valor total <strong>{money(map.totalAmount)}</strong></span><span>Rateado <strong>{money(mapSum / 100)}</strong></span><span>Diferença <strong>{money(diff / 100)}</strong></span></div>
-          <div className="mt-4 flex flex-wrap gap-2"><a href={`/api/accounts-payable/breakfast/${map.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}>Download do rateio XLSX</a><Button size="sm" variant="secondary" loading={flashBusy === map.id} disabled={flashBusy !== null} onClick={() => downloadFlash(map.id)}>Download da Máscara Flash</Button><Button size="sm" variant="error" onClick={() => setDeleteTarget({ mapId: map.id })}>Cancelar lançamento</Button></div>
-        </AllocationCard>;
-      }) : <div className="card"><EmptyState title="Nenhum lançamento nesta competência." description="Preencha as etapas 1 e 2 para gerar o rateio." /></div>}
-    </section>}
-
-    {tab === "resumo" && <section role="tabpanel" className="grid gap-4">
-      {all.length ? <>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6"><MetricCard label="Empresas" value={String(rateio.companies.length)} /><MetricCard label="Colaboradores" value={String(uniquePeople)} /><MetricCard label="Dias úteis" value={[...new Set(maps.map((map) => mapBase(map)?.workingDays))].length > 1 ? "Vários" : String(mapBase(maps[0])?.workingDays ?? ctx?.workingDays ?? "—")} /><MetricCard label="Quantidade de cafés" value={String(totalMeals)} /><MetricCard label="Valor unitário" value={[...new Set(maps.map((map) => mapBase(map)?.unitPrice))].length > 1 ? "Vários" : mapBase(maps[0]) ? money(mapBase(maps[0])!.unitPrice) : ctx ? money(ctx.unitPrice) : "—"} /><MetricCard label="Total Geral" value={money(grand / 100)} accent /></div>
-        <div className="grid gap-3">{rateio.companies.map((company) => <details key={company.company} open className="rounded-lg border border-border"><summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4"><strong>{company.company} <span className="text-xs font-normal text-secondary">({company.people})</span></strong><span className="font-semibold text-primary">{money(company.totalCents / 100)}</span></summary><div className="border-t border-border px-4 py-2">{company.costCenters.map((costCenter) => <div key={costCenter.costCenter} className="flex justify-between border-b border-border py-2 pl-4 text-sm last:border-0"><span>↳ {costCenter.costCenter} <span className="text-xs text-secondary">({costCenter.people})</span></span><span>{money(costCenter.totalCents / 100)}</span></div>)}</div></details>)}</div>
-        <div className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border-2 px-4 py-3 ${difference !== 0 ? "border-error bg-error/5 text-error" : "border-primary/40 bg-primary/5"}`}><strong>Total Geral</strong><strong className="text-xl">{money(grand / 100)}</strong><span className="basis-full text-xs">{difference === 0 ? "Colaboradores = centros de custo = empresas = total · diferença R$ 0,00" : `Inconsistência: diferença ${money(difference / 100)}`}</span></div>
-      </> : <div className="card"><EmptyState title="Nenhum lançamento nesta competência." /></div>}
-    </section>}
+      <TabPanel value="resumo" className="mt-4">
+        <BreakfastSummaryView summary={rateio} difference={difference} indicators={[
+          { label: "Empresas", value: rateio.companies.length },
+          { label: "Colaboradores", value: uniquePeople },
+          { label: "Dias úteis", value: severalDays ? "Vários" : String(mapBase(maps[0])?.workingDays ?? ctx?.workingDays ?? "—") },
+          { label: "Quantidade de cafés", value: totalMeals },
+          { label: "Valor unitário", value: severalPrices ? "Vários" : mapBase(maps[0]) ? money(mapBase(maps[0])!.unitPrice) : ctx ? money(ctx.unitPrice) : "—" },
+          { label: "Total Geral", value: moneyCents(grand), emphasis: true },
+        ]} />
+      </TabPanel>
+    </Tabs>
 
     <HolidayModal date={holidayDate} holiday={holidayDate ? holidayByDate.get(holidayDate) ?? null : null} onClose={() => setHolidayDate(null)} onSave={saveHoliday} onRemove={removeHoliday} />
     <CorrectionModal target={correcting} companies={companies} onClose={() => setCorrecting(null)} onSaved={reload} />
     <CompanyModal open={companyModal} onClose={() => setCompanyModal(false)} onCreated={(company) => setCompanies((current) => [...current, company])} />
     <DeletionModal open={deleteTarget !== null} title="Cancelar todo o lançamento?" description="O lançamento e a obrigação serão cancelados." count={1} requireKeyword busy={deleting} onClose={() => { if (!deleting) setDeleteTarget(null); }} onConfirm={confirmDelete} />
-    {deleteError && <div role="alert" className="alert alert-error text-sm">{deleteError}</div>}
+    {deleteError && <FeedbackAlert status="error">{deleteError}</FeedbackAlert>}
   </div>;
 }
