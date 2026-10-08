@@ -15,8 +15,8 @@ import { Button, Card, CardHeader, DataTable, EmptyState, StatusBadge, buttonCla
 import { formatDateOnlyBR } from "@/lib/date-only";
 import { groupBasicBasketByCompanyDepartment } from "../rateio";
 import { adjustmentNote, money, moneyCents } from "./format";
-import { BasicBasketCompetenceSummary } from "./BasicBasketCompetenceSummary";
-import { InfoTip, Note } from "./parts";
+import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
+import { InfoTip, Note } from "@/modules/accounts-payable/shared/ui/parts";
 import type { BasicBasketAllocationRow, BasicBasketMapData } from "./types";
 
 type ViewProps = { monthLabel: string; onCorrect: (map: BasicBasketMapData, row: BasicBasketAllocationRow) => void; onCancel: (mapId: string) => void; onFlash: (mapId: string) => void; flashBusy: string | null };
@@ -66,7 +66,7 @@ function MapAllocation({ map, monthLabel, onCorrect, onCancel, onFlash, flashBus
     <Card padding="none" as="article" className="overflow-hidden">
       <div className="grid gap-4 p-4 sm:p-5">
         <CardHeader title={map.administrativeEntity.tradeName} description={`Competência ${monthLabel} · versão ${map.version}`} actions={<StatusBadge tone="success">Concluído</StatusBadge>} />
-        <BasicBasketCompetenceSummary
+        <CompetenceSummary
           className="xl:grid-cols-4"
           items={[
             { label: "Empresas / departamentos", value: `${tree.companies.length} / ${tree.companies.reduce((sum, company) => sum + company.departments.length, 0)}` },

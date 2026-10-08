@@ -10,7 +10,7 @@ import { AllocationViews } from "@/components/allocation/AllocationViews";
 import { Button, Card, CardHeader, DataTable, EmptyState, StatusBadge, buttonClassName, type DataTableColumn } from "@/components/ui";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 import { normalizeAllocationRow, type AllocationViewId } from "@/modules/accounts-payable/shared/allocation-views";
-import { BasicBasketCompetenceSummary as CompetenceSummary } from "@/modules/accounts-payable/basic-basket/ui/BasicBasketCompetenceSummary";
+import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
 import { formatBreakfastObservation } from "../calculations";
 import { amountToCents } from "../rateio";
 import { money, moneyCents } from "./format";

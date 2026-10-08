@@ -12,7 +12,7 @@ import { comparePtBr } from "@/lib/sorting/ptBr";
 import { BASIC_BASKET_CALCULATION_DAYS } from "../calculations";
 import { pointMirrorReviewState, type PointMirrorCandidate, type PointMirrorDecision, type PointMirrorReviewState } from "../point-mirror-review";
 import { moneyCents } from "./format";
-import { BasicBasketCompetenceSummary } from "./BasicBasketCompetenceSummary";
+import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
 
 export type PointMirrorImpact = { employeeId: string; name: string; manual: boolean; beforeDays: number; afterDays: number; beforeCents: number; afterCents: number; error?: string | null };
 type Reference = { current: string; previous: string; absence: string };
@@ -75,7 +75,7 @@ export function BasicBasketPointMirrorReview({ candidates, decisions, manualByEm
 
   return (
     <div className="grid gap-3">
-      <BasicBasketCompetenceSummary items={[
+      <CompetenceSummary items={[
         { label: "Encontradas", value: candidates.length },
         { label: "Pendentes", value: counts.PENDING, emphasis: counts.PENDING > 0 },
         { label: "Aprovadas", value: counts.APPROVED },

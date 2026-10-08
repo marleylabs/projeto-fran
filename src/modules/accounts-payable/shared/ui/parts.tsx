@@ -1,6 +1,7 @@
 "use client";
 
-// Peças visuais pequenas da Cesta Básica (sem regra): nota com ícone, dica acessível e seção expansível.
+// Peças visuais pequenas compartilhadas pelas telas de Despesas (sem regra): nota com ícone, dica acessível e seção
+// expansível.
 import type { ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, ChevronRight, Info, XCircle, type LucideIcon } from "lucide-react";
 import clsx from "clsx";

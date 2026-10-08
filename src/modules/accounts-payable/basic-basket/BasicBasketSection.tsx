@@ -20,13 +20,13 @@ import { BASIC_BASKET_CALCULATION_DAYS, buildBasicBasketContext, calculateBasicB
 import { groupBasicBasketByCompanyCostCenter } from "./rateio";
 import { BasicBasketAllocationView } from "./ui/BasicBasketAllocationView";
 import { BasicBasketCalendar, BasicBasketHolidayList } from "./ui/BasicBasketCalendar";
-import { BasicBasketCompetenceSummary } from "./ui/BasicBasketCompetenceSummary";
+import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
 import { BasicBasketPointMirror, type PointMirrorPerson, type PointMirrorPreview, type PointMirrorStatus } from "./ui/BasicBasketPointMirror";
 import { BasicBasketPointMirrorReview, type PointMirrorImpact } from "./ui/BasicBasketPointMirrorReview";
 import { applyManualVacation, correctionAdjustments, historicalImportedVacationDays, isPointMirrorCandidateActionable, parseManualVacationDays, resolveReviewedBasicBasketAdjustments, type PointMirrorCandidate, type PointMirrorDecision } from "./point-mirror-review";
 import { BasicBasketSummaryView } from "./ui/BasicBasketSummaryView";
 import { adjustmentNote, moneyCents, people } from "./ui/format";
-import { Disclosure, InfoTip, Note } from "./ui/parts";
+import { Disclosure, InfoTip, Note } from "@/modules/accounts-payable/shared/ui/parts";
 import type { BasicBasketAllocationRow as Allocation, BasicBasketEntity as Entity, BasicBasketMapData as MapData } from "./ui/types";
 
 // Espelho de Ponto (Falta Injustificada / Férias): prévia vinda do servidor. "Aplicar" só guarda o id da importação
@@ -451,7 +451,7 @@ export function BasicBasketSection() {
                 <CardHeader titleAs="h3" title="Competência e pagamento" description="Pagamento na 2ª quarta-feira da competência." />
                 <Field label="Competência" required className="w-full sm:w-48">{(control) => <input {...control} type="month" className={textInputClassName} value={competence} onChange={(event) => { setCompetence(event.target.value); setPointPreview(null); setApplied(null); }} />}</Field>
               </div>
-              <BasicBasketCompetenceSummary items={[
+              <CompetenceSummary items={[
                 { label: "Competência", value: monthLabel },
                 { label: "Pagamento", value: ctx ? formatDateOnlyBR(ctx.paymentDate) : "—", helper: ctx ? `Anterior: ${formatDateOnlyBR(ctx.previousPaymentDate)}` : undefined },
                 { label: "Dias do calendário", value: String(ctx?.daysInMonth ?? "—"), helper: "Mês real (só exibição)" },

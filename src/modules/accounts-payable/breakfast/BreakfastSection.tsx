@@ -14,7 +14,7 @@ import { CompanyModal, companyLabel, normalizeText as normalize, type Company } 
 import { Button, CalculatedValue, Card, CardHeader, DeletionModal, Dialog, FeedbackAlert, Field, TabPanel, Tabs, TextInput, textInputClassName, useToast } from "@/components/ui";
 import { type CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
-import { BasicBasketCompetenceSummary as CompetenceSummary } from "@/modules/accounts-payable/basic-basket/ui/BasicBasketCompetenceSummary";
+import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
 import { BREAKFAST_ALLOWED_DEPARTMENT, calculateBreakfastEmployeeTotal, calculateFinalQuantity, parseUnitPriceToCents, type BreakfastObservationKind } from "./calculations";
 import { groupBreakfastByCompanyCostCenter } from "./rateio";
 import { applyBreakfastExtraSuggestions } from "./point-mirror";

@@ -11,7 +11,7 @@ import { comparePtBr } from "@/lib/sorting/ptBr";
 import { BASIC_BASKET_CALCULATION_DAYS, type BasicBasketAdjustments, type BasicBasketOccurrences } from "../calculations";
 import type { PointMirrorCandidate } from "../point-mirror-review";
 import { moneyCents, people as peopleLabel } from "./format";
-import { InfoTip, Note } from "./parts";
+import { InfoTip, Note } from "@/modules/accounts-payable/shared/ui/parts";
 
 export type PointMirrorStatus = "ABSENCE" | "VACATION" | "NEXT_COMPETENCE" | "BEFORE_ADMISSION" | "NO_OCCURRENCE" | "OUT_OF_PERIOD" | "NOT_SELECTED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "INVALID_CPF" | "NOT_IN_FILE" | "MISSING_ADMISSION";
 export type PointMirrorPerson = { employeeId: string | null; employeeName: string; department: string | null; cpfMasked: string; status: PointMirrorStatus; apurationAbsence: string; nextCompetenceAbsence: string; beforeAdmissionAbsence: string; beforeAdmissionVacation: string; vacationBlocks: Array<{ month: "current" | "reference"; label: string; financialDays: number; extended: boolean; isolatedLastDay: boolean }>; outOfPeriodRows: number; currentVacation: string; referenceVacation: string; currentVacationDates: number; referenceVacationDates: number; absenceEventWithoutJourney: number; duplicateVacationRows: number; currentBasketDays: number; retroactiveDays: number; adjustments: BasicBasketAdjustments | null };

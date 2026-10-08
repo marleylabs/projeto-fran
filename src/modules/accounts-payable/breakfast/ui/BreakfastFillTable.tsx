@@ -7,7 +7,7 @@ import { Calculator } from "lucide-react";
 import { DataTable, TextInput, textInputClassName, type DataTableColumn } from "@/components/ui";
 import type { CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { formatBreakfastObservation } from "../calculations";
-import { Note } from "@/modules/accounts-payable/basic-basket/ui/parts";
+import { Note } from "@/modules/accounts-payable/shared/ui/parts";
 import { money, moneyCents, people } from "./format";
 import type { BreakfastEntryValue } from "./types";
 

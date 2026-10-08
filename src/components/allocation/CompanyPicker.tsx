@@ -1,10 +1,12 @@
 "use client";
-/* eslint-disable react-hooks/set-state-in-effect -- o modal abre/fecha via <dialog> nativo e reseta seu próprio formulário */
+/* eslint-disable react-hooks/set-state-in-effect -- abrir o modal reseta o próprio formulário */
 // Cadastro mestre de Company (empresa do rateio) — compartilhado entre módulos que usam Company
-// como fonte da empresa (Vale Transporte, Café da Manhã, futuros). Extraído para não duplicar a
-// experiência já aprovada do Vale Transporte.
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui";
+// como fonte da empresa (Vale Transporte, Café da Manhã, Cesta Básica). Extraído para não duplicar a
+// experiência já aprovada do Vale Transporte. Fase 7G: só o visual migrou para o Dialog da foundation;
+// campos, validação de CNPJ, POST em /api/master-data/companies e onCreated continuam os mesmos (a empresa
+// padrão de cada colaborador segue sendo gravada pelos lançamentos, nunca por este modal).
+import { FormEvent, useEffect, useId, useState } from "react";
+import { Button, Dialog, FeedbackAlert, Field, TextInput } from "@/components/ui";
 import { formatCnpj, isValidCnpj } from "@/modules/administrative-entities/schema";
 
 export type Company = { id: string; legalName: string; tradeName: string | null; active: boolean };
@@ -12,10 +14,10 @@ export const companyLabel = (company: Company) => company.tradeName?.trim() || c
 export const normalizeText = (value: string) => value.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
 
 export function CompanyModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (company: Company) => void }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const formId = `${useId()}-company`;
   const [legalName, setLegalName] = useState(""); const [tradeName, setTradeName] = useState(""); const [taxId, setTaxId] = useState("");
   const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
-  useEffect(() => { const dialog = dialogRef.current; if (!dialog) return; if (open && !dialog.open) dialog.showModal(); if (!open && dialog.open) dialog.close(); if (open) { setLegalName(""); setTradeName(""); setTaxId(""); setError(null); } }, [open]);
+  useEffect(() => { if (open) { setLegalName(""); setTradeName(""); setTaxId(""); setError(null); } }, [open]);
   async function submit(event: FormEvent) {
     event.preventDefault(); const digits = taxId.replace(/\D/g, "");
     if (!isValidCnpj(digits)) return setError("Informe um CNPJ válido.");
@@ -27,18 +29,21 @@ export function CompanyModal({ open, onClose, onCreated }: { open: boolean; onCl
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível cadastrar a empresa."); } finally { setBusy(false); }
   }
   return (
-    <dialog ref={dialogRef} className="modal" onCancel={onClose} onClose={onClose}>
-      <form onSubmit={submit} className="modal-box max-w-md border border-base-300 bg-base-100">
-        <h2 className="text-lg font-bold text-neutral">Cadastrar empresa</h2>
-        {error && <p className="mt-3 rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">{error}</p>}
-        <div className="mt-4 grid gap-3">
-          <label className="form-control"><span className="label-text mb-1">Razão social *</span><input required className="input input-bordered w-full" value={legalName} onChange={(event) => setLegalName(event.target.value)} /></label>
-          <label className="form-control"><span className="label-text mb-1">Nome fantasia (exibido) *</span><input required className="input input-bordered w-full" value={tradeName} onChange={(event) => setTradeName(event.target.value)} placeholder="PROJETA" /></label>
-          <label className="form-control"><span className="label-text mb-1">CNPJ *</span><input required inputMode="numeric" className="input input-bordered w-full" value={taxId.length === 14 ? formatCnpj(taxId) : taxId} onChange={(event) => setTaxId(event.target.value.replace(/\D/g, "").slice(0, 14))} placeholder="Somente números" /></label>
-        </div>
-        <div className="modal-action"><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>Cancelar</Button><Button type="submit" loading={busy} disabled={busy}>Cadastrar</Button></div>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      dismissible={!busy}
+      size="sm"
+      title="Cadastrar empresa"
+      description="Empresa do rateio (cadastro mestre). Fica disponível para todos os colaboradores."
+      footer={<><Button variant="secondary" onClick={onClose} disabled={busy}>Cancelar</Button><Button type="submit" form={formId} loading={busy} disabled={busy}>Cadastrar</Button></>}
+    >
+      <form id={formId} onSubmit={submit} className="grid gap-3">
+        {error && <FeedbackAlert status="error">{error}</FeedbackAlert>}
+        <Field label="Razão social" required>{(control) => <TextInput {...control} required value={legalName} onChange={(event) => setLegalName(event.target.value)} />}</Field>
+        <Field label="Nome fantasia (exibido)" required>{(control) => <TextInput {...control} required value={tradeName} onChange={(event) => setTradeName(event.target.value)} placeholder="PROJETA" />}</Field>
+        <Field label="CNPJ" required>{(control) => <TextInput {...control} required inputMode="numeric" className="tabular-nums" value={taxId.length === 14 ? formatCnpj(taxId) : taxId} onChange={(event) => setTaxId(event.target.value.replace(/\D/g, "").slice(0, 14))} placeholder="Somente números" />}</Field>
       </form>
-      <form method="dialog" className="modal-backdrop"><button aria-label="Fechar">Fechar</button></form>
-    </dialog>
+    </Dialog>
   );
 }

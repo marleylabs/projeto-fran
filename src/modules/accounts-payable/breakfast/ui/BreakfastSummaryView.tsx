@@ -6,7 +6,7 @@
 import { CheckCircle2, CornerDownRight, XCircle } from "lucide-react";
 import clsx from "clsx";
 import { Card, DataTable, EmptyState, type DataTableColumn } from "@/components/ui";
-import { BasicBasketCompetenceSummary as CompetenceSummary, type CompetenceSummaryItem } from "@/modules/accounts-payable/basic-basket/ui/BasicBasketCompetenceSummary";
+import { CompetenceSummary, type CompetenceSummaryItem } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
 import type { groupBreakfastByCompanyCostCenter } from "../rateio";
 import { moneyCents } from "./format";
 

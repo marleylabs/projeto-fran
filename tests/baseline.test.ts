@@ -2089,7 +2089,7 @@ test("Skeleton, CalculatedValue e FilterBar: movimento reduzido, valor calculado
 
 test("cesta básica 7E: apresentação no Design System, sem regra financeira nos componentes visuais", async () => {
   const dir = "../src/modules/accounts-payable/basic-basket/";
-  const files = ["ui/BasicBasketPointMirror.tsx", "ui/BasicBasketAllocationView.tsx", "ui/BasicBasketSummaryView.tsx", "ui/BasicBasketCalendar.tsx", "ui/BasicBasketCompetenceSummary.tsx", "ui/parts.tsx", "ui/format.ts", "ui/types.ts"];
+  const files = ["ui/BasicBasketPointMirror.tsx", "ui/BasicBasketAllocationView.tsx", "ui/BasicBasketSummaryView.tsx", "ui/BasicBasketCalendar.tsx", "../shared/ui/CompetenceSummary.tsx", "../shared/ui/parts.tsx", "ui/format.ts", "ui/types.ts"];
   const [section, page, ...ui] = await Promise.all([dir + "BasicBasketSection.tsx", "../src/app/pagamentos/alimentacao/page.tsx", ...files.map((file) => dir + file)].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
   // componentes do Design System na seção (abas, tabela, moeda, valor calculado, importação, diálogo)
   for (const name of ["<Tabs", "<TabPanel", "<DataTable", "<CurrencyInput", "<CalculatedValue", "<BasicBasketPointMirror", "<Dialog"]) assert.ok(section.includes(name), name);
@@ -2509,4 +2509,25 @@ test("café da manhã 7F: apresentação no Design System, regras na seção e c
   assert.match(view, /expectedCents=\{amountToCents\(map\.totalAmount\)\}/);
   // Resumo: Empresa → Centro de Custo (não é perspectiva do Rateio)
   assert.match(summary, /caption="Resumo por Empresa e Centro de Custo"/); assert.doesNotMatch(summary, /AllocationViews/);
+});
+
+// ---- Fase 7G: limpeza dos compartilhados de competência (só apresentação).
+test("compartilhados 7G: calendário, feriado, empresa e combobox no Design System, mesma API", async () => {
+  const [holidays, company, combo, summary, parts] = await Promise.all(["../src/components/allocation/CompetenceHolidays.tsx", "../src/components/allocation/CompanyPicker.tsx", "../src/components/CollaboratorMultiCombobox.tsx", "../src/modules/accounts-payable/shared/ui/CompetenceSummary.tsx", "../src/modules/accounts-payable/shared/ui/parts.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  for (const [name, source] of Object.entries({ holidays, company, combo, summary, parts })) {
+    // title= de elemento HTML (tooltip nativo); title de componente (Dialog) é cabeçalho
+    assert.doesNotMatch(source, /\b(emerald|amber|slate|orange)-\d|<[a-z][a-z0-9]*\s[^>]*\btitle=|modal-box|className="modal"|[☑☐✓⚠⌕↳]/, name);
+  }
+  // calendário: mesma grade (buildCompetenceCalendar), mesmo onSelect, estado por texto acessível e legenda
+  assert.match(holidays, /buildCompetenceCalendar\(year, month, holidays\.map\(\(holiday\) => holiday\.date\)\)/); assert.match(holidays, /onClick=\{\(\) => onSelect\(day\.date\)\}/);
+  assert.match(holidays, /aria-label=\{`\$\{day\.day\}: /); assert.match(holidays, /aria-label="Legenda"/);
+  // modais sobre o Dialog da foundation; empresa: mesmo POST e mesmo onCreated (sem gravar empresa padrão)
+  assert.match(holidays, /<Dialog/); assert.match(company, /<Dialog/); assert.match(company, /fetch\("\/api\/master-data\/companies", \{ method: "POST"/); assert.match(company, /onCreated\(body\.item\)/);
+  assert.doesNotMatch(company, /employee-config|defaultCompany/);
+  // combobox: ids únicos por instância (sem id fixo) e o mesmo contrato controlado
+  assert.doesNotMatch(combo, /food-collaborator-multi-options/); assert.match(combo, /useId\(\)/); assert.match(combo, /role="listbox" aria-multiselectable="true"/);
+  assert.match(combo, /onChange\(value\.includes\(id\) \? value\.filter\(\(current\) => current !== id\) : \[\.\.\.value, id\]\)/); assert.match(combo, /\.slice\(0, 50\)/);
+  // genéricos fora da Cesta: ninguém importa mais basic-basket/ui de outro módulo
+  const breakfast = await readFile(new URL("../src/modules/accounts-payable/breakfast/BreakfastSection.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(breakfast, /basic-basket\/ui/); assert.match(breakfast, /shared\/ui\/CompetenceSummary/);
 });

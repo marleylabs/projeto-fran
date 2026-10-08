@@ -7,7 +7,7 @@ import clsx from "clsx";
 import { Card, DataTable, EmptyState, type DataTableColumn } from "@/components/ui";
 import type { BasicBasketTotals, groupBasicBasketByCompanyCostCenter } from "../rateio";
 import { moneyCents } from "./format";
-import { BasicBasketCompetenceSummary } from "./BasicBasketCompetenceSummary";
+import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
 
 type Summary = ReturnType<typeof groupBasicBasketByCompanyCostCenter>;
 type SummaryRow = { id: string; kind: "company" | "costCenter"; label: string; totals: BasicBasketTotals };
@@ -38,7 +38,7 @@ export function BasicBasketSummaryView({ summary, difference }: { summary: Summa
   const t = summary.totals;
   return (
     <div className="grid gap-4">
-      <BasicBasketCompetenceSummary items={[
+      <CompetenceSummary items={[
         { label: "Colaboradores", value: t.people },
         { label: "Bonificação", value: moneyCents(t.driverBonusCents) },
         { label: "Acordo", value: moneyCents(t.agreementCents) },
