@@ -29,6 +29,8 @@ export type DataTableColumn<Row> = {
   align?: "left" | "center" | "right";
   /** Renderiza a célula como <th scope="row"> (identificador da linha, ex.: nome). */
   rowHeader?: boolean;
+  /** Permite quebra de linha nas células desta coluna (padrão: uma linha, whitespace-nowrap). */
+  wrap?: boolean;
   /** Só a PRIMEIRA coluna pode ser fixa à esquerda; exige `width`. */
   sticky?: "start";
   /** Largura CSS (ex.: "14rem"). Obrigatória em coluna sticky. */
@@ -152,8 +154,8 @@ export function DataTable<Row>({
   };
 
   const headCell = clsx("h-10 border-b border-border bg-surface-muted px-3 text-label text-foreground-muted whitespace-nowrap", stickyHeader && "sticky top-0 z-10");
-  // Uma linha por registro (densidade previsível); quem precisar quebrar texto usa className "whitespace-normal".
-  const bodyCell = clsx(rowHeight, dense ? "py-0.5" : "py-1.5", "whitespace-nowrap border-b border-border px-3 align-middle text-table text-foreground");
+  // Uma linha por registro (densidade previsível); colunas com `wrap` podem quebrar texto.
+  const bodyCell = clsx(rowHeight, dense ? "py-0.5" : "py-1.5", "border-b border-border px-3 align-middle text-table text-foreground");
 
   return (
     <div className={clsx("min-w-0 overflow-hidden rounded-card border border-border bg-surface", className)}>
@@ -259,7 +261,8 @@ export function DataTable<Row>({
                         className={clsx(
                           bodyCell,
                           alignClass(column),
-                          column.numeric && "tabular-nums whitespace-nowrap",
+                          column.wrap && !column.numeric ? "whitespace-normal" : "whitespace-nowrap",
+                          column.numeric && "tabular-nums",
                           column.rowHeader && "font-semibold",
                           isSticky && clsx("sticky z-[2] shadow-[inset_-1px_0_0_var(--color-border)]", stickyCell),
                           column.className,
@@ -271,7 +274,7 @@ export function DataTable<Row>({
                     );
                   })}
                   {rowActions && (
-                    <td className={clsx(bodyCell, "text-right", stickyActions && clsx("sticky right-0 z-[2] shadow-[inset_1px_0_0_var(--color-border)]", stickyCell))}>
+                    <td className={clsx(bodyCell, "whitespace-nowrap text-right", stickyActions && clsx("sticky right-0 z-[2] shadow-[inset_1px_0_0_var(--color-border)]", stickyCell))}>
                       {rowActions(row)}
                     </td>
                   )}

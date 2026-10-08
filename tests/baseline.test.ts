@@ -1754,7 +1754,8 @@ test("cesta básica: backend autoritativo, padrões, observação, soft cancel, 
   assert.match(section, /basket: toInput\(row\.monthlyBasketAmount\)/);
   assert.match(deletion, /export async function cancelBasicBasketMap/); assert.doesNotMatch(deletion, /basicBasket\w*\.delete(Many)?\(/);
   // tela: card mostra os dias REAIS do calendário; base 30 vem da constante; ausência de admissão bloqueia; lote explícito
-  assert.match(section, /<MetricCard label="Dias no mês" value=\{String\(ctx\?\.daysInMonth \?\? "—"\)\}/); assert.match(section, /BASIC_BASKET_CALCULATION_DAYS/);
+  // dias do calendário (mês real, só exibição) separados da base financeira fixa de 30 dias
+  assert.match(section, /label: "Dias do calendário", value: String\(ctx\?\.daysInMonth \?\? "—"\)/); assert.match(section, /label: "Base da Cesta", value: `\$\{BASIC_BASKET_CALCULATION_DAYS\} dias`/); assert.match(section, /BASIC_BASKET_CALCULATION_DAYS/);
   assert.match(section, /Receberá na próxima competência/); assert.match(section, /A pagar: /); assert.match(section, /if \(currentStatus === "MISSING_ADMISSION"\) return \{ \.\.\.base, error: MISSING_ADMISSION \}/);
   assert.match(section, /selectedIds\.includes\(id\) \? \{ \.\.\.value, basket: bulkBasket \}/); assert.doesNotMatch(section, /useEffect\([^)]*bulkBasket/); assert.doesNotMatch(section, /Cesta Básica desta competência é integral|dias corridos/);
   // calendário somente leitura (sem cadastro/edição de feriado na Cesta)
@@ -1801,7 +1802,9 @@ test("cesta básica: backend autoritativo, padrões, observação, soft cancel, 
   assert.match(calcSource, /currentUnjustifiedAbsence: current\.currentBasketDays > 0 && inMonth\(absenceDates, context\.absenceReferenceMonthStart, context\.absenceReferenceMonthEnd\)/);
   assert.match(calcSource, /retroactiveUnjustifiedAbsence: retro\.retroactiveDays > 0 && inMonth\(absenceDates, context\.referenceMonthStart, context\.referenceMonthEnd\)/);
   assert.match(calcSource, /const absenceDates = applicableOccurrenceDates\(occurrences\.absenceDates, admissionDate\)/); assert.match(calcSource, /dates\.filter\(\(date\) => date >= admissionDate\)/); // corte pela admissão no domínio (backend)
-  assert.match(section, /anterior à admissão, ignorada/); assert.match(section, /Ocorrência anterior à admissão — ignorada/);
+  // a prévia do Espelho é exibida em ui/BasicBasketPointMirror (apresentação); os rótulos de situação seguem na seção
+  const pointMirrorUi = await readFile(new URL("../src/modules/accounts-payable/basic-basket/ui/BasicBasketPointMirror.tsx", import.meta.url), "utf8");
+  assert.match(pointMirrorUi, /anterior à admissão, ignorada/); assert.match(pointMirrorUi, /Anterior à admissão — não reduz/); assert.match(section, /Ocorrência anterior à admissão — ignorada/);
   assert.match(calcSource, /const absence = previousCompetence\(competenceYear, competenceMonth\), absenceBounds = monthBounds\(absence\.year, absence\.month\)/);
   assert.match(section, /Afeta a próxima competência/); assert.match(section, /Fora do período de apuração/); assert.doesNotMatch(section, /Fora do período relevante/);
 });
@@ -2076,3 +2079,24 @@ test("Skeleton, CalculatedValue e FilterBar: movimento reduzido, valor calculado
   assert.match(bar, /disabled=""[^>]*>.*?Limpar filtros/); // nada ativo: Limpar desabilitado
   assert.match(bar, /2<span class="sr-only"> filtros ativos<\/span>/);
 });
+
+test("cesta básica 7E: apresentação no Design System, sem regra financeira nos componentes visuais", async () => {
+  const dir = "../src/modules/accounts-payable/basic-basket/";
+  const files = ["ui/BasicBasketPointMirror.tsx", "ui/BasicBasketAllocationView.tsx", "ui/BasicBasketSummaryView.tsx", "ui/BasicBasketCalendar.tsx", "ui/BasicBasketCompetenceSummary.tsx", "ui/parts.tsx", "ui/format.ts", "ui/types.ts"];
+  const [section, page, ...ui] = await Promise.all([dir + "BasicBasketSection.tsx", "../src/app/pagamentos/alimentacao/page.tsx", ...files.map((file) => dir + file)].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  // componentes do Design System na seção (abas, tabela, moeda, valor calculado, importação, diálogo)
+  for (const name of ["<Tabs", "<TabPanel", "<DataTable", "<CurrencyInput", "<CalculatedValue", "<BasicBasketPointMirror", "<Dialog"]) assert.ok(section.includes(name), name);
+  assert.match(ui[0], /<ImportFlow/); assert.match(page, /<Tabs label="Subseções de Alimentação"/);
+  // visuais não calculam: sem cálculo de linha, sem parser monetário, sem chamadas de API
+  for (const [index, source] of ui.entries()) {
+    assert.doesNotMatch(source, /calculateBasicBasketLine|parseMoneyToCents|fetch\(/, files[index]);
+    assert.doesNotMatch(source, /\b(emerald|amber|slate|orange|red)-\d|#[0-9a-f]{3,6}\b/i, files[index]);
+    assert.doesNotMatch(source, /[↳☑☐✓⚠⌕]/, files[index]);
+  }
+  assert.doesNotMatch(section, /\b(emerald|amber|slate|orange)-\d|title=\{/);
+  // CurrencyInput: o texto enviado ao servidor sai do número com 2 casas, lido pelo MESMO parser do cálculo
+  assert.match(section, /parseMoneyToCents\(text, "Valor"\) \/ 100/); assert.match(section, /value\.toFixed\(2\)\.replace\("\.", ","\)/);
+  // save/Espelho inalterados: só insumos + id da importação
+  assert.match(section, /entries, pointMirrorImportId: activeApplied\?\.importId \?\? null/);
+});
+

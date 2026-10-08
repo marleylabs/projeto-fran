@@ -5,6 +5,8 @@ import {
   DeletionModal,
   FileInput,
   PageHeader,
+  TabPanel,
+  Tabs,
   buttonClassName,
   useToast,
   type FileInputStatus,
@@ -312,6 +314,12 @@ function FoodDeletionControls({
     </div>
   );
 }
+const FOOD_SUBSECTIONS = [
+  { value: "alimentacao", label: "Alimentação" },
+  { value: "cafe", label: "Café da Manhã" },
+  { value: "cesta", label: "Cesta Básica" },
+];
+
 const money = (value: string | number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
     Number(value),
@@ -1623,11 +1631,10 @@ export default function FoodAccountsPayablePage() {
           title="Alimentação"
           description="Competência → estado → fornecedor → colaboradores → obrigação individual."
         />
-        <div className="rounded-lg border border-base-300 bg-base-200/60 p-1"><div role="tablist" aria-label="Subseções de Alimentação" className="grid grid-cols-3 gap-1">
-          <Button type="button" role="tab" aria-selected={subsection === "alimentacao"} variant={subsection === "alimentacao" ? "primary" : "ghost"} onClick={() => setSubsection("alimentacao")}>Alimentação</Button>
-          <Button type="button" role="tab" aria-selected={subsection === "cafe"} variant={subsection === "cafe" ? "primary" : "ghost"} onClick={() => setSubsection("cafe")}>Café da Manhã</Button>
-          <Button type="button" role="tab" aria-selected={subsection === "cesta"} variant={subsection === "cesta" ? "primary" : "ghost"} onClick={() => setSubsection("cesta")}>Cesta Básica</Button>
-        </div></div>
+        {/* Subseções (hierarquia Alimentação → Café da Manhã / Cesta Básica): abas do Design System; o conteúdo de cada
+            subseção segue o mesmo, só dentro do painel da aba. */}
+        <Tabs label="Subseções de Alimentação" items={FOOD_SUBSECTIONS} value={subsection} onValueChange={(value) => setSubsection(value as typeof subsection)}>
+        <TabPanel value="alimentacao" className="mt-6 flex flex-col gap-6">
         {subsection === "alimentacao" && <>
         <section className="card p-5">
           <label className="flex max-w-sm flex-col gap-1 text-sm">
@@ -1716,8 +1723,10 @@ export default function FoodAccountsPayablePage() {
           </div>
         </section>
         </>}
-        {subsection === "cafe" && <BreakfastSection />}
-        {subsection === "cesta" && <BasicBasketSection />}
+        </TabPanel>
+        <TabPanel value="cafe" className="mt-6">{subsection === "cafe" && <BreakfastSection />}</TabPanel>
+        <TabPanel value="cesta" className="mt-6">{subsection === "cesta" && <BasicBasketSection />}</TabPanel>
+        </Tabs>
       </main>
     </div>
   );

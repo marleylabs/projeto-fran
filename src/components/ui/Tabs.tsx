@@ -27,7 +27,7 @@ export type TabsProps = {
 
 const tabClasses: Record<TabsVariant, { list: string; tab: string }> = {
   underline: {
-    list: "flex gap-1 overflow-x-auto border-b border-border",
+    list: "flex gap-1 overflow-x-auto overflow-y-hidden border-b border-border",
     tab: "-mb-px inline-flex h-10 shrink-0 items-center whitespace-nowrap border-b-2 border-transparent px-3 text-button text-foreground-muted hover:text-foreground aria-selected:border-primary aria-selected:text-primary",
   },
   segmented: {
