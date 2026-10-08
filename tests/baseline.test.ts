@@ -688,7 +688,7 @@ test("consolidado de alimentação gera relatório gerencial por localidade e ci
   const empty=buildFoodConsolidatedWorkbook([]);assert.deepEqual(empty.worksheets.map(sheet=>sheet.name),["Resumo Geral"]);
 });
 
-test("rateio XLSX de alimentação mantém cálculos e as duas abas gerenciais (+ perspectiva Departamento ao final)", async () => {
+test("rateio XLSX de alimentação mantém cálculos e as duas abas gerenciais (+ 4 perspectivas de rateio ao final)", async () => {
   const occurrence=(id:string,employeeId:string|null,name:string,sector:string,amount:number,included=true,mealQuantity=1):FoodRateioBatch["mealOccurrences"][number]=>({
     id,employeeId,normalizedReceivedName:name.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase(),receivedName:name,officialName:name,receivedDepartment:sector,confirmedDepartment:sector,amount,included,mealQuantity,
   });
@@ -704,7 +704,7 @@ test("rateio XLSX de alimentação mantém cálculos e as duas abas gerenciais (
   const workbook=buildFoodRateioWorkbook(batch);
   const values=(row:ExcelJS.Row)=>(row.values as ExcelJS.CellValue[]).slice(1);
   const fill=(cell:ExcelJS.Cell)=>(cell.fill as ExcelJS.FillPattern).fgColor?.argb;
-  assert.deepEqual(workbook.worksheets.map(sheet=>sheet.name),["Resumo por Setor","Rateio por Colaborador","Rateio - Departamento"]);
+  assert.deepEqual(workbook.worksheets.map(sheet=>sheet.name),["Resumo por Setor","Rateio por Colaborador","Rateio - Departamento","Rateio - Centro de Custo","Rateio - Empresa Departamento","Rateio - Empresa CC Depto"]);
   const summary=workbook.getWorksheet("Resumo por Setor")!;
   assert.deepEqual(values(summary.getRow(1)),["Setor","Colaboradores","Refeições","Valor"]);
   assert.deepEqual(values(summary.getRow(2)),["ADMINISTRATIVO",2,22,125044]);
@@ -726,7 +726,7 @@ test("rateio XLSX de alimentação mantém cálculos e as duas abas gerenciais (
   assert.equal(allocation.views[0].state,"frozen");assert.equal(allocation.autoFilter?.toString(),"A1:G5");assert.equal(allocation.columnCount,7);
   assert.equal(allocation.getColumn(2).width,34);
   const serialized=await workbook.xlsx.writeBuffer();const reopened=new ExcelJS.Workbook();await reopened.xlsx.load(serialized);
-  assert.deepEqual(reopened.worksheets.map(sheet=>sheet.name),["Resumo por Setor","Rateio por Colaborador","Rateio - Departamento"]);
+  assert.deepEqual(reopened.worksheets.map(sheet=>sheet.name),["Resumo por Setor","Rateio por Colaborador","Rateio - Departamento","Rateio - Centro de Custo","Rateio - Empresa Departamento","Rateio - Empresa CC Depto"]);
   assert.equal(reopened.getWorksheet("Resumo por Setor")!.getCell("D5").value,125099);
   for(const context of ["MA 1º Ciclo","MA 2º Ciclo","PA"]) assert.doesNotThrow(()=>buildFoodRateioWorkbook(batch),context);
   const empty=buildFoodRateioWorkbook({mealOccurrences:[]});
@@ -1223,7 +1223,7 @@ test("alimentação PA: XLSX com Empresa e Emissão NF ao lado das Refeições; 
   const rows = [occurrence("1", "aline", "ALINE", "ADMINISTRATIVO", 20, "NF 02", 250), occurrence("2", "adilson", "ADILSON", "ENGENHARIA", 15, "NF 01", 187.5), occurrence("3", "maria", "MARIA", "ENGENHARIA", 18, "NF 02", 225)];
   const workbook = buildFoodRateioWorkbook({ locality: "PA", mealOccurrences: rows });
   const values = (row: ExcelJS.Row) => (row.values as ExcelJS.CellValue[]).slice(1);
-  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Resumo por Setor", "Resumo por Empresa", "Rateio por Colaborador", "Rateio - Departamento", "Rateio - Empresa Departamento"]);
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Resumo por Setor", "Resumo por Empresa", "Rateio por Colaborador", "Rateio - Departamento", "Rateio - Centro de Custo", "Rateio - Empresa Departamento", "Rateio - Empresa CC Depto"]);
   const allocation = workbook.getWorksheet("Rateio por Colaborador")!;
   const header = values(allocation.getRow(1)) as string[];
   assert.deepEqual(header, ["Empresa", "Setor", "Colaborador", "Refeições", "Emissão NF", "Valor Médio", "Custo", "Restaurante"]);
@@ -1238,7 +1238,7 @@ test("alimentação PA: XLSX com Empresa e Emissão NF ao lado das Refeições; 
   assert.equal(workbook.getWorksheet("Resumo por Setor")!.getCell("D4").value, 662.5); // Total Geral igual nos dois resumos
   // MA (sem locality PA): mesmas duas abas e colunas de antes
   const ma = buildFoodRateioWorkbook({ locality: "MA", mealOccurrences: rows.map((row) => ({ ...row, invoiceEmission: null })) });
-  assert.deepEqual(ma.worksheets.map((sheet) => sheet.name), ["Resumo por Setor", "Rateio por Colaborador", "Rateio - Departamento"]);
+  assert.deepEqual(ma.worksheets.map((sheet) => sheet.name), ["Resumo por Setor", "Rateio por Colaborador", "Rateio - Departamento", "Rateio - Centro de Custo", "Rateio - Empresa Departamento", "Rateio - Empresa CC Depto"]);
   assert.deepEqual(values(ma.getWorksheet("Rateio por Colaborador")!.getRow(1)), ["Setor", "Colaborador", "Refeições", "Valor Médio", "Custo", "Restaurante", "Emissão NF"]);
 });
 
@@ -2189,9 +2189,12 @@ test("rateio XLSX: abas das perspectivas com hierarquia explícita, valores num�
   assert.deepEqual(values(department, 2), ["ADMINISTRATIVO", "BIA", 12.5, "Colaborador"]); assert.equal(lastRow(department)[2], 37.5);
   const company = pa.getWorksheet("Rateio - Empresa Departamento")!;
   assert.deepEqual(values(company, 2), ["BOINGA", "ADMINISTRATIVO", "BIA", 12.5, "Colaborador"]); assert.equal(lastRow(company)[3], 37.5);
-  assert.equal(pa.getWorksheet("Rateio - Centro de Custo"), undefined); assert.equal(pa.getWorksheet("Rateio - Empresa CC Depto"), undefined);
+  // sem snapshot (refeições anteriores à captura): agrupadas em "Sem centro de custo"/"Sem empresa", total preservado
+  for (const name of Object.values(ALLOCATION_VIEW_SHEET_NAMES)) assert.equal(lastRow(pa.getWorksheet(name)!).at(-2), 37.5, name);
+  assert.ok(pa.getWorksheet("Rateio - Centro de Custo")!.getSheetValues().some((row) => Array.isArray(row) && row.includes("Sem centro de custo")));
   const ma = buildFoodRateioWorkbook({ locality: "MA", mealOccurrences: meals });
-  assert.equal(ma.getWorksheet("Rateio - Empresa Departamento"), undefined); assert.equal(lastRow(ma.getWorksheet("Rateio - Departamento")!)[2], 37.5);
+  for (const name of Object.values(ALLOCATION_VIEW_SHEET_NAMES)) assert.equal(lastRow(ma.getWorksheet(name)!).at(-2), 37.5, name);
+  assert.deepEqual(values(ma.getWorksheet("Rateio - Empresa CC Depto")!, 2), ["Sem empresa", "Sem centro de custo", "ADMINISTRATIVO", "BIA", 12.5, "Colaborador"]);
   // planilha válida após round-trip
   const reread = new ExcelJS.Workbook(); await reread.xlsx.load(await pa.xlsx.writeBuffer() as ArrayBuffer);
   assert.equal(Number(reread.getWorksheet("Rateio - Empresa Departamento")!.getRow(2).getCell(4).value), 12.5);
@@ -2232,5 +2235,85 @@ test("cesta básica: Máscara Flash (mesma especificação do Café) — colunas
   assert.match(route, /Mascara_Flash_Cesta_Basica_\$\{map\.competence\.year\}-\$\{String\(map\.competence\.month\)\.padStart\(2, "0"\)\}\.xlsx/);
   assert.match(route, /employee: \{ select: \{ cpf: true \} \}/); assert.doesNotMatch(route, /calculateBasicBasketLine|request\.json|searchParams/); // sem cálculo e sem valor vindo do cliente
   assert.match(section, /\/api\/accounts-payable\/basic-basket\/\$\{mapId\}\/flash/); assert.match(view, />Máscara Flash</); assert.match(view, /variant="secondary"[^>]*onClick=\{\(\) => onFlash\(map\.id\)\}/);
+});
+
+// ---- Fase 7E.2: snapshot histórico de Centro de Custo e Empresa na Alimentação (MA e PA com 4/4 perspectivas).
+test("alimentação: snapshot do rateio — MA usa a empresa padrão do Café no lançamento, PA não grava empresa, CC do cadastro no momento", async () => {
+  const { buildFoodRateioSnapshot, loadFoodRateioSnapshots, loadFoodSnapshotCompanies } = await import("../src/modules/accounts-payable/food/rateio-snapshot");
+  const companyA = { id: "co-a", legalName: "EMPRESA A LTDA", tradeName: "EMPRESA A" };
+  assert.deepEqual(buildFoodRateioSnapshot("MA", { costCenter: "  CC  A " }, companyA), { costCenter: "CC A", companyId: "co-a", company: "EMPRESA A" });
+  assert.deepEqual(buildFoodRateioSnapshot("MA", { costCenter: "" }, null), { costCenter: null, companyId: null, company: null }); // sem config/CC: null (vira "Sem ...")
+  assert.deepEqual(buildFoodRateioSnapshot("MA", { costCenter: "CC" }, { id: "x", legalName: "RAZÃO", tradeName: null }), { costCenter: "CC", companyId: "x", company: "RAZÃO" });
+  assert.deepEqual(buildFoodRateioSnapshot("PA", { costCenter: "CC A" }, companyA), { costCenter: "CC A", companyId: null, company: null }); // PA: empresa vem da NF
+  // leitura no servidor numa consulta só (sem N+1), dentro da transação, pela configuração do Café
+  let configA = true; const calls: unknown[] = [];
+  const tx = { breakfastEmployeeConfig: { findMany: async (args: unknown) => { calls.push(args); return [{ employeeId: "ana", defaultCompany: configA ? companyA : { id: "co-b", legalName: "EMPRESA B", tradeName: null } }]; } } } as never;
+  const captured = await loadFoodRateioSnapshots(tx, "MA", [{ id: "ana", costCenter: "CC A" }, { id: "ana", costCenter: "CC A" }, { id: "bia", costCenter: null }]);
+  assert.equal(calls.length, 1); assert.deepEqual((calls[0] as { where: { employeeId: { in: string[] } } }).where.employeeId.in, ["ana", "bia"]);
+  assert.deepEqual(captured.get("ana"), { costCenter: "CC A", companyId: "co-a", company: "EMPRESA A" }); assert.deepEqual(captured.get("bia"), { costCenter: null, companyId: null, company: null });
+  assert.equal((await loadFoodSnapshotCompanies(tx, "PA", ["ana"])).size, 0); assert.equal(calls.length, 1); // PA nem consulta empresa
+  // histórico imutável: o cadastro/config muda para Empresa B / CC B DEPOIS do lançamento; o rateio usa o snapshot salvo
+  const { buildFoodRateioViewRows } = await import("../src/modules/accounts-payable/food/rateio-views");
+  const saved = { employeeId: "ana", normalizedReceivedName: "ana", receivedName: "ANA", officialName: "ANA", receivedDepartment: "ENGENHARIA", confirmedDepartment: "ENGENHARIA", amount: "25.00", included: true, ...captured.get("ana")! };
+  configA = false; const employeeNow = { id: "ana", costCenter: "CC B" };
+  const recaptured = await loadFoodRateioSnapshots(tx, "MA", [employeeNow]);
+  assert.equal(recaptured.get("ana")!.company, "EMPRESA B"); // o cadastro de hoje é outro…
+  assert.deepEqual(buildFoodRateioViewRows("MA", [saved]).rows.map((row) => [row.company, row.costCenter]), [["EMPRESA A", "CC A"]]); // …e o rateio continua A/A
+  // captura no servidor: finalização (MA e PA), lançamento manual e edição só ao TROCAR o colaborador; nada vem do cliente
+  const [ma, manual, contract, views] = await Promise.all(["../src/modules/accounts-payable/food/ma-server.ts", "../src/modules/accounts-payable/food/manual-server.ts", "../src/modules/accounts-payable/food/manual-contract.ts", "../src/modules/accounts-payable/food/rateio-views.ts"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  assert.match(ma, /\.\.\.buildFoodRateioSnapshot\(batch\.locality, employee, snapshotCompanies\.get\(employee\.id\)\),\s+validationStatus: "CONFIRMED"/); // finalização
+  assert.match(ma, /\.\.\.\(occurrence\.employeeId !== employee\.id \? buildFoodRateioSnapshot\(batch\.locality, employee, snapshotCompanies\.get\(employee\.id\)\) : \{\}\)/); // edição
+  assert.match(manual, /loadFoodRateioSnapshots\(tx, input\.locality, accepted\.map\(\(\{ employee \}\) => employee\)\)/);
+  for (const source of [ma, manual, contract]) assert.doesNotMatch(source, /(input|edit|resolution|item)\.(costCenter|companyId|company)\b/);
+  assert.doesNotMatch(views, /foodEmployee|breakfastEmployeeConfig|prisma/); // o rateio nunca consulta cadastro atual
+});
+
+test("alimentação: 4/4 perspectivas em MA e PA — snapshots, Empresa PA pela NF, legado em 'Sem ...' e totais iguais", async () => {
+  const { buildFoodRateioViewRows } = await import("../src/modules/accounts-payable/food/rateio-views");
+  const { buildAllocationViews, normalizeAllocationRow, ALLOCATION_EMPTY_COMPANY, ALLOCATION_EMPTY_COST_CENTER } = await import("../src/modules/accounts-payable/shared/allocation-views");
+  const meal = (employeeId: string, department: string, amount: string, extra: Record<string, unknown> = {}) => ({ employeeId, normalizedReceivedName: employeeId, receivedName: employeeId.toUpperCase(), officialName: employeeId.toUpperCase(), receivedDepartment: department, confirmedDepartment: department, mealQuantity: 1, amount, included: true, ...extra });
+  const flat = (nodes: Array<{ label: string; cents: number; children: unknown[] }>): unknown => nodes.map((node) => [node.label, node.cents, ...(node.children.length ? [flat(node.children as typeof nodes)] : [])]);
+  const viewsOf = (locality: string, meals: Parameters<typeof buildFoodRateioViewRows>[1]) => { const base = buildFoodRateioViewRows(locality, meals); return { base, views: buildAllocationViews(base.rows.map((row) => normalizeAllocationRow({ ...row, source: row }))) }; };
+  // MA: 2 empresas (snapshot), 2 CCs, 2 departamentos, 1 refeição legada (sem snapshot) e 1 excluída (fora do total)
+  const ma = viewsOf("MA", [
+    meal("ana", "ENGENHARIA", "25.00", { companyId: "a", company: "EMPRESA A", costCenter: "CC A" }), meal("ana", "ENGENHARIA", "25.00", { companyId: "a", company: "EMPRESA A", costCenter: "CC A" }),
+    meal("bia", "ADMINISTRATIVO", "25.00", { companyId: "b", company: "EMPRESA B", costCenter: "CC B" }),
+    meal("caio", "ENGENHARIA", "25.00", { companyId: "b", company: "EMPRESA B", costCenter: "CC A" }),
+    meal("duda", "ADMINISTRATIVO", "25.00"), // anterior à migration: companyId/company/costCenter ausentes
+    meal("eva", "ADMINISTRATIVO", "99.00", { included: false, companyId: "a", company: "EMPRESA A", costCenter: "CC A" }),
+  ]);
+  assert.equal(ma.base.totalCents, 12500); assert.equal(ma.base.legacyCompany, 1); assert.equal(ma.base.legacyCostCenter, 1);
+  assert.deepEqual(ma.base.rows.find((row) => row.employeeId === "ana"), { id: "ana|a|CC A|ENGENHARIA", employeeId: "ana", employeeName: "ANA", companyId: "a", company: "EMPRESA A", costCenter: "CC A", department: "ENGENHARIA", meals: 2, cents: 5000, invoiceEmission: null });
+  assert.deepEqual(flat(ma.views.department!.nodes), [["ADMINISTRATIVO", 5000], ["ENGENHARIA", 7500]]);
+  assert.deepEqual(flat(ma.views.costCenter!.nodes), [["CC A", 7500], ["CC B", 2500], [ALLOCATION_EMPTY_COST_CENTER, 2500]]);
+  assert.deepEqual(flat(ma.views.companyDepartment!.nodes), [["EMPRESA A", 5000, [["ENGENHARIA", 5000]]], ["EMPRESA B", 5000, [["ADMINISTRATIVO", 2500], ["ENGENHARIA", 2500]]], [ALLOCATION_EMPTY_COMPANY, 2500, [["ADMINISTRATIVO", 2500]]]]);
+  assert.deepEqual(flat(ma.views.companyCostCenterDepartment!.nodes), [
+    ["EMPRESA A", 5000, [["CC A", 5000, [["ENGENHARIA", 5000]]]]],
+    ["EMPRESA B", 5000, [["CC A", 2500, [["ENGENHARIA", 2500]]], ["CC B", 2500, [["ADMINISTRATIVO", 2500]]]]],
+    [ALLOCATION_EMPTY_COMPANY, 2500, [[ALLOCATION_EMPTY_COST_CENTER, 2500, [["ADMINISTRATIVO", 2500]]]]], // legado: Sem empresa → Sem CC → Depto
+  ]);
+  for (const tree of Object.values(ma.views)) { assert.equal(tree!.totalCents, 12500); assert.equal(tree!.consistent, true); }
+  // PA: Empresa SEMPRE pela Emissão NF salva — um companyId/company na refeição (ex.: cadastro/config mudou) é ignorado
+  const pa = viewsOf("PA", [
+    meal("ana", "ENGENHARIA", "12.50", { invoiceEmission: "NF 01", costCenter: "CC A", companyId: "outra", company: "OUTRA EMPRESA" }),
+    meal("bia", "ADMINISTRATIVO", "12.50", { invoiceEmission: "nf-02", costCenter: "CC B" }),
+    meal("caio", "ADMINISTRATIVO", "12.50", { invoiceEmission: "NF 02" }), // legado sem CC
+  ]);
+  assert.deepEqual(flat(pa.views.companyCostCenterDepartment!.nodes), [["BOINGA", 1250, [["CC A", 1250, [["ENGENHARIA", 1250]]]]], ["PROJETA", 2500, [["CC B", 1250, [["ADMINISTRATIVO", 1250]]], [ALLOCATION_EMPTY_COST_CENTER, 1250, [["ADMINISTRATIVO", 1250]]]]]]);
+  assert.equal(pa.base.rows.find((row) => row.employeeId === "bia")!.invoiceEmission, "NF 02"); assert.equal(pa.base.legacyCompany, 0);
+  for (const tree of Object.values(pa.views)) { assert.equal(tree!.totalCents, 3750); assert.equal(tree!.consistent, true); }
+  // UI: as 4 perspectivas habilitadas (sem "indisponível") e aviso discreto para legado; payload normalizado vindo do servidor
+  const [page, server] = await Promise.all([readFile(new URL("../src/app/pagamentos/alimentacao/page.tsx", import.meta.url), "utf8"), readFile(new URL("../src/modules/accounts-payable/food/server.ts", import.meta.url), "utf8")]);
+  assert.doesNotMatch(page, /availableViews|indisponíve/); assert.match(page, /Alguns lançamentos anteriores à captura histórica de/);
+  assert.match(server, /rateioViews: rateioViewsByBatch\.get\(batch\.id\) \?\? null/); assert.match(server, /costCenter: true, companyId: true, company: true/);
+});
+
+test("alimentação: migration aditiva (nullable, sem backfill) e schema com snapshot de rateio em FoodMealOccurrence", async () => {
+  const [migration, schema] = await Promise.all([readFile(new URL("../prisma/migrations/20261008090000_food_meal_occurrence_rateio_snapshot/migration.sql", import.meta.url), "utf8"), readFile(new URL("../prisma/schema.prisma", import.meta.url), "utf8")]);
+  const sql = migration.replace(/^--.*$/gm, "");
+  assert.match(sql, /ALTER TABLE "FoodMealOccurrence" ADD COLUMN "costCenter" TEXT,\s*ADD COLUMN "companyId" TEXT,\s*ADD COLUMN "company" TEXT;/);
+  assert.doesNotMatch(sql, /NOT NULL|^\s*UPDATE\b|\bDROP\b|DELETE FROM|CREATE INDEX/im); // aditiva, sem backfill, sem índice novo
+  const model = schema.slice(schema.indexOf("model FoodMealOccurrence {"), schema.indexOf("}", schema.indexOf("model FoodMealOccurrence {")));
+  for (const field of [/costCenter\s+String\?/, /companyId\s+String\?/, /company\s+String\?/, /companyRef\s+Company\?/]) assert.match(model, field);
 });
 

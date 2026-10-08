@@ -174,6 +174,7 @@ model Company {
   breakfastEmployeeConfigs BreakfastEmployeeConfig[]
   basicBasketAllocations BasicBasketAllocation[]
   basicBasketEmployeeConfigs BasicBasketEmployeeConfig[]
+  foodMealOccurrences FoodMealOccurrence[]
 }
 
 model Branch {
@@ -719,6 +720,15 @@ model FoodMealOccurrence {
   confirmedDepartment    String?
   invoiceEmission        String?
   restaurantName         String?
+  // Snapshot histórico SÓ para agrupar o rateio (Fase 7E.2), capturado no servidor no lançamento/finalização (ou ao
+  // trocar o colaborador numa edição). Não participa de nenhum cálculo. null = lançamento anterior à captura
+  // ("Sem centro de custo" / "Sem empresa" no rateio) — sem backfill pelo cadastro atual.
+  //   costCenter: FoodEmployee.costCenter no momento (MA e PA).
+  //   companyId/company: MA = empresa padrão do colaborador no Café da Manhã (BreakfastEmployeeConfig) no momento;
+  //   PA = não gravado (a Empresa continua DERIVADA da Emissão NF salva, invoiceEmission).
+  costCenter             String?
+  companyId              String?
+  company                String?
   duplicateCandidate     Boolean                        @default(false)
   duplicateConfirmed     Boolean                        @default(false)
   included               Boolean                        @default(true)
@@ -736,6 +746,7 @@ model FoodMealOccurrence {
   deletionReason         String?
   batch                  FoodBatch                      @relation(fields: [batchId], references: [id], onDelete: Cascade)
   employee               FoodEmployee?                  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  companyRef             Company?                       @relation(fields: [companyId], references: [id], onDelete: Restrict)
   deletedBy              User?                          @relation("FoodOccurrenceDeleter", fields: [deletedByUserId], references: [id], onDelete: Restrict)
 
   @@index([batchId, normalizedReceivedName])

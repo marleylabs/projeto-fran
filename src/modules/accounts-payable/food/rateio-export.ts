@@ -9,7 +9,8 @@ import {
 } from "./excel-style";
 import { buildFoodPaCompanyRateio } from "./invoice-company";
 import { amountToCents } from "@/modules/accounts-payable/breakfast/rateio";
-import { normalizeAllocationRow, type AllocationViewId, type AllocationViewRow } from "@/modules/accounts-payable/shared/allocation-views";
+import { normalizeAllocationRow } from "@/modules/accounts-payable/shared/allocation-views";
+import { buildFoodRateioViewRows } from "./rateio-views";
 import { addAllocationViewSheets } from "@/modules/accounts-payable/shared/allocation-views-workbook";
 
 type NumericValue = number | string | { toString(): string };
@@ -29,6 +30,10 @@ export type FoodRateioBatch = {
     invoiceEmission?: string | null;
     amount: NumericValue;
     included: boolean;
+    // Snapshots do rateio (Fase 7E.2); ausentes/null em refeições anteriores à captura.
+    costCenter?: string | null;
+    companyId?: string | null;
+    company?: string | null;
   }>;
 };
 
@@ -125,30 +130,16 @@ export function buildFoodRateioWorkbook(batch: FoodRateioBatch) {
   return workbook;
 }
 
-// Perspectivas de rateio (abas novas, ao final, sem alterar as existentes). Departamento: setor confirmado/recebido de
-// cada refeição (snapshot), somado por colaborador em centavos. Empresa/Departamento: só PA (Empresa derivada da Emissão
-// NF gravada). Centro de Custo não é exportado: a Alimentação não guarda centro de custo histórico, e o MA não tem empresa.
+// Perspectivas de rateio (abas novas, ao final, sem alterar as existentes): Departamento, Centro de Custo,
+// Empresa/Departamento e Empresa/CC/Departamento, sobre a MESMA base da tela (buildFoodRateioViewRows): valor salvo de
+// cada refeição incluída + snapshots (CC; Empresa no MA) ou Empresa derivada da Emissão NF (PA). Refeições anteriores à
+// captura histórica saem explicitamente em "Sem centro de custo"/"Sem empresa" — nunca completadas pelo cadastro atual.
 function addFoodAllocationViewSheets(workbook: ExcelJS.Workbook, batch: FoodRateioBatch) {
-  const included = batch.mealOccurrences.filter((occurrence) => occurrence.included);
-  if (!included.length) return;
-  const expectedCents = included.reduce((sum, row) => sum + amountToCents(row.amount), 0);
-  const people = new Map<string, { name: string; department: string; cents: number }>();
-  for (const row of included) {
-    const key = personIdentity(row);
-    const current = people.get(key) ?? { name: row.officialName ?? row.receivedName, department: normalizeOrganizationalValue(row.confirmedDepartment ?? row.receivedDepartment), cents: 0 };
-    current.name = row.officialName ?? row.receivedName;
-    current.department = normalizeOrganizationalValue(row.confirmedDepartment ?? row.receivedDepartment);
-    current.cents += amountToCents(row.amount);
-    people.set(key, current);
-  }
-  const style = { header: styleFoodExcelHeader, total: styleFoodExcelTotal, moneyFormat: FOOD_EXCEL_MONEY_FORMAT };
-  const departmentRows: AllocationViewRow<null>[] = [...people].map(([key, person]) => normalizeAllocationRow({ id: key, department: person.department, employeeId: key, employeeName: person.name, cents: person.cents, source: null }));
-  addAllocationViewSheets(workbook, departmentRows, { expectedCents, context: "Alimentação", style, views: ["department"] satisfies AllocationViewId[] });
-  if (batch.locality === "PA") {
-    const rateio = buildFoodPaCompanyRateio(batch.mealOccurrences);
-    const companyRows = rateio.companies.flatMap((company) => company.people.map((person) => normalizeAllocationRow({ id: person.key, company: company.company, department: person.department, employeeId: person.key.split("|")[0], employeeName: person.name, cents: person.amountCents, source: null })));
-    addAllocationViewSheets(workbook, companyRows, { expectedCents, context: "Alimentação PA", style, views: ["companyDepartment"] satisfies AllocationViewId[] });
-  }
+  const base = buildFoodRateioViewRows(batch.locality ?? "MA", batch.mealOccurrences);
+  if (!base.rows.length) return;
+  const rows = base.rows.map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: row.cents, source: null }));
+  const expectedCents = batch.mealOccurrences.filter((occurrence) => occurrence.included).reduce((sum, row) => sum + amountToCents(row.amount), 0);
+  addAllocationViewSheets(workbook, rows, { expectedCents, context: `Alimentação ${batch.locality ?? "MA"}`, style: { header: styleFoodExcelHeader, total: styleFoodExcelTotal, moneyFormat: FOOD_EXCEL_MONEY_FORMAT } });
 }
 
 // PA: "Resumo por Empresa" (Empresa = NF 01 → BOINGA, NF 02 → PROJETA) e "Rateio por Colaborador" com

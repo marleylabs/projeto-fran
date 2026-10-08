@@ -5,7 +5,7 @@
 // perspectiva é local (sem nova requisição). Um módulo pode manter a renderização atual de uma visão (`custom`) e
 // detalhar as linhas de colaborador (`renderLeaf`) sem misturar regra de negócio aqui.
 import { useId, useMemo, useState, type ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Info } from "lucide-react";
 import clsx from "clsx";
 import { Field, textInputClassName } from "@/components/ui";
 import { ALLOCATION_VIEWS, buildAllocationTree, type AllocationNode, type AllocationViewId, type AllocationViewRow } from "@/modules/accounts-payable/shared/allocation-views";
@@ -24,12 +24,14 @@ export type AllocationViewsProps<T> = {
   custom?: Partial<Record<AllocationViewId, ReactNode>>;
   /** Linhas de colaborador de um grupo final (padrão: nome + valor). */
   renderLeaf?: (rows: AllocationViewRow<T>[], node: AllocationNode<T>) => ReactNode;
+  /** Informação discreta (não é erro), ex.: lançamentos antigos sem snapshot agrupados em "Sem ...". */
+  notice?: ReactNode;
   /** Total esperado (lançamento): divergência vira alerta. */
   expectedCents?: number;
   className?: string;
 };
 
-export function AllocationViews<T>({ rows, value, onValueChange, available = ALLOCATION_VIEWS.map((view) => view.id), unavailableReason, custom, renderLeaf, expectedCents, className }: AllocationViewsProps<T>) {
+export function AllocationViews<T>({ rows, value, onValueChange, available = ALLOCATION_VIEWS.map((view) => view.id), unavailableReason, custom, renderLeaf, notice, expectedCents, className }: AllocationViewsProps<T>) {
   const tree = useMemo(() => buildAllocationTree(rows, value), [rows, value]);
   const ok = tree.consistent && (expectedCents === undefined || expectedCents === tree.totalCents);
   const blocked = ALLOCATION_VIEWS.some((view) => !available.includes(view.id));
@@ -45,6 +47,7 @@ export function AllocationViews<T>({ rows, value, onValueChange, available = ALL
         </Field>
         <p className="text-caption text-foreground-muted tabular-nums">{peopleLabel(tree.people)} · <strong className="text-foreground">{money(tree.totalCents)}</strong></p>
       </div>
+      {notice && <p className="flex items-start gap-1.5 text-caption text-foreground-muted"><Info size={14} aria-hidden="true" className="mt-px shrink-0 text-info-text" /><span>{notice}</span></p>}
       {custom?.[value] ?? (
         <ul className="grid gap-2" aria-label={`Rateio por ${ALLOCATION_VIEWS.find((view) => view.id === value)?.label}`}>
           {tree.nodes.map((node) => <TreeNode key={node.key} node={node} depth={0} renderLeaf={renderLeaf} />)}

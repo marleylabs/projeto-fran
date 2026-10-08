@@ -22,6 +22,7 @@ import {
 import { matchFoodEmployee } from "./matching";
 import { foodPaInvoiceLabel, isFoodPaInvoiceCode } from "./invoice-company";
 import { isFoodMaCycle, occurrenceBelongsToMaCycle, type FoodMaCycle } from "./cycles";
+import { buildFoodRateioSnapshot, loadFoodSnapshotCompanies } from "./rateio-snapshot";
 
 function validateCompetence(year: number, month: number) {
   if (
@@ -247,6 +248,12 @@ export async function finalizeFoodMaBatch(
       const bySource = new Map(
         resolutions.map((item) => [item.normalizedReceivedName, item]),
       );
+      // Snapshot do rateio (Centro de Custo; Empresa no MA) capturado AQUI, no lançamento: uma consulta para todos os
+      // colaboradores possíveis (já associados ou escolhidos na revisão).
+      const snapshotCompanies = await loadFoodSnapshotCompanies(tx, batch.locality, [
+        ...batch.mealOccurrences.map((occurrence) => occurrence.employeeId).filter((id): id is string => Boolean(id)),
+        ...resolutions.map((item) => item.employeeId).filter((id): id is string => Boolean(id)),
+      ]);
       for (const occurrence of batch.mealOccurrences) {
         const resolution = bySource.get(occurrence.normalizedReceivedName);
         let employee = occurrence.employeeId
@@ -287,6 +294,7 @@ export async function finalizeFoodMaBatch(
             employeeId: employee.id,
             officialName: employee.officialName,
             confirmedDepartment,
+            ...buildFoodRateioSnapshot(batch.locality, employee, snapshotCompanies.get(employee.id)),
             validationStatus: "CONFIRMED",
             matchMethod:
               occurrence.validationStatus === "AUTO_MATCHED"
@@ -523,6 +531,13 @@ export async function editFoodMaBatch(
           "Rateio de alimentação concluído não encontrado.",
         );
       const byId = new Map(edits.map((edit) => [edit.occurrenceId, edit]));
+      // Edição: o snapshot do rateio só é recapturado quando a refeição passa a outro colaborador (correção deliberada,
+      // auditada); manter o colaborador preserva o snapshot original — mudanças do cadastro não reescrevem o histórico.
+      const reassignedIds = batch.mealOccurrences
+        .map((occurrence) => ({ occurrence, edit: byId.get(occurrence.id) }))
+        .filter(({ occurrence, edit }) => edit?.employeeId && edit.employeeId !== occurrence.employeeId)
+        .map(({ edit }) => edit!.employeeId!);
+      const snapshotCompanies = await loadFoodSnapshotCompanies(tx, batch.locality, reassignedIds);
       if (byId.size !== batch.mealOccurrences.length)
         throw new FoodBatchValidationError(
           "Envie a situação atual de todas as ocorrências do rateio.",
@@ -605,6 +620,7 @@ export async function editFoodMaBatch(
             mealQuantity,
             amount: occurrence.unitPrice.mul(mealQuantity),
             invoiceEmission,
+            ...(occurrence.employeeId !== employee.id ? buildFoodRateioSnapshot(batch.locality, employee, snapshotCompanies.get(employee.id)) : {}),
           },
         });
       }

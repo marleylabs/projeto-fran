@@ -7,6 +7,7 @@ import { isFoodMaCycle, occurrenceBelongsToMaCycle } from "./cycles";
 import { normalizeFoodName } from "./ma-processing";
 import { buildManualFoodCombinations, manualFoodUsesSupplierPrice } from "./manual-contract";
 import { FOOD_PA_INVOICE_REQUIRED_MESSAGE, foodPaInvoiceLabel, isFoodPaInvoiceCode } from "./invoice-company";
+import { loadFoodRateioSnapshots } from "./rateio-snapshot";
 
 type ManualFoodInput = {
   year: number;
@@ -281,6 +282,8 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
           })
         )._max.sourceRow ?? 0;
       const restaurantName = entity.tradeName?.trim() || entity.legalName;
+      // Snapshot do rateio (Centro de Custo; Empresa no MA) lido do cadastro/configuração NO SERVIDOR, neste lançamento.
+      const snapshots = await loadFoodRateioSnapshots(tx, input.locality, accepted.map(({ employee }) => employee));
       await tx.foodMealOccurrence.createMany({
         data: accepted.map(({ employee, date, quantity, invoice }, index) => ({
           batchId: batch!.id,
@@ -293,6 +296,7 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
           officialName: employee.officialName,
           receivedDepartment: employee.department,
           confirmedDepartment: employee.department,
+          ...snapshots.get(employee.id),
           invoiceEmission: invoice,
           restaurantName: input.locality === "PA" ? restaurantName : null,
           validationStatus: "CONFIRMED",

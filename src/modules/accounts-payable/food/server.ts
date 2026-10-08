@@ -1,4 +1,5 @@
 import "server-only";
+import { buildFoodRateioViewRows } from "./rateio-views";
 import { buildFoodPaCompanyRateio } from "./invoice-company";
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
@@ -51,9 +52,14 @@ export async function getFoodCompetence(year: number, month: number) {
   for (const occurrence of editableOccurrences) occurrencesByBatch.set(occurrence.batchId, [...(occurrencesByBatch.get(occurrence.batchId) ?? []), occurrence]);
   // PA: rateio por Empresa derivado da Emissão NF de cada linha (snapshot) — NF 01 → BOINGA, NF 02 → PROJETA.
   const paBatchIds = competence?.batches.filter((batch) => batch.locality === "PA").map((batch) => batch.id) ?? [];
-  const paRows = paBatchIds.length ? await prisma.foodMealOccurrence.findMany({ where: { batchId: { in: paBatchIds }, deletedAt: null }, select: { batchId: true, employeeId: true, officialName: true, receivedName: true, normalizedReceivedName: true, confirmedDepartment: true, receivedDepartment: true, invoiceEmission: true, mealQuantity: true, amount: true, included: true } }) : [];
+  // Uma consulta para todas as refeições da competência: alimenta o rateio por Empresa do PA (como antes) e a base das
+  // 4 perspectivas de rateio (snapshots de Centro de Custo/Empresa da Fase 7E.2), sem N+1.
+  const allBatchIds = competence?.batches.map((batch) => batch.id) ?? [];
+  const occurrenceRows = allBatchIds.length ? await prisma.foodMealOccurrence.findMany({ where: { batchId: { in: allBatchIds }, deletedAt: null }, select: { batchId: true, employeeId: true, officialName: true, receivedName: true, normalizedReceivedName: true, confirmedDepartment: true, receivedDepartment: true, invoiceEmission: true, mealQuantity: true, amount: true, included: true, costCenter: true, companyId: true, company: true } }) : [];
+  const paRows = occurrenceRows.filter((row) => paBatchIds.includes(row.batchId));
   const companyRateioByBatch = new Map(paBatchIds.map((id) => [id, buildFoodPaCompanyRateio(paRows.filter((row) => row.batchId === id))]));
-  const responseCompetence = competence ? { ...competence, batches: competence.batches.map(({ _count, ...batch }) => ({ ...batch, mealOccurrenceCount: _count.mealOccurrences, mealOccurrences: occurrencesByBatch.get(batch.id) ?? [], companyRateio: companyRateioByBatch.get(batch.id) ?? null })) } : null;
+  const rateioViewsByBatch = new Map(competence?.batches.map((batch) => [batch.id, buildFoodRateioViewRows(batch.locality, occurrenceRows.filter((row) => row.batchId === batch.id))]) ?? []);
+  const responseCompetence = competence ? { ...competence, batches: competence.batches.map(({ _count, ...batch }) => ({ ...batch, mealOccurrenceCount: _count.mealOccurrences, mealOccurrences: occurrencesByBatch.get(batch.id) ?? [], companyRateio: companyRateioByBatch.get(batch.id) ?? null, rateioViews: rateioViewsByBatch.get(batch.id) ?? null })) } : null;
   const supplierPrices = new Map<string, Prisma.Decimal>();
   for (const config of priceConfigs) if (!supplierPrices.has(config.administrativeEntityId) &&
     (!config.effectiveYear || config.effectiveYear < year || (config.effectiveYear === year && (!config.effectiveMonth || config.effectiveMonth <= month)))) supplierPrices.set(config.administrativeEntityId, config.unitPrice);

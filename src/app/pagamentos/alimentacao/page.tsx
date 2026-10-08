@@ -20,6 +20,7 @@ import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList
 import { AllocationViews } from "@/components/allocation/AllocationViews";
 import { amountToCents } from "@/modules/accounts-payable/breakfast/rateio";
 import { normalizeAllocationRow, type AllocationViewId } from "@/modules/accounts-payable/shared/allocation-views";
+import type { FoodRateioViewRow } from "@/modules/accounts-payable/food/rateio-views";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { BreakfastSection } from "@/modules/accounts-payable/breakfast/BreakfastSection";
 import { BasicBasketSection } from "@/modules/accounts-payable/basic-basket/BasicBasketSection";
@@ -93,6 +94,8 @@ type Batch = {
   mealOccurrenceCount: number;
   // Somente PA: rateio por Empresa derivado da Emissão NF de cada colaborador (calculado no servidor).
   companyRateio?: { companies: FoodPaRateioCompany[]; totalCents: number; companiesCents: number; consistent: boolean } | null;
+  // Base das 4 perspectivas de rateio (servidor; Fase 7E.2): valor salvo por refeição + snapshots/NF.
+  rateioViews?: { rows: FoodRateioViewRow[]; totalCents: number; legacyCompany: number; legacyCostCenter: number } | null;
   issues: Issue[];
   revisions: { revision: number; createdAt: string }[];
 };
@@ -389,15 +392,15 @@ function MaRateio({
     const sector = normalizeOrganizationalValue(row.department);
     sectors.set(sector, [...(sectors.get(sector) ?? []), row]);
   }
-  // Perspectivas de rateio (só agrupam valores já salvos). Departamento: alocações do lote (snapshot do setor).
-  // Empresa/Departamento: somente PA, com a Empresa DERIVADA da Emissão NF gravada em cada refeição (companyRateio,
-  // calculado no servidor). Centro de Custo não existe historicamente na Alimentação e o MA não tem empresa:
-  // essas perspectivas ficam indisponíveis em vez de usar o cadastro atual.
+  // Perspectivas de rateio (só agrupam valores já salvos), todas sobre a base do servidor (rateioViews): Departamento
+  // (lista de setores de sempre), Centro de Custo (snapshot), Empresa/Departamento e Empresa/CC/Departamento (Empresa:
+  // snapshot no MA; Emissão NF no PA). Refeições anteriores à captura aparecem em "Sem centro de custo"/"Sem empresa".
   const [view, setView] = useState<AllocationViewId>("department");
-  const viewRows = view === "companyDepartment" && batch.companyRateio
-    ? batch.companyRateio.companies.flatMap((company) => company.people.map((person) => normalizeAllocationRow({ id: person.key, company: company.company, department: person.department, employeeId: person.key.split("|")[0], employeeName: person.name, cents: person.amountCents, source: person as { meals: number; invoiceEmission: string } | null })))
-    : batch.allocations.map((row) => normalizeAllocationRow({ id: row.id, department: normalizeOrganizationalValue(row.department), employeeId: row.sourceIdentifier, employeeName: row.employeeName, cents: amountToCents(row.amount), source: null as { meals: number; invoiceEmission: string } | null }));
-  const availableViews: AllocationViewId[] = batch.locality === "PA" && batch.companyRateio ? ["department", "companyDepartment"] : ["department"];
+  const viewRows = (batch.rateioViews?.rows ?? []).map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: row.cents, source: row }));
+  const legacyNotice = [
+    batch.rateioViews?.legacyCostCenter ? "Centro de Custo" : "",
+    batch.locality === "MA" && batch.rateioViews?.legacyCompany ? "Empresa" : "",
+  ].filter(Boolean);
   return (
     <AllocationCard
       title={batch.administrativeEntity.tradeName}
@@ -454,8 +457,7 @@ function MaRateio({
         rows={viewRows}
         value={view}
         onValueChange={setView}
-        available={availableViews}
-        unavailableReason={batch.locality === "PA" ? "Centro de Custo indisponível: a Alimentação não guarda o centro de custo histórico." : "Centro de Custo e Empresa indisponíveis: a Alimentação não guarda o centro de custo histórico e o lote MA não possui empresa."}
+        notice={legacyNotice.length && view !== "department" ? `Alguns lançamentos anteriores à captura histórica de ${legacyNotice.join(" e ")} aparecem como ${legacyNotice.map((label) => (label === "Empresa" ? "“Sem empresa”" : "“Sem centro de custo”")).join(" / ")}.` : undefined}
         expectedCents={amountToCents(batch.totalAmount)}
         custom={{ department: (
       <AllocationDepartmentList>
@@ -491,8 +493,8 @@ function MaRateio({
           <ul className="divide-y divide-border">
             {rows.map((row) => (
               <li key={row.id} className="flex items-center justify-between gap-3 px-1 py-1.5 text-sm">
-                <span className="min-w-0">{row.employeeName}{row.source && <small className="block text-secondary">{row.source.invoiceEmission}</small>}</span>
-                <span className="shrink-0 tabular-nums">{row.source ? `${row.source.meals} refeições · ` : ""}{money(row.cents / 100)}</span>
+                <span className="min-w-0">{row.employeeName}{row.source.invoiceEmission && <small className="block text-secondary">{row.source.invoiceEmission}</small>}</span>
+                <span className="shrink-0 tabular-nums">{row.source.meals} refeições · {money(row.cents / 100)}</span>
               </li>
             ))}
           </ul>
