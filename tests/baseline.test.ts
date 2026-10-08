@@ -838,7 +838,8 @@ test("vale transporte manual: sem upload na interface e cálculo/validação no 
     readFile(new URL("../src/app/api/accounts-payable/transit-voucher/entries/route.ts", import.meta.url), "utf8"),
   ]);
   assert.doesNotMatch(page, /Upload de arquivo|FileInput|3\. Benefício|4\. Financeiro/);
-  assert.match(page, /1\. Dados necessários/); assert.match(page, /Salvar \/ Gerar Rateio/);
+  // preenchimento manual (Fase 7G: no Design System, sem a numeração antiga das seções)
+  assert.match(page, /Competência, calendário e tarifa/); assert.match(page, /<TransitFillTable/); assert.match(page, /Salvar \/ Gerar Rateio/);
   assert.match(server, /calculateTransitVoucherEmployeeTotal/); assert.match(server, /assertPassagesToReceive/); assert.match(server, /createFinancialRecordInTransaction/);
   assert.match(route, /FINANCIAL_RECORDS_CREATE/); assert.doesNotMatch(server, /entry\.amount|entries\[\d\]\.amount/);
 });
@@ -2511,7 +2512,29 @@ test("café da manhã 7F: apresentação no Design System, regras na seção e c
   assert.match(summary, /caption="Resumo por Empresa e Centro de Custo"/); assert.doesNotMatch(summary, /AllocationViews/);
 });
 
-// ---- Fase 7G: limpeza dos compartilhados de competência (só apresentação).
+// ---- Fase 7G: Vale Transporte no Design System + limpeza dos compartilhados de competência (só apresentação).
+test("vale transporte 7G: apresentação no Design System, regras na página e componentes visuais sem cálculo", async () => {
+  const base = "../src/modules/accounts-payable/transit-voucher/ui/";
+  const [page, fill, view, summary] = await Promise.all(["../src/app/pagamentos/vale-transporte/page.tsx", base + "TransitFillTable.tsx", base + "TransitAllocationView.tsx", base + "TransitSummaryView.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  assert.match(page, /<Tabs label="Etapas do Vale Transporte" items=\{STAGES\}/); assert.match(page, /<Dialog\s/); assert.match(page, /<CurrencyInput/); assert.doesNotMatch(page, /modal-box|role="tablist"|<table|ManualEntrySection|MetricCard|AllocationCard/);
+  // regras e payloads continuam na página: Passagens a Receber = dias úteis + diferença − descontos; total = tarifa × passagem/dia × a receber
+  assert.match(page, /calculatePassagesToReceive\(baseDays, Number\(value\.diff\), Number\(value\.discount\)\)/); assert.match(page, /calculateTransitVoucherEmployeeTotal\(fareCents, Number\(value\.qty\), passages\)/);
+  assert.match(page, /dailyPassageQuantity: Number\(value\.qty\), previousPassageDifference: Number\(value\.diff\), passageDiscount: Number\(value\.discount\)/); assert.match(page, /method: "PATCH"/);
+  // tarifa: o mesmo texto com 2 casas vai ao servidor (que valida com parseFareToCents)
+  assert.match(page, /fareUnitPrice: fareInput/); assert.match(page, /value\.toFixed\(2\)/);
+  for (const [name, source] of Object.entries({ fill, view, summary })) {
+    assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ""), /calculatePassagesToReceive|calculateTransitVoucherEmployeeTotal|parseFareToCents|fetch\(/, name);
+    assert.doesNotMatch(source, /\b(emerald|amber|slate|orange|red)-\d|#[0-9a-fA-F]{3,6}\b|<[a-z][a-z0-9]*\s[^>]*\btitle=|[↳☑☐✓⚠⌕]/, name);
+    assert.doesNotMatch(source, /basic-basket\/ui/, name); // VT nunca depende da Cesta
+  }
+  // Rateio: perspectivas compartilhadas sobre os snapshots do lançamento (empresa, CC, departamento), padrão Empresa/Departamento
+  assert.match(view, /<AllocationViews/); assert.match(view, /useState<AllocationViewId>\("companyDepartment"\)/);
+  assert.match(view, /costCenter: row\.costCenter, department: row\.department/); assert.doesNotMatch(view, /collaborators|foodEmployee|\/api\/collaborators/);
+  assert.match(view, /row\.passagesToReceive !== null && <Button/); assert.match(view, /onDeleteRecord\(map\.id, row\.id\)/);
+  // Resumo segue Empresa → Departamento (não é perspectiva do Rateio)
+  assert.match(summary, /caption="Resumo por Empresa e Departamento"/); assert.doesNotMatch(summary, /AllocationViews/);
+});
+
 test("compartilhados 7G: calendário, feriado, empresa e combobox no Design System, mesma API", async () => {
   const [holidays, company, combo, summary, parts] = await Promise.all(["../src/components/allocation/CompetenceHolidays.tsx", "../src/components/allocation/CompanyPicker.tsx", "../src/components/CollaboratorMultiCombobox.tsx", "../src/modules/accounts-payable/shared/ui/CompetenceSummary.tsx", "../src/modules/accounts-payable/shared/ui/parts.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
   for (const [name, source] of Object.entries({ holidays, company, combo, summary, parts })) {
