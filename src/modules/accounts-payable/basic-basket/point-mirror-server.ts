@@ -5,6 +5,7 @@ import { dateOnlyFromDb } from "@/lib/date-only";
 import { readCsvMatrix, readXlsxMatrix } from "@/modules/accounts-payable/shared/spreadsheet";
 import { buildBasicBasketContext, buildBasicBasketVacationBlocks, calculateCurrentBasketDays, calculateRetroactiveDays, resolveBasicBasketAdjustments, summarizeDateRanges, type BasicBasketAdjustments, type BasicBasketOccurrences } from "./calculations";
 import { BasicBasketPointMirrorError, buildBasicBasketPointMirror, hasOccurrences, normalizeBasicBasketPointMirrorMatrix, occurrencesOf, splitAbsenceDates } from "./point-mirror";
+import { buildPointMirrorCandidates } from "./point-mirror-review";
 
 // Espelho de Ponto da Cesta Básica: o arquivo (CPF, PIS, CNPJ, jornada) é lido SÓ em memória e descartado; nada
 // dele vai para log. Match EXCLUSIVAMENTE por CPF normalizado (nome nunca é fallback). Ficam gravados apenas os
@@ -41,6 +42,7 @@ export async function previewBasicBasketPointMirror(input: { buffer: Buffer; fil
   const selected = new Set(input.selectedIds);
 
   const stored: Record<string, BasicBasketOccurrences> = {};
+  const admissionById = new Map<string, string | null>();
   const people = parsed.people.map((person) => {
     const employee = person.cpf ? byCpf.get(person.cpf) : undefined;
     const admissionDate = employee ? dateOnlyFromDb(employee.admissionDate) : null;
@@ -54,6 +56,7 @@ export async function previewBasicBasketPointMirror(input: { buffer: Buffer; fil
     let status: BasicBasketPointMirrorStatus = !person.cpf ? "INVALID_CPF" : !employee ? "NOT_FOUND" : !eligible ? "NOT_ELIGIBLE" : !selected.has(employee.id) ? "NOT_SELECTED" : !admissionDate ? "MISSING_ADMISSION" : "NO_OCCURRENCE";
     if (status === "NO_OCCURRENCE" && employee) {
       stored[employee.id] = occurrences; // só selecionados aptos: é isto que o salvamento poderá aplicar
+      admissionById.set(employee.id, admissionDate);
       adjustments = resolveBasicBasketAdjustments({ context, admissionDate, occurrences });
       // Falta no mês de apuração → corta esta Cesta; Falta só no mês da competência → afeta a próxima competência.
       status = adjustments.currentUnjustifiedAbsence || adjustments.retroactiveUnjustifiedAbsence ? "ABSENCE" : adjustments.currentVacationDays || adjustments.retroactiveVacationDays ? "VACATION" : absences.nextCompetence.length ? "NEXT_COMPETENCE" : absences.beforeAdmission.length || vacationBeforeAdmission.length ? "BEFORE_ADMISSION" : hasOccurrences(occurrences) || person.outOfPeriodRows ? "OUT_OF_PERIOD" : "NO_OCCURRENCE";
@@ -81,8 +84,13 @@ export async function previewBasicBasketPointMirror(input: { buffer: Buffer; fil
   const record = await prisma.basicBasketPointMirrorImport.create({ data: { year: input.year, month: input.month, sourceRows: parsed.totals.rows, occurrences: stored as Prisma.InputJsonValue, createdByUserId: input.userId } });
 
   const count = (status: BasicBasketPointMirrorStatus) => people.filter((person) => person.status === status).length;
+  // Fase 7E.3: candidatos de REVISÃO (uma linha por data/tipo dos colaboradores aptos), com id desta importação. Nada é
+  // aplicado no processamento: o usuário aprova/rejeita; o "Aplicar" e o salvamento revalidam no servidor.
+  const candidates = Object.entries(stored).flatMap(([employeeId, occurrences]) => buildPointMirrorCandidates({ importId: record.id, context, employeeId, admissionDate: admissionById.get(employeeId) ?? null, occurrences }));
   return {
     importId: record.id,
+    candidates,
+    occurrences: stored,
     reference: { current: `${String(context.competenceMonth).padStart(2, "0")}/${context.competenceYear}`, previous: `${String(context.referenceMonth).padStart(2, "0")}/${context.referenceYear}`, absence: `${String(context.absenceReferenceMonth).padStart(2, "0")}/${context.absenceReferenceYear}`, absenceStart: context.absenceReferenceMonthStart, absenceEnd: context.absenceReferenceMonthEnd },
     totals: {
       ...parsed.totals,

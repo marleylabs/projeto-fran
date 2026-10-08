@@ -12,7 +12,8 @@ import { UploadDropzone, type UploadFileLike } from "./UploadDropzone";
 // 100% CONTROLADO pelo módulo: ele envia o arquivo, chama a própria API, monta a prévia e decide o passo (`step`).
 // Este componente não faz requisições e não conhece nenhum domínio (Cesta, Café, VT, Férias, CPF...).
 // Erros BLOQUEIAM a aplicação; avisos NÃO bloqueiam — diferenciados por ícone + texto + cor (nunca só cor).
-export type ImportFlowStep = "select" | "processing" | "preview" | "applying" | "done";
+// Etapa opcional "Revisar" (prop `review`): Prévia → Revisar → Aplicar — a aplicação só é liberada na revisão.
+export type ImportFlowStep = "select" | "processing" | "preview" | "review" | "applying" | "done";
 
 export type ImportIssue = { id: string; message: ReactNode; detail?: ReactNode };
 
@@ -23,28 +24,37 @@ export const IMPORT_FLOW_STEPS = [
   { key: "applying", label: "Aplicar" },
   { key: "done", label: "Resultado" },
 ] as const;
+export const IMPORT_FLOW_REVIEW_STEPS = [
+  { key: "select", label: "Selecionar" },
+  { key: "processing", label: "Processar" },
+  { key: "preview", label: "Prévia" },
+  { key: "review", label: "Revisar" },
+  { key: "applying", label: "Aplicar" },
+  { key: "done", label: "Resultado" },
+] as const;
+type FlowSteps = ReadonlyArray<{ key: ImportFlowStep; label: string }>;
 
 export type ImportStepState = "complete" | "current" | "upcoming";
 
 /** Estado de cada etapa do stepper para o passo atual. "done" marca todas como concluídas. */
-export function importStepStates(step: ImportFlowStep): ImportStepState[] {
-  const current = IMPORT_FLOW_STEPS.findIndex((item) => item.key === step);
-  return IMPORT_FLOW_STEPS.map((_, index) => (step === "done" || index < current ? "complete" : index === current ? "current" : "upcoming"));
+export function importStepStates(step: ImportFlowStep, steps: FlowSteps = IMPORT_FLOW_STEPS): ImportStepState[] {
+  const current = steps.findIndex((item) => item.key === step);
+  return steps.map((_, index) => (step === "done" || index < current ? "complete" : index === current ? "current" : "upcoming"));
 }
 
-/** Pode aplicar? Só na prévia, sem erros e sem veto do consumidor. */
-export function canApplyImport({ step, errors = [], canApply = true }: { step: ImportFlowStep; errors?: readonly ImportIssue[]; canApply?: boolean }) {
-  return step === "preview" && errors.length === 0 && canApply;
+/** Pode aplicar? Na prévia (ou na revisão, quando o fluxo tem a etapa Revisar), sem erros e sem veto do consumidor. */
+export function canApplyImport({ step, errors = [], canApply = true, withReview = false }: { step: ImportFlowStep; errors?: readonly ImportIssue[]; canApply?: boolean; withReview?: boolean }) {
+  return step === (withReview ? "review" : "preview") && errors.length === 0 && canApply;
 }
 
 const STATE_TEXT: Record<ImportStepState, string> = { complete: "concluída", current: "etapa atual", upcoming: "pendente" };
 
-export function ImportStepper({ step, className }: { step: ImportFlowStep; className?: string }) {
-  const states = importStepStates(step);
+export function ImportStepper({ step, steps = IMPORT_FLOW_STEPS, className }: { step: ImportFlowStep; steps?: FlowSteps; className?: string }) {
+  const states = importStepStates(step, steps);
   const busy = step === "processing" || step === "applying";
   return (
     <ol aria-label="Etapas da importação" className={clsx("flex flex-wrap items-center gap-x-2 gap-y-2", className)}>
-      {IMPORT_FLOW_STEPS.map((item, index) => {
+      {steps.map((item, index) => {
         const state = states[index];
         return (
           <li key={item.key} aria-current={state === "current" ? "step" : undefined} className="flex items-center gap-2">
@@ -120,6 +130,11 @@ export type ImportFlowProps = {
   processingText?: ReactNode;
   // Prévia
   preview?: ReactNode;
+  /** Etapa Revisar (opcional): conteúdo da revisão; a prévia ganha "Revisar ocorrências" e só a revisão aplica. */
+  review?: ReactNode;
+  onReview?: () => void;
+  reviewLabel?: string;
+  onBackToPreview?: () => void;
   errors?: readonly ImportIssue[];
   warnings?: readonly ImportIssue[];
   /** Veto extra do consumidor (ex.: nada selecionado). Erros já bloqueiam por si. */
@@ -139,14 +154,16 @@ export type ImportFlowProps = {
 export function ImportFlow({
   step, title, description, file, onSelect, onClearFile, accept, maxSize, uploadLabel = "Selecione o arquivo", uploadHelper,
   onProcess, processLabel = "Processar arquivo", processingText = "Processando o arquivo…",
-  preview, errors = [], warnings = [], canApply = true, applyHint, onApply, applyLabel = "Aplicar",
+  preview, review, onReview, reviewLabel = "Revisar ocorrências", onBackToPreview, errors = [], warnings = [], canApply = true, applyHint, onApply, applyLabel = "Aplicar",
   result, failure, onReset, resetLabel = "Nova importação", className,
 }: ImportFlowProps) {
+  const withReview = review !== undefined;
+  const steps: FlowSteps = withReview ? IMPORT_FLOW_REVIEW_STEPS : IMPORT_FLOW_STEPS;
   const headingId = `${useId()}-import-step`;
   const panel = useRef<HTMLDivElement>(null);
   const previousStep = useRef(step);
-  const applyAllowed = canApplyImport({ step, errors, canApply });
-  const stepLabel = IMPORT_FLOW_STEPS.find((item) => item.key === step)?.label ?? "";
+  const applyAllowed = canApplyImport({ step, errors, canApply, withReview });
+  const stepLabel = steps.find((item) => item.key === step)?.label ?? "";
 
   // A cada troca de etapa o foco vai para o título do painel: teclado e leitor de tela acompanham o fluxo.
   useEffect(() => {
@@ -163,10 +180,10 @@ export function ImportFlow({
           {description && <p className="mt-1 text-body text-foreground-muted">{description}</p>}
         </div>
       )}
-      <ImportStepper step={step} />
+      <ImportStepper step={step} steps={steps} />
       <div ref={panel} className="grid gap-4" aria-busy={step === "processing" || step === "applying" || undefined}>
         <h3 id={headingId} data-step-heading="" tabIndex={-1} className="text-card-title text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
-          {step === "done" ? "Resultado da importação" : `Etapa ${IMPORT_FLOW_STEPS.findIndex((item) => item.key === step) + 1} de ${IMPORT_FLOW_STEPS.length} — ${stepLabel}`}
+          {step === "done" ? "Resultado da importação" : `Etapa ${steps.findIndex((item) => item.key === step) + 1} de ${steps.length} — ${stepLabel}`}
         </h3>
 
         {failure && (
@@ -201,7 +218,33 @@ export function ImportFlow({
           </SkeletonGroup>
         )}
 
-        {(step === "preview" || step === "applying") && (
+        {withReview && step === "preview" && (
+          <>
+            <ImportIssues errors={errors} warnings={warnings} />
+            {preview && <div className="min-w-0">{preview}</div>}
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
+              <p className="mr-auto text-caption text-foreground-muted">{errors.length > 0 ? "Corrija os erros para continuar." : "Nada é aplicado na prévia: revise cada ocorrência antes de aplicar."}</p>
+              <Button variant="secondary" onClick={onReset}>Cancelar</Button>
+              <Button onClick={onReview} disabled={errors.length > 0 || !onReview}>{reviewLabel}</Button>
+            </div>
+          </>
+        )}
+
+        {withReview && (step === "review" || step === "applying") && (
+          <>
+            <ImportIssues errors={errors} warnings={warnings} />
+            <div className="min-w-0">{review}</div>
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
+              {!applyAllowed && step === "review" && (
+                <p className="mr-auto text-caption font-medium text-foreground-muted" role="status">{errors.length > 0 ? "Corrija os erros para liberar a aplicação." : applyHint}</p>
+              )}
+              {onBackToPreview && <Button variant="secondary" onClick={onBackToPreview} disabled={step === "applying"}>Voltar à prévia</Button>}
+              <Button onClick={onApply} disabled={!applyAllowed} loading={step === "applying"}>{step === "applying" ? "Aplicando…" : applyLabel}</Button>
+            </div>
+          </>
+        )}
+
+        {!withReview && (step === "preview" || step === "applying") && (
           <>
             <ImportIssues errors={errors} warnings={warnings} />
             {preview && <div className="min-w-0">{preview}</div>}

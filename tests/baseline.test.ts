@@ -1785,14 +1785,16 @@ test("cesta básica: backend autoritativo, padrões, observação, soft cancel, 
     readFile(new URL("../prisma/migrations/20261006120000_basic_basket_point_mirror/migration.sql", import.meta.url), "utf8"),
     readFile(new URL("../src/app/api/accounts-payable/basic-basket/entries/route.ts", import.meta.url), "utf8"),
   ]);
-  assert.doesNotMatch(server, /entry\.(\w*[Vv]acation\w*|\w*[Aa]bsence\w*|\w*PayableDays|adjustments|occurrences)/); assert.doesNotMatch(entriesRoute, /vacation|absence|adjustments|occurrences/i);
-  assert.match(server, /resolveBasicBasketAdjustments\(\{ context: cycle, admissionDate: employeeById\.get\(employeeId\)!\.admissionDate, occurrences \}\)/);
+  // do cliente só vem o INSUMO Férias manuais (validado no servidor, Fase 7E.3); dias/Falta/ajustes nunca
+  assert.doesNotMatch(server, /entry\.(?!manualVacationDays\b)(\w*[Vv]acation\w*|\w*[Aa]bsence\w*|\w*PayableDays|adjustments|occurrences)/); assert.doesNotMatch(entriesRoute, /vacation|absence|adjustments|occurrences/i);
+  assert.match(server, /resolveReviewedBasicBasketAdjustments\(\{ context: cycle, admissionDate: employeeById\.get\(entry\.employeeId\)!\.admissionDate, occurrences,/);
+  assert.match(await readFile(new URL("../src/modules/accounts-payable/basic-basket/point-mirror-review.ts", import.meta.url), "utf8"), /resolveBasicBasketAdjustments\(\{ context: input\.context, admissionDate: input\.admissionDate, occurrences: approvedPointMirrorOccurrences\(/);
   assert.match(server, /record\.createdByUserId !== input\.userId \|\| record\.year !== input\.year \|\| record\.month !== input\.month/); // mesma competência e usuário
   assert.match(server, /currentVacationDays: original\.currentVacationDays, currentUnjustifiedAbsence: original\.currentUnjustifiedAbsence/); // correção usa o snapshot
   assert.match(server, /if \(total\.lte\(0\)\) throw new BasicBasketValidationError/); // lote zerado não gera obrigação
   assert.doesNotMatch(pointServer, /writeFile|storePrivateFile|console\.|cpf: person\.cpf|cpf: employee\.cpf/); assert.match(pointServer, /where: \{ cpf: \{ in: cpfs \} \}/); assert.doesNotMatch(pointServer, /officialName: \{|normalizedName/); // só CPF, nada do arquivo persistido/logado
   assert.match(pointRoute, /MAX_POINT_MIRROR_FILE_SIZE/); assert.match(pointRoute, /console\.error\("BASIC_BASKET_POINT_MIRROR_ERROR"\)/);
-  assert.match(section, /Aplicar Faltas e Férias/); assert.match(section, /pointMirrorImportId: activeApplied\?\.importId \?\? null/); assert.match(section, /setApplied\(\{ importId: pointPreview\.importId, competence, byEmployee \}\)/); // substitui, não soma
+  assert.match(section, /Aplicar Faltas e Férias/); assert.match(section, /pointMirrorImportId: activeApplied\?\.importId \?\? null/); assert.match(section, /setApplied\(\{ importId: pointPreview\.importId, competence, byEmployee: body\.byEmployee,/); // substitui, não soma (ajustes calculados pelo servidor com as aprovadas — Fase 7E.3)
   const pointSql = strip(pointMigration);
   assert.match(pointSql, /CREATE TABLE "BasicBasketPointMirrorImport"/); assert.match(pointSql, /SET "currentPayableDays" = "currentBasketDays", "retroactivePayableDays" = "retroactiveDays"/);
   assert.doesNotMatch(pointSql, /DROP |RENAME |DELETE FROM|TRUNCATE|ALTER TABLE "(?!BasicBasket)|UPDATE "(?!BasicBasketAllocation)|"(retroactiveAmount|amount|basketAmount|monthlyBasketAmount|totalAmount|grossAmount)" =/);
@@ -2317,3 +2319,159 @@ test("alimentação: migration aditiva (nullable, sem backfill) e schema com sna
   for (const field of [/costCenter\s+String\?/, /companyId\s+String\?/, /company\s+String\?/, /companyRef\s+Company\?/]) assert.match(model, field);
 });
 
+// ---- Fase 7E.3: Férias manuais + revisão/aprovação por ocorrência do Espelho de Ponto (Cesta Básica).
+test("cesta básica 7E.3: Férias manuais — null usa o Espelho aprovado, valor substitui (nunca soma), zero é override, limites e direito", async () => {
+  const { buildBasicBasketContext, calculateBasicBasketLine } = await import("../src/modules/accounts-payable/basic-basket/calculations");
+  const { applyManualVacation, buildPointMirrorCandidates, parseManualVacationDays, resolveReviewedBasicBasketAdjustments } = await import("../src/modules/accounts-payable/basic-basket/point-mirror-review");
+  const context = buildBasicBasketContext(2026, 10);
+  const days = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, index) => `2026-10-${String(from + index).padStart(2, "0")}`);
+  const occurrences = { absenceDates: [], currentVacationDates: days(1, 8), referenceVacationDates: [] }; // Espelho: 8 dias
+  const candidates = buildPointMirrorCandidates({ importId: "imp", context, employeeId: "ana", admissionDate: "2020-01-01", occurrences });
+  const approved = new Set(candidates.map((candidate) => candidate.id));
+  const resolve = (manualVacationDays: number | null) => resolveReviewedBasicBasketAdjustments({ context, admissionDate: "2020-01-01", occurrences, candidates, approved, manualVacationDays });
+  assert.equal(resolve(null).adjustments.currentVacationDays, 8); // null → Espelho aprovado
+  assert.deepEqual([resolve(10).adjustments.currentVacationDays, resolve(10).importedVacationDays], [10, 8]); // manual 10 + Espelho 8 → 10 (NÃO 18); importado registrado
+  assert.equal(resolve(0).adjustments.currentVacationDays, 0); // zero = override explícito, não volta ao Espelho
+  assert.equal(resolve(null).adjustments.currentVacationDays, 8); // limpar → volta ao Espelho
+  assert.deepEqual(applyManualVacation({ currentVacationDays: 3, currentUnjustifiedAbsence: true, retroactiveVacationDays: 2, retroactiveUnjustifiedAbsence: false }, 10), { currentVacationDays: 10, currentUnjustifiedAbsence: true, retroactiveVacationDays: 2, retroactiveUnjustifiedAbsence: false }); // Retroativo/Falta intactos
+  // cálculo visual do exemplo: mensal R$ 400,00 · Férias 10 · Cesta paga 20/30 = R$ 266,67
+  assert.deepEqual((({ currentPayableDays, payableBasketCents }) => [currentPayableDays, payableBasketCents])(calculateBasicBasketLine({ driverBonusCents: 0, agreementCents: 0, monthlyBasketCents: 40000, currentBasketDays: 30, retroactiveDays: 0, adjustments: resolve(10).adjustments })), [20, 26667]);
+  // faixa: inteiro 0..30; vazio = null; acima do direito BLOQUEIA (sem clamp)
+  assert.equal(parseManualVacationDays(""), null); assert.equal(parseManualVacationDays(null), null); assert.equal(parseManualVacationDays("0"), 0); assert.equal(parseManualVacationDays(30), 30);
+  for (const invalid of [-1, 31, 1.5, "1.5", "abc", "-2", Number.NaN]) assert.throws(() => parseManualVacationDays(invalid), /inteiro de 0 a 30/);
+  assert.throws(() => parseManualVacationDays(15, 11), /O colaborador possui apenas 11 dias financeiros elegíveis nesta competência\./);
+  assert.equal(parseManualVacationDays(11, 11), 11);
+  // servidor: valida a faixa ao interpretar o insumo e bloqueia acima dos dias de direito; correção usa o snapshot
+  const server = await readFile(new URL("../src/modules/accounts-payable/basic-basket/server.ts", import.meta.url), "utf8");
+  assert.match(server, /manualVacationDays: parseManualVacationDays\(entry\.manualVacationDays\)/);
+  assert.match(server, /vacation\.manualVacationDays > current\.currentBasketDays\) throw new BasicBasketValidationError/);
+  // correção (Fase 7E.4): manual corrigível; omitido → mantém o do original; importado sempre do snapshot
+  assert.match(server, /const manualVacationDays = correctionManualVacationDays\(input\.entry\.manualVacationDays, entry\.manualVacationDays, original\.manualVacationDays\);/);
+  assert.match(server, /manualVacationDays: vacation\.manualVacationDays, importedVacationDays: vacation\.importedVacationDays/); // histórico: manual × importado × efetivo
+  assert.doesNotMatch(server, /basicBasketEmployeeConfig\.upsert\([^)]*manualVacation/); // não vira padrão do colaborador
+});
+
+test("cesta básica 7E.3: revisão por ocorrência — pendentes bloqueiam, só aprovadas entram, Falta independe do manual, tampering e reimportação", async () => {
+  const { buildBasicBasketContext, calculateBasicBasketLine } = await import("../src/modules/accounts-payable/basic-basket/calculations");
+  const review = await import("../src/modules/accounts-payable/basic-basket/point-mirror-review");
+  const { buildPointMirrorCandidates, isPointMirrorCandidateActionable, pointMirrorCandidateId, resolveReviewedBasicBasketAdjustments, summarizePointMirrorReview, validatePointMirrorDecisions } = review;
+  const context = buildBasicBasketContext(2026, 10); // apuração da Falta = 09/2026
+  // Férias válida (01/10), Falta válida (10/09 → corta 10/2026) e Falta do próprio mês (05/10 → afeta a próxima: IGNORADA)
+  const occurrences = { absenceDates: ["2026-09-10", "2026-10-05"], currentVacationDates: ["2026-10-01"], referenceVacationDates: [] };
+  const candidates = buildPointMirrorCandidates({ importId: "imp-a", context, employeeId: "ana", admissionDate: "2020-01-01", occurrences });
+  const vacation = candidates.find((candidate) => candidate.kind === "VACATION_CURRENT")!, absence = candidates.find((candidate) => candidate.date === "2026-09-10")!, ignored = candidates.find((candidate) => candidate.date === "2026-10-05")!;
+  assert.equal(vacation.id, pointMirrorCandidateId("imp-a", "ana", "VACATION_CURRENT", "2026-10-01")); // id determinístico (sem CPF/índice)
+  assert.deepEqual(absence.effects, ["CURRENT_CUT"]); assert.equal(ignored.ignoredReason, "Afeta a próxima competência");
+  const summary = (decisions: Record<string, "APPROVED" | "REJECTED">) => (({ PENDING, APPROVED, REJECTED, IGNORED }) => ({ PENDING, APPROVED, REJECTED, IGNORED }))(summarizePointMirrorReview(candidates, decisions, {}));
+  const validate = (approvedIds: string[], rejectedIds: string[], manual: number | null = null) => validatePointMirrorDecisions({ candidates, approvedIds, rejectedIds, employeeIds: ["ana"], manualByEmployee: { ana: manual } });
+  assert.deepEqual(summary({}), { PENDING: 2, APPROVED: 0, REJECTED: 0, IGNORED: 1 }); assert.throws(() => validate([], []), /2 pendentes/); // aplicação bloqueada
+  assert.deepEqual(summary({ [vacation.id]: "APPROVED" }), { PENDING: 1, APPROVED: 1, REJECTED: 0, IGNORED: 1 }); assert.throws(() => validate([vacation.id], []), /1 pendente/);
+  assert.deepEqual(summary({ [vacation.id]: "APPROVED", [absence.id]: "REJECTED" }), { PENDING: 0, APPROVED: 1, REJECTED: 1, IGNORED: 1 });
+  const approved = validate([vacation.id], [absence.id]); // liberado
+  const resolved = resolveReviewedBasicBasketAdjustments({ context, admissionDate: "2020-01-01", occurrences, candidates, approved, manualVacationDays: null }).adjustments;
+  assert.deepEqual(resolved, { currentVacationDays: 1, currentUnjustifiedAbsence: false, retroactiveVacationDays: 0, retroactiveUnjustifiedAbsence: false }); // Férias aprovada entra; Falta rejeitada e ignorada não
+  // Falta aprovada + Férias manuais 10: Cesta cortada pela Falta e as 10 Férias continuam registradas (auditoria)
+  const withAbsence = resolveReviewedBasicBasketAdjustments({ context, admissionDate: "2020-01-01", occurrences, candidates, approved: validate([absence.id], [], 10), manualVacationDays: 10 }).adjustments;
+  assert.deepEqual([withAbsence.currentUnjustifiedAbsence, withAbsence.currentVacationDays], [true, 10]);
+  assert.equal(calculateBasicBasketLine({ driverBonusCents: 0, agreementCents: 0, monthlyBasketCents: 40000, currentBasketDays: 30, retroactiveDays: 0, adjustments: withAbsence }).payableBasketCents, 0);
+  // manual informado: Férias importadas da competência ficam sem efeito (não bloqueiam); a Falta segue exigindo decisão
+  assert.equal(isPointMirrorCandidateActionable(vacation, 10), false); assert.equal(isPointMirrorCandidateActionable(absence, 10), true);
+  assert.throws(() => validate([], [], 10), /1 pendente/); assert.doesNotThrow(() => validate([], [absence.id], 10));
+  assert.equal(isPointMirrorCandidateActionable(vacation, null), true); // limpar o manual → Férias voltam a exigir decisão
+  // tampering: id inexistente, alterado (outra data), de outra importação/competência, conflito → rejeitado pelo servidor
+  for (const forged of [["nao-existe"], [pointMirrorCandidateId("imp-a", "ana", "VACATION_CURRENT", "2026-10-02")], [pointMirrorCandidateId("imp-b", "ana", "VACATION_CURRENT", "2026-10-01")], [pointMirrorCandidateId("imp-a", "outro", "ABSENCE", "2026-09-10")]])
+    assert.throws(() => validate([...forged, absence.id, vacation.id], []), /não pertence a esta importação/);
+  assert.throws(() => validate([vacation.id, absence.id], [absence.id]), /aprovada e rejeitada/);
+  assert.throws(() => validatePointMirrorDecisions({ candidates, approvedIds: "tudo", rejectedIds: [], employeeIds: ["ana"], manualByEmployee: {} }), /inválida/);
+  // reimportação: a importação B gera ids novos; decisões da A não são reaproveitadas
+  const reimport = buildPointMirrorCandidates({ importId: "imp-b", context, employeeId: "ana", admissionDate: "2020-01-01", occurrences });
+  assert.throws(() => validatePointMirrorDecisions({ candidates: reimport, approvedIds: [vacation.id], rejectedIds: [absence.id], employeeIds: ["ana"], manualByEmployee: {} }), /não pertence a esta importação/);
+  // admissão: ocorrência anterior à admissão é ignorada (não exige decisão)
+  const late = buildPointMirrorCandidates({ importId: "imp-a", context, employeeId: "bia", admissionDate: "2026-10-05", occurrences: { absenceDates: ["2026-09-10"], currentVacationDates: ["2026-10-01", "2026-10-06"], referenceVacationDates: [] } });
+  assert.deepEqual(late.map((candidate) => [candidate.date, candidate.ignoredReason]), [["2026-09-10", "Ocorrência anterior à admissão — ignorada"], ["2026-10-01", "Anterior à admissão — não reduz"], ["2026-10-06", null]]);
+});
+
+test("cesta básica 7E.3: blocos de Férias e fevereiro recalculados SÓ sobre as datas aprovadas; fluxo da tela e do servidor", async () => {
+  const { buildBasicBasketContext } = await import("../src/modules/accounts-payable/basic-basket/calculations");
+  const { buildPointMirrorCandidates, resolveReviewedBasicBasketAdjustments } = await import("../src/modules/accounts-payable/basic-basket/point-mirror-review");
+  const run = (year: number, month: number, dates: string[], reject: string[]) => {
+    const context = buildBasicBasketContext(year, month), occurrences = { absenceDates: [], currentVacationDates: dates, referenceVacationDates: [] };
+    const candidates = buildPointMirrorCandidates({ importId: "i", context, employeeId: "e", admissionDate: "2020-01-01", occurrences });
+    return resolveReviewedBasicBasketAdjustments({ context, admissionDate: "2020-01-01", occurrences, candidates, approved: new Set(candidates.filter((candidate) => !reject.includes(candidate.date)).map((candidate) => candidate.id)), manualVacationDays: null }).adjustments.currentVacationDays;
+  };
+  const october = ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"];
+  assert.equal(run(2026, 10, october, []), 5); assert.equal(run(2026, 10, october, ["2026-10-03"]), 4); // rejeitar o meio do bloco: 2 blocos
+  assert.equal(run(2026, 10, ["2026-10-30", "2026-10-31"], []), 1); // dia 31 → 30 (mesmo dia financeiro)
+  assert.equal(run(2027, 2, ["2027-02-27", "2027-02-28"], []), 4); // fevereiro: bloco que alcança o último dia vai até o dia 30
+  assert.equal(run(2027, 2, ["2027-02-27", "2027-02-28"], ["2027-02-27"]), 1); // aprovado só o dia isolado 28: não estende
+  // tela + servidor: processar não aplica; Revisar → Aplicar via servidor (só ids); salvar exige a revisão; "Remover
+  // ajustes do Espelho" não apaga Férias manuais; prévia devolve candidatos e datas sem CPF
+  const [section, server, pm, route, flow, ui] = await Promise.all(["../src/modules/accounts-payable/basic-basket/BasicBasketSection.tsx", "../src/modules/accounts-payable/basic-basket/server.ts", "../src/modules/accounts-payable/basic-basket/point-mirror-server.ts", "../src/app/api/accounts-payable/basic-basket/point-mirror/review/route.ts", "../src/components/ui/ImportFlow.tsx", "../src/modules/accounts-payable/basic-basket/ui/BasicBasketPointMirror.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  assert.match(section, /setPointPreview\(\{ \.\.\.\(body as PointMirrorPreview\), competence \}\); setDecisions\(\{\}\); setReviewing\(false\)/); // nova importação = nova revisão
+  assert.match(section, /post\("\/api\/accounts-payable\/basic-basket\/point-mirror\/review", "POST", \{ importId: pointPreview\.importId, year, month, employeeIds: selectedIds, approvedIds, rejectedIds, manualVacationDays: manualByEmployee \}\)/);
+  assert.match(section, /onRemoveAdjustments=\{\(\) => setApplied\(null\)\}/); // remove só o Espelho; manualVacation vive em `values`
+  assert.match(section, /canApply=\{reviewPending === 0\}/); assert.match(section, /&& !appliedPending\)/);
+  assert.match(section, /inputMode="numeric" min=\{0\} max=\{BASIC_BASKET_CALCULATION_DAYS\} step=\{1\}/); assert.match(section, /Deixe vazio para usar o Espelho de Ponto/);
+  assert.match(server, /if \(!input\.pointMirrorReview\) throw new BasicBasketValidationError\("Revise e aplique as ocorrências do Espelho de Ponto antes de salvar\."\)/);
+  assert.match(server, /record\.createdByUserId !== input\.userId \|\| record\.year !== input\.year \|\| record\.month !== input\.month/); // dono e competência preservados
+  assert.match(pm, /candidates,\s+occurrences: stored,/); assert.doesNotMatch(pm, /cpf: person\.cpf|cpf: employee/);
+  assert.match(route, /requirePermission\(PERMISSIONS\.FINANCIAL_RECORDS_CREATE\)/); assert.doesNotMatch(route, /VacationDays\s*[:=]\s*body\.(?!manualVacationDays)/);
+  assert.match(flow, /IMPORT_FLOW_REVIEW_STEPS/); assert.match(ui, /Remover ajustes do Espelho/);
+});
+
+// ---- Fase 7E.4: correção histórica das Férias manuais da Cesta (replacement; importado e Falta do snapshot).
+test("cesta básica 7E.4: correção das Férias manuais — 10→12, limpar volta ao importado, zero, limites, Falta preservada", async () => {
+  const { calculateBasicBasketLine } = await import("../src/modules/accounts-payable/basic-basket/calculations");
+  const { correctionAdjustments, historicalImportedVacationDays, parseManualVacationDays } = await import("../src/modules/accounts-payable/basic-basket/point-mirror-review");
+  const original = { currentVacationDays: 10, currentUnjustifiedAbsence: false, retroactiveVacationDays: 2, retroactiveUnjustifiedAbsence: false, manualVacationDays: 10, importedVacationDays: 8 };
+  const frozen = JSON.stringify(original);
+  // A. 10 → 12: importado preservado (8), manual 12, efetivo 12; Retroativo do snapshot
+  assert.deepEqual(correctionAdjustments(original, 12), { currentVacationDays: 12, currentUnjustifiedAbsence: false, retroactiveVacationDays: 2, retroactiveUnjustifiedAbsence: false });
+  assert.equal(historicalImportedVacationDays(original), 8);
+  // B. limpar → efetivo = importado do lançamento (8), nunca um Espelho novo
+  assert.equal(correctionAdjustments(original, null).currentVacationDays, 8);
+  // C. zero → override zero (não volta ao importado)
+  assert.equal(correctionAdjustments(original, 0).currentVacationDays, 0);
+  // D/E. mesmas validações do lançamento: acima do direito e decimal bloqueiam (sem truncar)
+  assert.throws(() => parseManualVacationDays(15, 11), /possui apenas 11 dias financeiros elegíveis/);
+  for (const invalid of ["1.5", 1.5, -1, 31]) assert.throws(() => parseManualVacationDays(invalid, 30), /inteiro de 0 a 30/);
+  // F. Falta histórica + correção manual 12: Cesta segue cortada; 12 dias registrados para auditoria
+  const withAbsence = correctionAdjustments({ ...original, currentUnjustifiedAbsence: true }, 12);
+  assert.deepEqual([withAbsence.currentUnjustifiedAbsence, withAbsence.currentVacationDays], [true, 12]);
+  assert.equal(calculateBasicBasketLine({ driverBonusCents: 0, agreementCents: 0, monthlyBasketCents: 40000, currentBasketDays: 30, retroactiveDays: 0, adjustments: withAbsence }).payableBasketCents, 0);
+  // lançamento anterior à 7E.3 (sem importado/manual registrados): as Férias efetivas vieram do Espelho
+  const legacy = { currentVacationDays: 5, currentUnjustifiedAbsence: false, retroactiveVacationDays: 0, retroactiveUnjustifiedAbsence: false, manualVacationDays: null, importedVacationDays: null };
+  assert.equal(historicalImportedVacationDays(legacy), 5); assert.equal(correctionAdjustments(legacy, null).currentVacationDays, 5); assert.equal(correctionAdjustments(legacy, 7).currentVacationDays, 7);
+  assert.equal(historicalImportedVacationDays({ ...legacy, currentVacationDays: 4, manualVacationDays: 4 }), 0); // tinha só manual, sem importação
+  assert.equal(JSON.stringify(original), frozen); // H (puro): o original não é alterado
+  // semântica final do campo na correção: omitido (undefined) preserva o original; null limpa; 0 e N são overrides
+  const { correctionManualVacationDays } = await import("../src/modules/accounts-payable/basic-basket/point-mirror-review");
+  assert.equal(correctionManualVacationDays(undefined, null, 10), 10);
+  assert.equal(correctionManualVacationDays(null, null, 10), null); assert.equal(correctionAdjustments(original, correctionManualVacationDays(null, null, 10)).currentVacationDays, 8);
+  assert.equal(correctionManualVacationDays(0, 0, 10), 0); assert.equal(correctionAdjustments(original, 0).currentVacationDays, 0);
+  assert.equal(correctionManualVacationDays(12, 12, 10), 12);
+  assert.equal(correctionManualVacationDays(undefined, null, null), null); // omitido em lançamento sem manual: segue sem manual
+});
+
+test("cesta básica 7E.4: servidor corrige só o manual — importado/efetivo/Falta/valor do cliente ignorados; original preservado + replacement", async () => {
+  const [server, route, section] = await Promise.all(["../src/modules/accounts-payable/basic-basket/server.ts", "../src/app/api/accounts-payable/basic-basket/[mapId]/entries/[allocationId]/route.ts", "../src/modules/accounts-payable/basic-basket/BasicBasketSection.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  const correction = server.slice(server.indexOf("export async function correctBasicBasketEntry"), server.indexOf("}, { isolationLevel", server.indexOf("export async function correctBasicBasketEntry")));
+  // manual: único campo de Férias aceito; omitido mantém o original; validação de faixa (parseEntry) e de direito (computeRow)
+  assert.match(server, /manualVacationDays: parseManualVacationDays\(entry\.manualVacationDays\)/);
+  assert.match(correction, /const corrected = \{ \.\.\.adjustments, \.\.\.correctionAdjustments\(\{ \.\.\.adjustments, manualVacationDays: original\.manualVacationDays, importedVacationDays: original\.importedVacationDays \}, manualVacationDays\) \};/);
+  assert.match(correction, /computeRow\(\{ \.\.\.entry, manualVacationDays \}, snapshot, company, basicBasketContextFromPayments\(isoDay\(map\.previousPaymentDate\), isoDay\(map\.paymentDate\)\), corrected, original\.pointMirrorImportId, \{ manualVacationDays, importedVacationDays: original\.importedVacationDays \}\)/);
+  assert.match(server, /vacation\.manualVacationDays > current\.currentBasketDays\) throw new BasicBasketValidationError/);
+  // G. o cliente não é autoridade sobre importado/efetivo/Falta/valor nem reabre o Espelho
+  assert.doesNotMatch(correction, /entry\.(importedVacationDays|currentVacationDays|currentUnjustifiedAbsence|amount|basketAmount\b(?!\s*:))|pointMirrorReview|loadPointMirrorImport|buildPointMirrorCandidates|foodEmployee\.find/);
+  assert.match(correction, /currentUnjustifiedAbsence: original\.currentUnjustifiedAbsence, retroactiveVacationDays: original\.retroactiveVacationDays/);
+  assert.doesNotMatch(route, /importedVacationDays|currentVacationDays|absence/i);
+  // H. original intacto (só cancelamento lógico com motivo) + replacement novo
+  assert.match(correction, /const replacement = await tx\.basicBasketAllocation\.create\(\{ data: \{ \.\.\.row,/);
+  assert.match(correction, /tx\.basicBasketAllocation\.update\(\{ where: \{ id: original\.id \}, data: \{ deletedAt: new Date\(\), deletedByUserId: input\.userId, deletionReason:/);
+  // tela: importado só leitura (CalculatedValue), manual editável/limpável, efetivo calculado; envia só o manual
+  assert.match(section, /<CalculatedValue label="Espelho de Ponto" value=\{`\$\{historicalImportedVacationDays\(row\)\}/);
+  assert.match(section, /<Field label="Férias manuais \(dias\)" helper="Deixe vazio para voltar a utilizar os dias aprovados do Espelho de Ponto\."/);
+  assert.match(section, /<CalculatedValue label="Férias utilizadas" live/); assert.match(section, /aria-label="Limpar Férias manuais"/);
+  assert.match(section, /observation: form\.observation, manualVacationDays: manual\.value \} \}\)/);
+  assert.doesNotMatch(section, /importedVacationDays: form\.|currentVacationDays: form\./);
+});

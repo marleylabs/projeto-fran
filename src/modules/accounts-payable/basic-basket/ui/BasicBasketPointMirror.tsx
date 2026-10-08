@@ -1,20 +1,21 @@
 "use client";
 
 // Espelho de Ponto da Cesta Básica no fluxo visual padrão (ImportFlow + UploadDropzone). SÓ APRESENTAÇÃO: o envio do
-// arquivo, a prévia do servidor, o "Aplicar" (que só guarda o id da importação para a prévia) e a comparação
-// antes/depois continuam na BasicBasketSection e chegam aqui por props/callbacks. Nada aqui calcula valor.
+// arquivo, a prévia do servidor, a revisão (Fase 7E.3: Prévia → Revisar → Aplicar), o "Aplicar" (validado no servidor)
+// e a comparação antes/depois continuam na BasicBasketSection e chegam aqui por props/callbacks. Nada aqui calcula valor.
 import type { ReactNode } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { Button, DataTable, FeedbackAlert, ImportFlow, StatusBadge, type DataTableColumn, type ImportFlowStep, type ImportIssue, type StatusTone } from "@/components/ui";
 import { formatDateOnlyBR } from "@/lib/date-only";
 import { comparePtBr } from "@/lib/sorting/ptBr";
-import { BASIC_BASKET_CALCULATION_DAYS, type BasicBasketAdjustments } from "../calculations";
+import { BASIC_BASKET_CALCULATION_DAYS, type BasicBasketAdjustments, type BasicBasketOccurrences } from "../calculations";
+import type { PointMirrorCandidate } from "../point-mirror-review";
 import { moneyCents, people as peopleLabel } from "./format";
 import { InfoTip, Note } from "./parts";
 
 export type PointMirrorStatus = "ABSENCE" | "VACATION" | "NEXT_COMPETENCE" | "BEFORE_ADMISSION" | "NO_OCCURRENCE" | "OUT_OF_PERIOD" | "NOT_SELECTED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "INVALID_CPF" | "NOT_IN_FILE" | "MISSING_ADMISSION";
 export type PointMirrorPerson = { employeeId: string | null; employeeName: string; department: string | null; cpfMasked: string; status: PointMirrorStatus; apurationAbsence: string; nextCompetenceAbsence: string; beforeAdmissionAbsence: string; beforeAdmissionVacation: string; vacationBlocks: Array<{ month: "current" | "reference"; label: string; financialDays: number; extended: boolean; isolatedLastDay: boolean }>; outOfPeriodRows: number; currentVacation: string; referenceVacation: string; currentVacationDates: number; referenceVacationDates: number; absenceEventWithoutJourney: number; duplicateVacationRows: number; currentBasketDays: number; retroactiveDays: number; adjustments: BasicBasketAdjustments | null };
-export type PointMirrorPreview = { importId: string; reference: { current: string; previous: string; absence: string; absenceStart: string; absenceEnd: string }; totals: Record<string, number>; people: PointMirrorPerson[] };
+export type PointMirrorPreview = { importId: string; reference: { current: string; previous: string; absence: string; absenceStart: string; absenceEnd: string }; totals: Record<string, number>; people: PointMirrorPerson[]; candidates: PointMirrorCandidate[]; occurrences: Record<string, BasicBasketOccurrences> };
 type LineTotals = { totalCents: number; currentPayableDays: number; retroactivePayableDays: number };
 export type PointMirrorComparison = { before: LineTotals; after: LineTotals } | null;
 
@@ -40,24 +41,32 @@ export type BasicBasketPointMirrorProps = {
   onApply: () => void;
   onReset: () => void;
   onRemoveAdjustments: () => void;
+  /** Etapa Revisar: conteúdo, se está revisando/aplicando e por que a aplicação ainda está bloqueada. */
+  review: ReactNode;
+  reviewing: boolean;
+  applying: boolean;
+  canApply: boolean;
+  applyHint?: ReactNode;
+  onReview: () => void;
+  onBackToPreview: () => void;
 };
 
-export function BasicBasketPointMirror({ description, file, busy, preview, stale, appliedCount, appliedIsCurrent, applyLabel, statusText, compare, onSelect, onClearFile, onProcess, onApply, onReset, onRemoveAdjustments }: BasicBasketPointMirrorProps) {
-  const step: ImportFlowStep = busy ? "processing" : preview && appliedIsCurrent ? "done" : preview ? "preview" : "select";
+export function BasicBasketPointMirror({ description, file, busy, preview, stale, appliedCount, appliedIsCurrent, applyLabel, statusText, compare, onSelect, onClearFile, onProcess, onApply, onReset, onRemoveAdjustments, review, reviewing, applying, canApply, applyHint, onReview, onBackToPreview }: BasicBasketPointMirrorProps) {
+  const step: ImportFlowStep = busy ? "processing" : preview && appliedIsCurrent && !reviewing && !applying ? "done" : preview && applying ? "applying" : preview && reviewing ? "review" : preview ? "preview" : "select";
   const t = preview?.totals ?? {};
   const errors: ImportIssue[] = stale ? [{ id: "stale", message: "A competência mudou depois do processamento; processe o arquivo novamente." }] : [];
   const warnings: ImportIssue[] = [
     ...(t.isolatedLastDayVacation > 0 ? [{ id: "isolated", message: `${t.isolatedLastDayVacation} colaborador(es) com Férias registradas apenas no último dia do mês. Não foi inferida continuidade até o dia comercial ${BASIC_BASKET_CALCULATION_DAYS}.` }] : []),
     ...(t.absenceEventWithoutJourney > 0 ? [{ id: "journey", message: `${t.absenceEventWithoutJourney} linha(s) com Eventos = “FALTA INJUSTIFICADA” sem Jornada Considerada = “Falta”: não cortam a Cesta (a regra exige as duas condições). Confira o arquivo.` }] : []),
   ];
-  const appliedText = appliedCount !== null && `Faltas e Férias aplicadas à prévia (${appliedCount} colaborador(es)). Uma nova aplicação substitui esta.`;
+  const appliedText = appliedCount !== null && `Faltas e Férias APROVADAS aplicadas à prévia (${appliedCount} colaborador(es)). Uma nova aplicação substitui esta; Férias manuais não são alteradas.`;
 
   return (
     <div className="grid gap-3">
       {appliedText && step !== "done" && (
         <FeedbackAlert status="success" title="Ajustes do Espelho de Ponto ativos">
           <span>{appliedText} </span>
-          <button type="button" className="cursor-pointer font-semibold text-primary underline-offset-2 hover:underline" onClick={onRemoveAdjustments}>Remover ajustes</button>
+          <button type="button" className="cursor-pointer font-semibold text-primary underline-offset-2 hover:underline" onClick={onRemoveAdjustments}>Remover ajustes do Espelho</button>
         </FeedbackAlert>
       )}
       <ImportFlow
@@ -74,7 +83,12 @@ export function BasicBasketPointMirror({ description, file, busy, preview, stale
         processingText="Processando o Espelho de Ponto…"
         errors={errors}
         warnings={warnings}
-        canApply={!stale}
+        canApply={!stale && canApply}
+        applyHint={applyHint}
+        review={review}
+        onReview={onReview}
+        reviewLabel="Revisar ocorrências"
+        onBackToPreview={onBackToPreview}
         onApply={onApply}
         applyLabel={applyLabel}
         onReset={onReset}
@@ -83,7 +97,7 @@ export function BasicBasketPointMirror({ description, file, busy, preview, stale
         result={appliedText && (
           <FeedbackAlert status="success" icon={<CheckCircle2 size={18} />} title="Aplicado à prévia — ainda não salvo">
             <p>{appliedText} Confira a tabela de colaboradores e use “Salvar / Gerar Rateio” para confirmar.</p>
-            <div className="mt-2"><Button size="sm" variant="secondary" onClick={onRemoveAdjustments}>Remover ajustes</Button></div>
+            <div className="mt-2 flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={onReview}>Revisar novamente</Button><Button size="sm" variant="secondary" onClick={onRemoveAdjustments}>Remover ajustes do Espelho</Button></div>
           </FeedbackAlert>
         )}
       />
@@ -134,9 +148,9 @@ function PointMirrorPreviewContent({ preview, statusText, compare }: { preview: 
       </>
     ) },
     { id: "daysBefore", header: "Dias antes", numeric: true, cell: (person) => (person.adjustments ? `${person.currentBasketDays}/${BASIC_BASKET_CALCULATION_DAYS}${person.retroactiveDays > 0 ? ` · Retro ${person.retroactiveDays}` : ""}` : "—") },
-    { id: "daysAfter", header: "Dias depois", numeric: true, cell: (person) => { const result = compare(person); return result ? <strong>{`${result.after.currentPayableDays}/${BASIC_BASKET_CALCULATION_DAYS}${person.retroactiveDays > 0 ? ` · Retro ${result.after.retroactivePayableDays}` : ""}`}</strong> : "—"; } },
+    { id: "daysAfter", header: "Dias se aprovado", numeric: true, cell: (person) => { const result = compare(person); return result ? <strong>{`${result.after.currentPayableDays}/${BASIC_BASKET_CALCULATION_DAYS}${person.retroactiveDays > 0 ? ` · Retro ${result.after.retroactivePayableDays}` : ""}`}</strong> : "—"; } },
     { id: "valueBefore", header: "Valor antes", numeric: true, cell: (person) => { const result = compare(person); return result ? moneyCents(result.before.totalCents) : "—"; } },
-    { id: "valueAfter", header: "Valor depois", numeric: true, cell: (person) => { const result = compare(person); return result ? <strong>{moneyCents(result.after.totalCents)}</strong> : "—"; } },
+    { id: "valueAfter", header: "Valor se aprovado", numeric: true, cell: (person) => { const result = compare(person); return result ? <strong>{moneyCents(result.after.totalCents)}</strong> : "—"; } },
   ];
   return (
     <div className="grid gap-3">

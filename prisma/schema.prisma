@@ -1126,6 +1126,13 @@ model BasicBasketAllocation {
   retroactiveVacationDays Int                  @default(0)
   retroactiveUnjustifiedAbsence Boolean        @default(false)
   retroactivePayableDays Int
+  // Férias MANUAIS da Cesta da competência (Fase 7E.3): dias financeiros (0..30) informados no lançamento para Férias
+  // programadas que o Espelho ainda não tem. null = usa as Férias APROVADAS do Espelho; 0 = override explícito de zero.
+  // Quando preenchido SUBSTITUI (nunca soma) as importadas em currentVacationDays; não afeta o Retroativo nem a Falta.
+  manualVacationDays     Int?
+  // Dias de Férias da competência vindos das ocorrências APROVADAS do Espelho (antes do override manual); null = sem
+  // importação aplicada. Histórico: manual × importado × efetivo (currentVacationDays).
+  importedVacationDays   Int?
   retroactiveEligible    Boolean               @default(false)
   driverBonus            Decimal               @db.Decimal(19, 4)
   agreementAmount        Decimal               @db.Decimal(19, 4)

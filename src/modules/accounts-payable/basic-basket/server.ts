@@ -5,10 +5,11 @@ import { dateOnlyFromDb, dateOnlyToDb } from "@/lib/date-only";
 import { createFinancialRecordInTransaction } from "@/modules/accounts-payable/server/financialRecords";
 import {
   BASIC_BASKET_CALCULATION_DAYS, BasicBasketCalculationError, basicBasketContextFromPayments, basicBasketDaysInMonth, buildBasicBasketContext, calculateBasicBasketLine, calculateCurrentBasketDays,
-  calculateRetroactiveDays, centsToDecimalString, mergeBasicBasketHolidays, NO_BASIC_BASKET_ADJUSTMENTS, parseMoneyToCents, resolveBasicBasketAdjustments,
+  calculateRetroactiveDays, centsToDecimalString, mergeBasicBasketHolidays, NO_BASIC_BASKET_ADJUSTMENTS, parseMoneyToCents,
   type BasicBasketAdjustments, type BasicBasketContext,
 } from "./calculations";
 import { parseStoredOccurrences } from "./point-mirror";
+import { BasicBasketReviewError, buildPointMirrorCandidates, correctionAdjustments, correctionManualVacationDays, parseManualVacationDays, resolveReviewedBasicBasketAdjustments, summarizePointMirrorReview, validatePointMirrorDecisions, type PointMirrorCandidate, type PointMirrorDecision } from "./point-mirror-review";
 
 // Cesta Básica — backend AUTORITATIVO: o cliente envia só insumos (empresa, Bonificação Condutor, Acordo,
 // Cesta MENSAL, Observação). Pagamentos (anterior/atual), base de 30 dias e dias de direito à Cesta, Cesta paga,
@@ -60,9 +61,12 @@ export async function getBasicBasketEmployeeConfigs() {
   return rows.map((row) => ({ employeeId: row.employeeId, defaultCompanyId: row.defaultCompany?.active ? row.defaultCompanyId : null, driverBonus: row.driverBonus.toFixed(2), agreementAmount: row.agreementAmount.toFixed(2), basketAmount: row.basketAmount.toFixed(2) }));
 }
 
-export type BasicBasketEntryInput = { employeeId: string; companyId: string; driverBonus: unknown; agreementAmount: unknown; basketAmount: unknown; observation?: string | null };
+export type BasicBasketEntryInput = { employeeId: string; companyId: string; driverBonus: unknown; agreementAmount: unknown; basketAmount: unknown; observation?: string | null; manualVacationDays?: unknown };
 // basketCents = VALOR MENSAL cheio informado (vira o padrão do colaborador); o valor pago é derivado.
-type ParsedEntry = { employeeId: string; companyId: string; driverBonusCents: number; agreementCents: number; basketCents: number; observation: string | null };
+// manualVacationDays = Férias manuais da competência (dias financeiros 0..30; null = usa o Espelho aprovado). Específico
+// do lançamento: NÃO vira padrão do colaborador.
+type ParsedEntry = { employeeId: string; companyId: string; driverBonusCents: number; agreementCents: number; basketCents: number; observation: string | null; manualVacationDays: number | null };
+export type BasicBasketPointMirrorReviewInput = { approvedIds: unknown; rejectedIds: unknown };
 export const MISSING_ADMISSION_MESSAGE = "Informe a Data de Admissão do colaborador para calcular a Cesta Básica.";
 
 function parseEntry(entry: BasicBasketEntryInput): ParsedEntry {
@@ -71,7 +75,7 @@ function parseEntry(entry: BasicBasketEntryInput): ParsedEntry {
   const observation = typeof entry.observation === "string" ? entry.observation.trim() : "";
   if (observation.length > OBSERVATION_MAX) throw new BasicBasketValidationError(`Observação com no máximo ${OBSERVATION_MAX} caracteres.`);
   try {
-    return { employeeId: entry.employeeId, companyId: entry.companyId, driverBonusCents: parseMoneyToCents(entry.driverBonus, "Bonificação Condutor"), agreementCents: parseMoneyToCents(entry.agreementAmount, "Acordo"), basketCents: parseMoneyToCents(entry.basketAmount, "Cesta Básica"), observation: observation || null };
+    return { employeeId: entry.employeeId, companyId: entry.companyId, driverBonusCents: parseMoneyToCents(entry.driverBonus, "Bonificação Condutor"), agreementCents: parseMoneyToCents(entry.agreementAmount, "Acordo"), basketCents: parseMoneyToCents(entry.basketAmount, "Cesta Básica"), observation: observation || null, manualVacationDays: parseManualVacationDays(entry.manualVacationDays) };
   } catch (error) { throw new BasicBasketValidationError(error instanceof Error ? error.message : "Valor inválido."); }
 }
 
@@ -80,10 +84,14 @@ type CompanySnapshot = { id: string; legalName: string; tradeName: string | null
 // Linha do lançamento: snapshot do cadastro NO MOMENTO + valores derivados pelo servidor. Os ajustes do Espelho de
 // Ponto (Férias aplicáveis / Falta Injustificada) vêm SEMPRE do servidor: da importação gravada (lançamento novo) ou
 // do snapshot da linha original (correção) — nunca do cliente.
-function computeRow(entry: ParsedEntry, employee: EmployeeSnapshot, company: CompanySnapshot, cycle: BasicBasketContext, adjustments: BasicBasketAdjustments = NO_BASIC_BASKET_ADJUSTMENTS, pointMirrorImportId: string | null = null) {
+// vacation: Férias manuais (snapshot) e Férias aprovadas do Espelho antes do override — só para histórico/auditoria;
+// `adjustments` já chega com o override manual aplicado (currentVacationDays = manual quando informado).
+function computeRow(entry: ParsedEntry, employee: EmployeeSnapshot, company: CompanySnapshot, cycle: BasicBasketContext, adjustments: BasicBasketAdjustments = NO_BASIC_BASKET_ADJUSTMENTS, pointMirrorImportId: string | null = null, vacation: { manualVacationDays: number | null; importedVacationDays: number | null } = { manualVacationDays: null, importedVacationDays: null }) {
   // Sem Data de Admissão não dá para saber se recebe mês cheio, proporcional ou nada: bloqueia (sem inventar data).
   if (!employee.admissionDate) throw new BasicBasketValidationError(`${MISSING_ADMISSION_MESSAGE} (${employee.officialName})`);
   const current = calculateCurrentBasketDays({ context: cycle, admissionDate: employee.admissionDate });
+  // Férias manuais nunca passam dos dias de direito da competência: bloqueia (sem clamp silencioso).
+  if (vacation.manualVacationDays !== null && vacation.manualVacationDays > current.currentBasketDays) throw new BasicBasketValidationError(`${employee.officialName}: o colaborador possui apenas ${current.currentBasketDays} ${current.currentBasketDays === 1 ? "dia financeiro elegível" : "dias financeiros elegíveis"} nesta competência.`);
   const { retroactiveDays } = calculateRetroactiveDays({ context: cycle, admissionDate: employee.admissionDate });
   let line: ReturnType<typeof calculateBasicBasketLine>;
   try { line = calculateBasicBasketLine({ driverBonusCents: entry.driverBonusCents, agreementCents: entry.agreementCents, monthlyBasketCents: entry.basketCents, currentBasketDays: current.currentBasketDays, retroactiveDays, adjustments }); }
@@ -103,6 +111,7 @@ function computeRow(entry: ParsedEntry, employee: EmployeeSnapshot, company: Com
     currentVacationDays: adjustments.currentVacationDays, currentUnjustifiedAbsence: adjustments.currentUnjustifiedAbsence, currentPayableDays: line.currentPayableDays,
     retroactiveVacationDays: adjustments.retroactiveVacationDays, retroactiveUnjustifiedAbsence: adjustments.retroactiveUnjustifiedAbsence, retroactivePayableDays: line.retroactivePayableDays,
     pointMirrorImportId,
+    manualVacationDays: vacation.manualVacationDays, importedVacationDays: vacation.importedVacationDays,
     retroactiveAmount: centsToDecimalString(line.retroactiveCents), amount: new Prisma.Decimal(centsToDecimalString(line.totalCents)),
     observation: entry.observation,
   };
@@ -132,7 +141,47 @@ async function syncMapTotals(tx: Tx, map: { id: string; administrativeEntityId: 
   return saved;
 }
 
-export async function addBasicBasketEntries(input: { year: number; month: number; administrativeEntityId: string; entries: BasicBasketEntryInput[]; userId: string; pointMirrorImportId?: string | null }) {
+// Candidatos de revisão (ids desta importação) a partir das datas gravadas de cada colaborador.
+function pointMirrorCandidatesOf(importId: string, cycle: BasicBasketContext, occurrences: ReturnType<typeof parseStoredOccurrences>, admissionOf: (employeeId: string) => string | null) {
+  return Object.entries(occurrences).flatMap(([employeeId, items]) => buildPointMirrorCandidates({ importId, context: cycle, employeeId, admissionDate: admissionOf(employeeId), occurrences: items }));
+}
+const reviewError = (error: unknown) => { if (error instanceof BasicBasketReviewError) return new BasicBasketValidationError(error.message); return error; };
+
+// "Aplicar ajustes aprovados" (Fase 7E.3): o servidor relê a importação, reconstrói os candidatos, valida as decisões
+// (ids desta importação/competência/usuário, sem pendências) e devolve os ajustes calculados SÓ com as datas aprovadas
+// (sem o override manual, que a tela aplica na prévia). Nada é gravado: o salvamento repete a validação e recalcula tudo.
+export async function reviewBasicBasketPointMirror(input: { importId: string; year: number; month: number; userId: string; employeeIds: unknown; review: BasicBasketPointMirrorReviewInput; manualVacationDays: unknown }) {
+  validateCompetence(input.year, input.month);
+  const employeeIds = Array.isArray(input.employeeIds) ? [...new Set(input.employeeIds.filter((id): id is string => typeof id === "string"))] : [];
+  const manualRaw = input.manualVacationDays && typeof input.manualVacationDays === "object" ? input.manualVacationDays as Record<string, unknown> : {};
+  const cycle = buildBasicBasketContext(input.year, input.month);
+  return prisma.$transaction(async (tx) => {
+    const pointMirror = await loadPointMirrorImport(tx, { importId: input.importId, year: input.year, month: input.month, userId: input.userId });
+    const employees = await tx.foodEmployee.findMany({ where: { id: { in: [...new Set([...Object.keys(pointMirror.occurrences), ...employeeIds])] } }, select: { id: true, admissionDate: true } });
+    const admission = new Map(employees.map((employee) => [employee.id, dateOnlyFromDb(employee.admissionDate)]));
+    const manualByEmployee: Record<string, number | null> = {};
+    let approved: Set<string>;
+    const candidates = pointMirrorCandidatesOf(pointMirror.id, cycle, pointMirror.occurrences, (id) => admission.get(id) ?? null);
+    try {
+      for (const id of employeeIds) manualByEmployee[id] = parseManualVacationDays(manualRaw[id]);
+      approved = validatePointMirrorDecisions({ candidates, approvedIds: input.review?.approvedIds, rejectedIds: input.review?.rejectedIds, employeeIds: employeeIds.filter((id) => pointMirror.occurrences[id]), manualByEmployee });
+    } catch (error) { throw reviewError(error); }
+    const rejected = new Set(input.review.rejectedIds as string[]);
+    const decisions: Record<string, PointMirrorDecision> = {};
+    for (const id of approved) decisions[id] = "APPROVED";
+    for (const id of rejected) decisions[id] = "REJECTED";
+    const byEmployee: Record<string, { adjustments: BasicBasketAdjustments; importedVacationDays: number | null }> = {};
+    for (const employeeId of employeeIds) {
+      const occurrences = pointMirror.occurrences[employeeId];
+      if (!occurrences) continue;
+      const resolved = resolveReviewedBasicBasketAdjustments({ context: cycle, admissionDate: admission.get(employeeId) ?? null, occurrences, candidates: candidates.filter((candidate) => candidate.employeeId === employeeId), approved, manualVacationDays: null });
+      byEmployee[employeeId] = { adjustments: resolved.imported, importedVacationDays: resolved.importedVacationDays };
+    }
+    return { importId: pointMirror.id, byEmployee, approvedIds: [...approved], rejectedIds: [...rejected], summary: summarizePointMirrorReview(candidates.filter((candidate) => employeeIds.includes(candidate.employeeId)), decisions, manualByEmployee) };
+  });
+}
+
+export async function addBasicBasketEntries(input: { year: number; month: number; administrativeEntityId: string; entries: BasicBasketEntryInput[]; userId: string; pointMirrorImportId?: string | null; pointMirrorReview?: BasicBasketPointMirrorReviewInput | null }) {
   validateCompetence(input.year, input.month);
   if (!Array.isArray(input.entries) || !input.entries.length) throw new BasicBasketValidationError("Selecione ao menos um colaborador.");
   const entries = input.entries.map(parseEntry);
@@ -154,9 +203,24 @@ export async function addBasicBasketEntries(input: { year: number; month: number
     // Espelho de Ponto: a importação gravada no preview vale para TODOS os colaboradores do lote que ela cobre
     // (o cliente só informa o id; dias/Falta/valores são recalculados aqui a partir das datas guardadas).
     const pointMirror = input.pointMirrorImportId ? await loadPointMirrorImport(tx, { importId: input.pointMirrorImportId, year: input.year, month: input.month, userId: input.userId }) : null;
-    const adjustmentsOf = (employeeId: string) => { const occurrences = pointMirror?.occurrences[employeeId]; return occurrences ? { adjustments: resolveBasicBasketAdjustments({ context: cycle, admissionDate: employeeById.get(employeeId)!.admissionDate, occurrences }), importId: pointMirror!.id } : { adjustments: NO_BASIC_BASKET_ADJUSTMENTS, importId: null }; };
+    // Revisão obrigatória (Fase 7E.3): só ocorrências APROVADAS entram; o servidor reconstrói os candidatos desta
+    // importação e rejeita ids desconhecidos/de outra importação e qualquer ocorrência acionável ainda pendente.
+    const manualByEmployee = Object.fromEntries(entries.map((entry) => [entry.employeeId, entry.manualVacationDays]));
+    const candidates: PointMirrorCandidate[] = pointMirror ? pointMirrorCandidatesOf(pointMirror.id, cycle, pointMirror.occurrences, (id) => employeeById.get(id)?.admissionDate ?? null) : [];
+    let approved = new Set<string>();
+    if (pointMirror) {
+      if (!input.pointMirrorReview) throw new BasicBasketValidationError("Revise e aplique as ocorrências do Espelho de Ponto antes de salvar.");
+      try { approved = validatePointMirrorDecisions({ candidates, approvedIds: input.pointMirrorReview.approvedIds, rejectedIds: input.pointMirrorReview.rejectedIds, employeeIds: ids.filter((id) => pointMirror.occurrences[id]), manualByEmployee }); }
+      catch (error) { throw reviewError(error); }
+    }
+    // Ajustes por linha: Espelho (só datas aprovadas, algoritmo intacto) → override de Férias manuais (substitui, nunca soma).
+    const adjustmentsOf = (entry: ParsedEntry) => {
+      const occurrences = pointMirror?.occurrences[entry.employeeId];
+      const resolved = resolveReviewedBasicBasketAdjustments({ context: cycle, admissionDate: employeeById.get(entry.employeeId)!.admissionDate, occurrences, candidates: candidates.filter((candidate) => candidate.employeeId === entry.employeeId), approved, manualVacationDays: entry.manualVacationDays });
+      return { adjustments: resolved.adjustments, importId: occurrences ? pointMirror!.id : null, vacation: { manualVacationDays: entry.manualVacationDays, importedVacationDays: resolved.importedVacationDays } };
+    };
     // Valida/calcula TODAS as linhas antes de qualquer escrita (erro em uma linha → nada é gravado).
-    const computed = entries.map((entry) => { const { adjustments, importId } = adjustmentsOf(entry.employeeId); return { entry, row: computeRow(entry, employeeById.get(entry.employeeId)!, companyById.get(entry.companyId)!, cycle, adjustments, importId) }; });
+    const computed = entries.map((entry) => { const { adjustments, importId, vacation } = adjustmentsOf(entry); return { entry, row: computeRow(entry, employeeById.get(entry.employeeId)!, companyById.get(entry.companyId)!, cycle, adjustments, importId, vacation) }; });
 
     const competence = await tx.basicBasketCompetence.upsert({ where: { year_month: { year: input.year, month: input.month } }, create: { year: input.year, month: input.month }, update: {} });
     let map = await tx.basicBasketMap.findFirst({ where: { competenceId: competence.id, administrativeEntityId: input.administrativeEntityId, current: true } });
@@ -191,7 +255,8 @@ function assertFinancialPristine(record: { lifecycleState: string; paymentState:
 
 // Correção: cancelamento LÓGICO da linha original + nova linha (nunca DELETE físico), mesma transação.
 // Preserva os snapshots (nome, departamento, centro de custo, Data de Admissão usada e ciclo do mapa:
-// pagamento anterior/atual, Férias/Falta Injustificada do Espelho de Ponto); só Bonificação, Acordo, Cesta mensal, Observação e Empresa mudam. Cesta paga,
+// pagamento anterior/atual, Férias/Falta Injustificada do Espelho de Ponto); só Bonificação, Acordo, Cesta mensal, Observação,
+// Empresa e as Férias MANUAIS (Fase 7E.4) mudam. Cesta paga,
 // Retroativo e Total são recalculados com esses snapshots — nunca com o cadastro atual. Correção não altera os padrões do colaborador.
 export async function correctBasicBasketEntry(input: { mapId: string; allocationId: string; entry: BasicBasketEntryInput; reason: string; userId: string }) {
   if (!input.reason?.trim()) throw new BasicBasketValidationError("Informe o motivo da correção.");
@@ -208,7 +273,13 @@ export async function correctBasicBasketEntry(input: { mapId: string; allocation
     const snapshot = { id: original.employeeId, officialName: original.employeeName, department: original.department, costCenter: original.costCenter, admissionDate: dateOnlyFromDb(original.admissionDate) };
     // Ajustes do Espelho de Ponto: os do lançamento histórico (snapshot) — nunca um arquivo/evento novo.
     const adjustments = { currentVacationDays: original.currentVacationDays, currentUnjustifiedAbsence: original.currentUnjustifiedAbsence, retroactiveVacationDays: original.retroactiveVacationDays, retroactiveUnjustifiedAbsence: original.retroactiveUnjustifiedAbsence };
-    const row = computeRow(entry, snapshot, company, basicBasketContextFromPayments(isoDay(map.previousPaymentDate), isoDay(map.paymentDate)), adjustments, original.pointMirrorImportId);
+    // Fase 7E.4: só as Férias MANUAIS são corrigíveis (entrada humana). Campo omitido → mantém o manual do original;
+    // null → volta às Férias do Espelho aprovadas NAQUELE lançamento (importedVacationDays do snapshot, nunca um Espelho
+    // novo). Falta, Retroativo e as Férias importadas seguem o snapshot; o efetivo é recalculado aqui (e validado contra
+    // os dias de direito em computeRow). Importado/efetivo/Falta/valor enviados pelo cliente são ignorados.
+    const manualVacationDays = correctionManualVacationDays(input.entry.manualVacationDays, entry.manualVacationDays, original.manualVacationDays);
+    const corrected = { ...adjustments, ...correctionAdjustments({ ...adjustments, manualVacationDays: original.manualVacationDays, importedVacationDays: original.importedVacationDays }, manualVacationDays) };
+    const row = computeRow({ ...entry, manualVacationDays }, snapshot, company, basicBasketContextFromPayments(isoDay(map.previousPaymentDate), isoDay(map.paymentDate)), corrected, original.pointMirrorImportId, { manualVacationDays, importedVacationDays: original.importedVacationDays });
     const sourceRow = ((await tx.basicBasketAllocation.aggregate({ where: { mapId: map.id }, _max: { sourceRow: true } }))._max.sourceRow ?? 0) + 1;
     const replacement = await tx.basicBasketAllocation.create({ data: { ...row, mapId: map.id, competenceId: map.competenceId, administrativeEntityId: map.administrativeEntityId, sourceRow, createdByUserId: input.userId } });
     await tx.basicBasketAllocation.update({ where: { id: original.id }, data: { deletedAt: new Date(), deletedByUserId: input.userId, deletionReason: `Correção: ${input.reason.trim()} (substituído por ${replacement.id})` } });
