@@ -2474,4 +2474,7 @@ test("cesta básica 7E.4: servidor corrige só o manual — importado/efetivo/Fa
   assert.match(section, /<CalculatedValue label="Férias utilizadas" live/); assert.match(section, /aria-label="Limpar Férias manuais"/);
   assert.match(section, /observation: form\.observation, manualVacationDays: manual\.value \} \}\)/);
   assert.doesNotMatch(section, /importedVacationDays: form\.|currentVacationDays: form\./);
+  // Dialog da foundation: só o corpo rola (sr-only/absolutos não estendem o <dialog>; sem barra dupla nem vazio no mobile)
+  const dialog = await readFile(new URL("../src/components/ui/Dialog.tsx", import.meta.url), "utf8");
+  assert.match(dialog, /m-auto w-\[calc\(100%-2rem\)\] overflow-hidden rounded-modal/); assert.match(dialog, /"relative min-h-0 flex-1 overflow-y-auto/);
 });

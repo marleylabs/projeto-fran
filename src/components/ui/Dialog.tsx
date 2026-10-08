@@ -50,7 +50,7 @@ export function Dialog({ open, onClose, title, description, children, footer, si
       aria-describedby={descriptionId}
       onCancel={(event) => { event.preventDefault(); if (dismissible) onClose(); }}
       onClick={(event) => { if (event.target === event.currentTarget && dismissible) onClose(); }}
-      className={clsx("m-auto w-[calc(100%-2rem)] rounded-modal border border-border bg-surface p-0 text-foreground shadow-elevation-lg backdrop:bg-neutral-dark/50 motion-safe:backdrop:backdrop-blur-[2px]", sizes[size], className)}
+      className={clsx("m-auto w-[calc(100%-2rem)] overflow-hidden rounded-modal border border-border bg-surface p-0 text-foreground shadow-elevation-lg backdrop:bg-neutral-dark/50 motion-safe:backdrop:backdrop-blur-[2px]", sizes[size], className)}
     >
       <div className="flex max-h-[min(90vh,52rem)] flex-col">
         <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
@@ -68,7 +68,7 @@ export function Dialog({ open, onClose, title, description, children, footer, si
             <X size={18} aria-hidden="true" />
           </button>
         </header>
-        {children && <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-body">{children}</div>}
+        {children && <div className="relative min-h-0 flex-1 overflow-y-auto px-5 py-4 text-body">{children}</div>}
         {footer && <footer className="flex flex-wrap justify-end gap-2 border-t border-border px-5 py-3">{footer}</footer>}
       </div>
     </dialog>
