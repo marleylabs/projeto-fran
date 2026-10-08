@@ -2609,3 +2609,33 @@ test("Tabs 7H: keepMounted mantém o painel inativo no DOM (oculto); sem a prop,
   const plain = renderToStaticMarkup(createElement(Tabs, { label: "X", items, value: "a", onValueChange: () => undefined }, createElement(TabPanel, { value: "a", children: "painel-a" }), createElement(TabPanel, { value: "b", children: "painel-b" })));
   assert.match(plain, /painel-a/); assert.doesNotMatch(plain, /painel-b/);
 });
+
+// ---- Fase 7I: Cadastros (Colaboradores e Entidades administrativas) no Design System (só apresentação).
+test("cadastros 7I: colaboradores no Design System, payloads/CPF/admissão/importação preservados e UI sem regra", async () => {
+  const base = "../src/modules/collaborators/ui/";
+  const [page, table, form, importer] = await Promise.all(["../src/app/cadastros/colaboradores/page.tsx", base + "CollaboratorTable.tsx", base + "CollaboratorFormFields.tsx", base + "CollaboratorImport.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  // foundation: Dialog único (sem o dialog local antigo), FilterBar/SearchInput, DataTable, ImportFlow
+  assert.doesNotMatch(page.replace(/^\s*\/\/.*$/gm, ""), /function Dialog\(|className="modal"|modal-box|<table|[✕⇄▾→]/); assert.match(page, /<FilterBar/); assert.match(page, /<SearchInput/);
+  assert.match(page, /<CollaboratorTable/); assert.match(page, /<CollaboratorImport/); assert.match(importer, /<ImportFlow/); assert.match(table, /<DataTable/);
+  // payloads e regras na página: CPF normalizado/validado, admissão date-only, mesmos endpoints e confirmações
+  assert.match(page, /body: JSON\.stringify\(\{ \.\.\.form, cpf: normalizeCpf\(form\.cpf\) \|\| null, admissionDate: form\.admissionDate \|\| null \}\)/);
+  assert.match(page, /if \(form\.cpf\.trim\(\) && !isValidCpf\(form\.cpf\)\) \{ setCpfError\("CPF inválido\."\)/); assert.match(page, /dateOnlyFromDb\(item\.admissionDate\)/);
+  assert.match(page, /data\.set\("mode", mode\); data\.set\("overrides", JSON\.stringify\(next\)\)/); assert.match(page, /deleteConfirmation !== "EXCLUIR COLABORADORES"/);
+  assert.match(page, /\/api\/collaborators\/bulk/); assert.match(page, /\/api\/collaborators\/merge/); assert.match(page, /<ConfirmModal/);
+  // componentes visuais: sem fetch e sem regra (CPF/admissão só formatados; admissão em input date; nada monetário)
+  for (const [name, source] of Object.entries({ table, form, importer })) {
+    assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ""), /fetch\(|prisma|normalizeCpf|isValidCpf|CurrencyInput/, name);
+    assert.doesNotMatch(source, /\b(emerald|amber|slate|orange|red)-\d|#[0-9a-fA-F]{3,6}\b|badge-(success|info|ghost|warning|error)/, name);
+  }
+  assert.match(table, /formatCpf\(item\.cpf\)/); assert.match(table, /formatDateOnlyBR\(item\.admissionDate\)/); assert.match(form, /type="date"/);
+});
+
+test("cadastros 7I: entidades administrativas no Design System, CNPJ/SIM-NÃO/payload preservados, Company à parte", async () => {
+  const [page, table, form] = await Promise.all(["../src/app/cadastros/page.tsx", "../src/modules/administrative-entities/ui/EntityTable.tsx", "../src/modules/administrative-entities/ui/EntityFormFields.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  assert.match(page, /<Dialog/); assert.match(page, /<FilterBar/); assert.match(page, /<EntityTable/); assert.doesNotMatch(page.replace(/^\s*\/\/.*$/gm, ""), /<table|className="card|→/);
+  assert.match(page, /if \(digits && !isValidCnpj\(digits\)\) return setCnpjError\("Informe um CNPJ válido\."\)/);
+  assert.match(page, /body: JSON\.stringify\(\{ \.\.\.form, cnpj: digits \|\| null, appliesProjeta: form\.appliesProjeta === "true", appliesBoinga: form\.appliesBoinga === "true" \}\)/);
+  assert.match(page, /method: editingId \? "PATCH" : "POST"/); assert.doesNotMatch(page, /master-data\/companies/); // Company (empresa do rateio) não é este cadastro
+  for (const [name, source] of Object.entries({ table, form })) assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ""), /fetch\(|isValidCnpj|prisma/, name);
+  assert.match(form, /list="activity-area-options"/); assert.match(table, /formatCnpj\(item\.cnpj\)/);
+});
