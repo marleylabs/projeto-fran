@@ -13,6 +13,7 @@ import { Button, CalculatedValue, Card, CardHeader, CurrencyInput, DataTable, De
 import { type CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { formatDateOnlyBR } from "@/lib/date-only";
+import { triggerDownload } from "@/lib/export/download";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 import { BASIC_BASKET_CALCULATION_DAYS, calculateBasicBasketLine, NO_BASIC_BASKET_ADJUSTMENTS, parseMoneyToCents, type BasicBasketAdjustments, type BasicBasketHoliday, type CurrentBasketStatus, type RetroactiveStatus } from "./calculations";
 import { groupBasicBasketByCompanyCostCenter } from "./rateio";
@@ -250,6 +251,18 @@ export function BasicBasketSection() {
       await reload(); setTab("rateio");
     } catch (cause) { const message = cause instanceof Error ? cause.message : "Falha ao salvar lançamentos."; setError(message); toast.error(message, "Não foi possível salvar"); } finally { setBusy(false); }
   }
+  // Máscara Flash: gerada no backend a partir do lançamento SALVO (mesmo padrão do Café da Manhã); erros de validação
+  // (sem CNPJ, sem colaboradores, total divergente) chegam como JSON e viram toast — nenhum arquivo parcial.
+  const [flashBusy, setFlashBusy] = useState<string | null>(null);
+  async function downloadFlash(mapId: string) {
+    setFlashBusy(mapId);
+    try {
+      const response = await fetch(`/api/accounts-payable/basic-basket/${mapId}/flash`);
+      if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error ?? "Falha ao gerar a Máscara Flash."); }
+      const filename = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ?? "Mascara_Flash_Cesta_Basica.xlsx";
+      triggerDownload(await response.blob(), filename);
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Falha ao gerar a Máscara Flash.", "Máscara Flash"); } finally { setFlashBusy(null); }
+  }
   async function confirmDelete(reason: string) {
     if (!deleteTarget) return; setDeleting(true); setDeleteError(null);
     try { await post(`/api/accounts-payable/basic-basket/${deleteTarget.mapId}`, "DELETE", { reason, confirmation: "EXCLUIR" }); setDeleteTarget(null); await reload(); }
@@ -440,7 +453,7 @@ export function BasicBasketSection() {
       </TabPanel>
 
       <TabPanel value="rateio" className="mt-4">
-        <BasicBasketAllocationView maps={maps} monthLabel={monthLabel} onCorrect={(map, row) => setCorrecting({ map, row })} onCancel={(mapId) => setDeleteTarget({ mapId })} />
+        <BasicBasketAllocationView maps={maps} monthLabel={monthLabel} onCorrect={(map, row) => setCorrecting({ map, row })} onCancel={(mapId) => setDeleteTarget({ mapId })} onFlash={downloadFlash} flashBusy={flashBusy} />
       </TabPanel>
 
       <TabPanel value="resumo" className="mt-4">

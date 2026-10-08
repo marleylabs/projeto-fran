@@ -2,6 +2,8 @@ import ExcelJS from "exceljs";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 import { dateOnlyFromDb, dateOnlyToDb, formatDateOnlyBR } from "@/lib/date-only";
 import { amountToCents } from "@/modules/accounts-payable/breakfast/rateio";
+import { addAllocationViewSheets } from "@/modules/accounts-payable/shared/allocation-views-workbook";
+import { normalizeAllocationRow } from "@/modules/accounts-payable/shared/allocation-views";
 import { groupBasicBasketByCompanyCostCenter, sumBasicBasket, type BasicBasketRateioRow } from "./rateio";
 import { BASIC_BASKET_CALCULATION_DAYS, basicBasketContextFromPayments } from "./calculations";
 
@@ -13,7 +15,7 @@ export type BasicBasketWorkbookMap = {
   competence: { year: number; month: number };
   administrativeEntity: { tradeName: string; legalName?: string | null };
   financialRecord?: { identifier: string; grossAmount: Numeric } | null;
-  allocations: Array<BasicBasketRateioRow & { admissionDate: Date | string | null; monthlyBasketAmount: Numeric; currentCalculationDays: number; currentBasketDays: number; referenceCalculationDays: number; retroactiveDays: number; observation: string | null;
+  allocations: Array<BasicBasketRateioRow & { id?: string; companyId?: string | null; admissionDate: Date | string | null; monthlyBasketAmount: Numeric; currentCalculationDays: number; currentBasketDays: number; referenceCalculationDays: number; retroactiveDays: number; observation: string | null;
     currentVacationDays: number; currentUnjustifiedAbsence: boolean; currentPayableDays: number; retroactiveVacationDays: number; retroactiveUnjustifiedAbsence: boolean; retroactivePayableDays: number }>;
 };
 
@@ -77,5 +79,9 @@ export function buildBasicBasketWorkbook(map: BasicBasketWorkbookMap, generatedB
     ["Gerado em", new Date()], ["Gerado por", generatedBy ?? "—"],
   ]);
   audit.getColumn(1).font = { bold: true }; audit.getColumn(1).width = 36; audit.getColumn(2).width = 80; audit.getCell("B10").numFmt = MONEY;
+
+  // Perspectivas de rateio (abas novas, ao final, sem alterar Detalhado/Resumo/Auditoria): agrupam o Total salvo de cada
+  // alocação (snapshots de Empresa/Centro de Custo/Departamento) e precisam fechar com o total do lançamento.
+  addAllocationViewSheets(workbook, rows.map((row, index) => normalizeAllocationRow({ id: row.id ?? `linha-${index + 1}`, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: amountToCents(row.amount), source: row })), { expectedCents: mapCents, context: "Cesta Básica", style: { header, total, moneyFormat: MONEY } });
   return workbook;
 }

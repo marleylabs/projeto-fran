@@ -688,7 +688,7 @@ test("consolidado de alimentação gera relatório gerencial por localidade e ci
   const empty=buildFoodConsolidatedWorkbook([]);assert.deepEqual(empty.worksheets.map(sheet=>sheet.name),["Resumo Geral"]);
 });
 
-test("rateio XLSX de alimentação mantém cálculos e entrega somente as duas abas gerenciais", async () => {
+test("rateio XLSX de alimentação mantém cálculos e as duas abas gerenciais (+ perspectiva Departamento ao final)", async () => {
   const occurrence=(id:string,employeeId:string|null,name:string,sector:string,amount:number,included=true,mealQuantity=1):FoodRateioBatch["mealOccurrences"][number]=>({
     id,employeeId,normalizedReceivedName:name.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase(),receivedName:name,officialName:name,receivedDepartment:sector,confirmedDepartment:sector,amount,included,mealQuantity,
   });
@@ -704,7 +704,7 @@ test("rateio XLSX de alimentação mantém cálculos e entrega somente as duas a
   const workbook=buildFoodRateioWorkbook(batch);
   const values=(row:ExcelJS.Row)=>(row.values as ExcelJS.CellValue[]).slice(1);
   const fill=(cell:ExcelJS.Cell)=>(cell.fill as ExcelJS.FillPattern).fgColor?.argb;
-  assert.deepEqual(workbook.worksheets.map(sheet=>sheet.name),["Resumo por Setor","Rateio por Colaborador"]);
+  assert.deepEqual(workbook.worksheets.map(sheet=>sheet.name),["Resumo por Setor","Rateio por Colaborador","Rateio - Departamento"]);
   const summary=workbook.getWorksheet("Resumo por Setor")!;
   assert.deepEqual(values(summary.getRow(1)),["Setor","Colaboradores","Refeições","Valor"]);
   assert.deepEqual(values(summary.getRow(2)),["ADMINISTRATIVO",2,22,125044]);
@@ -726,7 +726,7 @@ test("rateio XLSX de alimentação mantém cálculos e entrega somente as duas a
   assert.equal(allocation.views[0].state,"frozen");assert.equal(allocation.autoFilter?.toString(),"A1:G5");assert.equal(allocation.columnCount,7);
   assert.equal(allocation.getColumn(2).width,34);
   const serialized=await workbook.xlsx.writeBuffer();const reopened=new ExcelJS.Workbook();await reopened.xlsx.load(serialized);
-  assert.deepEqual(reopened.worksheets.map(sheet=>sheet.name),["Resumo por Setor","Rateio por Colaborador"]);
+  assert.deepEqual(reopened.worksheets.map(sheet=>sheet.name),["Resumo por Setor","Rateio por Colaborador","Rateio - Departamento"]);
   assert.equal(reopened.getWorksheet("Resumo por Setor")!.getCell("D5").value,125099);
   for(const context of ["MA 1º Ciclo","MA 2º Ciclo","PA"]) assert.doesNotThrow(()=>buildFoodRateioWorkbook(batch),context);
   const empty=buildFoodRateioWorkbook({mealOccurrences:[]});
@@ -977,7 +977,7 @@ test("café da manhã: XLSX resume por Empresa → Centro de Custo e preserva de
   const allocations = [allocation("a", "PROJETA", "VALE TOPOGRAFIA BMSA", "262.50", 21), allocation("b", "PROJETA", "VALE TOPOGRAFIA BMSA", "250.00", 20), allocation("c", "PROJETA", "VALE TOPOGRAFIA SALOBO", "300.00", 24), allocation("d", "BOINGA", "VALE TOPOGRAFIA BMSA", "200.00", 16), allocation("e", "BOINGA", "VALE INTEGRIDADE SALOBO", "287.50", 23)];
   const map = { id: "m", version: 1, createdAt: new Date("2026-09-01T00:00:00Z"), administrativeEntityId: "ent", totalAmount: "1300.00", holidaysSnapshot: [], competence: { year: 2026, month: 9 }, administrativeEntity: { tradeName: "Fornecedor" }, allocations };
   const workbook = buildBreakfastWorkbook(map as unknown as Parameters<typeof buildBreakfastWorkbook>[0]);
-  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Resumo", "Rateio por Colaborador", "Auditoria"]);
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Resumo", "Rateio por Colaborador", "Auditoria", "Rateio - Departamento", "Rateio - Centro de Custo", "Rateio - Empresa Departamento", "Rateio - Empresa CC Depto"]);
   const summary = workbook.getWorksheet("Resumo")!;
   const values = summary.getSheetValues().slice(1).map((row) => (row as unknown[]).slice(1));
   assert.deepEqual(values, [
@@ -1223,7 +1223,7 @@ test("alimentação PA: XLSX com Empresa e Emissão NF ao lado das Refeições; 
   const rows = [occurrence("1", "aline", "ALINE", "ADMINISTRATIVO", 20, "NF 02", 250), occurrence("2", "adilson", "ADILSON", "ENGENHARIA", 15, "NF 01", 187.5), occurrence("3", "maria", "MARIA", "ENGENHARIA", 18, "NF 02", 225)];
   const workbook = buildFoodRateioWorkbook({ locality: "PA", mealOccurrences: rows });
   const values = (row: ExcelJS.Row) => (row.values as ExcelJS.CellValue[]).slice(1);
-  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Resumo por Setor", "Resumo por Empresa", "Rateio por Colaborador"]);
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Resumo por Setor", "Resumo por Empresa", "Rateio por Colaborador", "Rateio - Departamento", "Rateio - Empresa Departamento"]);
   const allocation = workbook.getWorksheet("Rateio por Colaborador")!;
   const header = values(allocation.getRow(1)) as string[];
   assert.deepEqual(header, ["Empresa", "Setor", "Colaborador", "Refeições", "Emissão NF", "Valor Médio", "Custo", "Restaurante"]);
@@ -1238,7 +1238,7 @@ test("alimentação PA: XLSX com Empresa e Emissão NF ao lado das Refeições; 
   assert.equal(workbook.getWorksheet("Resumo por Setor")!.getCell("D4").value, 662.5); // Total Geral igual nos dois resumos
   // MA (sem locality PA): mesmas duas abas e colunas de antes
   const ma = buildFoodRateioWorkbook({ locality: "MA", mealOccurrences: rows.map((row) => ({ ...row, invoiceEmission: null })) });
-  assert.deepEqual(ma.worksheets.map((sheet) => sheet.name), ["Resumo por Setor", "Rateio por Colaborador"]);
+  assert.deepEqual(ma.worksheets.map((sheet) => sheet.name), ["Resumo por Setor", "Rateio por Colaborador", "Rateio - Departamento"]);
   assert.deepEqual(values(ma.getWorksheet("Rateio por Colaborador")!.getRow(1)), ["Setor", "Colaborador", "Refeições", "Valor Médio", "Custo", "Restaurante", "Emissão NF"]);
 });
 
@@ -1415,7 +1415,7 @@ test("data de admissão na importação: atualiza (sem localizar), vazia não ap
   assert.equal(invalid.blocked, true); assert.deepEqual(invalid.rows[0].errors, ["Data de Admissão inválida."]);
   // Espelho de Ponto e Máscara Flash não usam Data de Admissão
   const [pointServer, flash] = await Promise.all([readFile(new URL("../src/modules/accounts-payable/breakfast/point-mirror-server.ts", import.meta.url), "utf8"), readFile(new URL("../src/modules/accounts-payable/breakfast/flash.ts", import.meta.url), "utf8")]);
-  assert.doesNotMatch(pointServer, /admission/i); assert.doesNotMatch(flash, /admission/i);
+  assert.doesNotMatch(pointServer, /admission/i); assert.doesNotMatch(flash, /admission/i); assert.doesNotMatch(await readFile(new URL("../src/modules/accounts-payable/shared/flash.ts", import.meta.url), "utf8"), /admission/i);
 });
 test("data de admissão: célula XLSX com fórmula usa só o resultado salvo (sem avaliar fórmula nem vínculo externo)", async () => {
   const { parseSpreadsheetDate, dateOnlyToDb, dateOnlyFromDb } = await import("../src/lib/date-only");
@@ -1569,7 +1569,7 @@ test("cesta básica: rateio Empresa → Departamento → Colaborador, resumo Emp
   assert.deepEqual([summary.totals.driverBonusCents, summary.totals.agreementCents, summary.totals.basketCents, summary.totals.retroactiveCents, summary.totals.totalCents], [30000, 20000, 60000, 36000, 146000]); assert.equal(summary.consistent, true); // Cesta PAGA, nunca o mensal
   const map = { version: 1, createdAt: new Date("2026-10-01T12:00:00Z"), previousPaymentDate: "2026-09-09T00:00:00.000Z", paymentDate: "2026-10-14T00:00:00.000Z", daysInMonth: 31, totalAmount: "1460.00", competence: { year: 2026, month: 10 }, administrativeEntity: { tradeName: "Fornecedor QA" }, financialRecord: { identifier: "PG-QA", grossAmount: "1460.0000" }, allocations: rows };
   const workbook = buildBasicBasketWorkbook(map, "qa");
-  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Detalhado", "Resumo", "Auditoria"]);
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Detalhado", "Resumo", "Auditoria", "Rateio - Departamento", "Rateio - Centro de Custo", "Rateio - Empresa Departamento", "Rateio - Empresa CC Depto"]);
   const detail = workbook.getWorksheet("Detalhado")!; const values = (n: number) => (detail.getRow(n).values as unknown[]).slice(1);
   assert.deepEqual(values(1), ["Empresa", "Departamento", "Centro de Custo", "Colaborador", "Data de Admissão", "Pagamento Anterior", "Pagamento Atual", "Valor Mensal da Cesta", "Base de Cálculo da Cesta", "Dias de Direito por Admissão", "Dias de Férias", "Falta Injustificada no Mês de Apuração", "Dias Finais da Cesta", "Mês de Referência Retroativo", "Base de Cálculo Retroativo", "Dias Retroativos Originais", "Dias de Férias no Retroativo", "Falta Injustificada no Mês do Retroativo", "Dias Retroativos Finais", "Bonificação Condutor", "Acordo", "Cesta Paga", "Retroativo", "Total", "Observação", "Fornecedor"]);
   const iso = (cell: string) => (detail.getCell(cell).value as Date).toISOString().slice(0, 10);
@@ -2098,5 +2098,139 @@ test("cesta básica 7E: apresentação no Design System, sem regra financeira no
   assert.match(section, /parseMoneyToCents\(text, "Valor"\) \/ 100/); assert.match(section, /value\.toFixed\(2\)\.replace\("\.", ","\)/);
   // save/Espelho inalterados: só insumos + id da importação
   assert.match(section, /entries, pointMirrorImportId: activeApplied\?\.importId \?\? null/);
+});
+
+// ---- Fase 7E.1: perspectivas de rateio (Departamento, CC, Empresa/Depto, Empresa/CC/Depto) e Máscara Flash da Cesta.
+// Fixture comum: 2 empresas (mesmo nome em ids diferentes NÃO junta), 2 CCs, 2 departamentos, linha sem CC e sem departamento.
+const RATEIO_FIXTURE = [
+  { id: "1", companyId: "c-projeta", company: "PROJETA", costCenter: "CC-001", department: "ENGENHARIA", employeeId: "ana", employeeName: "Ana", amount: "400.00" },
+  { id: "2", companyId: "c-projeta", company: "PROJETA", costCenter: "CC-001", department: "ADMINISTRATIVO", employeeId: "maria", employeeName: "Maria", amount: "350.00" },
+  { id: "3", companyId: "c-projeta", company: "PROJETA", costCenter: "CC-014", department: "ENGENHARIA", employeeId: "joao", employeeName: "João", amount: "300.0000" },
+  { id: "4", companyId: "c-topogeo", company: "TOPOGEO", costCenter: "CC-014", department: "ENGENHARIA", employeeId: "bia", employeeName: "Bia", amount: "250.50" },
+  { id: "5", companyId: "c-topogeo", company: "TOPOGEO", costCenter: null, department: "ADMINISTRATIVO", employeeId: "caio", employeeName: "Caio", amount: "100.25" },
+  { id: "6", companyId: "c-topogeo", company: "TOPOGEO", costCenter: "CC-001", department: null, employeeId: "duda", employeeName: "Duda", amount: "99.25" },
+];
+const RATEIO_TOTAL = 150000;
+
+test("rateio: quatro perspectivas sobre a mesma base (grupos, subtotais, fallback sem CC/departamento, total igual)", async () => {
+  const { ALLOCATION_EMPTY_COST_CENTER, ALLOCATION_EMPTY_DEPARTMENT, assertAllocationViews, buildAllocationViews, normalizeAllocationRow } = await import("../src/modules/accounts-payable/shared/allocation-views");
+  const { amountToCents } = await import("../src/modules/accounts-payable/breakfast/rateio");
+  const rows = RATEIO_FIXTURE.map((row) => normalizeAllocationRow({ ...row, cents: amountToCents(row.amount), source: row }));
+  const views = buildAllocationViews(rows);
+  const flat = (nodes: Array<{ label: string; cents: number; children: unknown[]; rows: Array<{ employeeName: string }> }>): unknown => nodes.map((node) => [node.label, node.cents, node.children.length ? flat(node.children as typeof nodes) : node.rows.map((row) => row.employeeName)]);
+  // V1 Departamento → Colaboradores (ordem pt-BR; "Sem departamento" mantido)
+  assert.deepEqual(flat(views.department!.nodes), [["ADMINISTRATIVO", 45025, ["Caio", "Maria"]], ["ENGENHARIA", 95050, ["Ana", "Bia", "João"]], [ALLOCATION_EMPTY_DEPARTMENT, 9925, ["Duda"]]]);
+  // V2 Centro de Custo → Colaboradores ("Sem centro de custo" mantido)
+  assert.deepEqual(flat(views.costCenter!.nodes), [["CC-001", 84925, ["Ana", "Duda", "Maria"]], ["CC-014", 55050, ["Bia", "João"]], [ALLOCATION_EMPTY_COST_CENTER, 10025, ["Caio"]]]);
+  // V3 Empresa → Departamento → Colaboradores
+  assert.deepEqual(flat(views.companyDepartment!.nodes), [
+    ["PROJETA", 105000, [["ADMINISTRATIVO", 35000, ["Maria"]], ["ENGENHARIA", 70000, ["Ana", "João"]]]],
+    ["TOPOGEO", 45000, [["ADMINISTRATIVO", 10025, ["Caio"]], ["ENGENHARIA", 25050, ["Bia"]], [ALLOCATION_EMPTY_DEPARTMENT, 9925, ["Duda"]]]],
+  ]);
+  // V4 Empresa → Centro de Custo → Departamento → Colaboradores (nesta ordem, nunca Departamento → CC)
+  assert.deepEqual(flat(views.companyCostCenterDepartment!.nodes), [
+    ["PROJETA", 105000, [["CC-001", 75000, [["ADMINISTRATIVO", 35000, ["Maria"]], ["ENGENHARIA", 40000, ["Ana"]]]], ["CC-014", 30000, [["ENGENHARIA", 30000, ["João"]]]]]],
+    ["TOPOGEO", 45000, [["CC-001", 9925, [[ALLOCATION_EMPTY_DEPARTMENT, 9925, ["Duda"]]]], ["CC-014", 25050, [["ENGENHARIA", 25050, ["Bia"]]]], [ALLOCATION_EMPTY_COST_CENTER, 10025, [["ADMINISTRATIVO", 10025, ["Caio"]]]]]],
+  ]);
+  assert.equal(views.companyCostCenterDepartment!.nodes[0].children[0].children[0].level, "department");
+  // igualdade: V1 = V2 = V3 = V4 = lançamento, todas consistentes
+  for (const tree of Object.values(views)) { assert.equal(tree!.totalCents, RATEIO_TOTAL); assert.equal(tree!.consistent, true); assert.equal(tree!.people, 6); }
+  assert.doesNotThrow(() => assertAllocationViews(views, RATEIO_TOTAL, "teste"));
+  assert.throws(() => assertAllocationViews(views, RATEIO_TOTAL + 1, "teste"), /Inconsistência no rateio de teste/);
+  // chave por id: mesma razão social com ids diferentes fica separada
+  const twins = buildAllocationViews([normalizeAllocationRow({ id: "x", companyId: "a", company: "ACME", employeeName: "X", cents: 100, source: null }), normalizeAllocationRow({ id: "y", companyId: "b", company: "ACME", employeeName: "Y", cents: 200, source: null })], ["companyDepartment"]);
+  assert.equal(twins.companyDepartment!.nodes.length, 2);
+  assert.throws(() => normalizeAllocationRow({ id: "z", employeeName: "Z", cents: 10.5, source: null }), /centavos inteiros/);
+  // pura: sem Prisma/cadastro atual
+  const source = await readFile(new URL("../src/modules/accounts-payable/shared/allocation-views.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /from "@\/lib\/db|@\/generated\/prisma|prisma\.|foodEmployee|fetch\(/);
+});
+
+test("rateio XLSX: abas das perspectivas com hierarquia explícita, valores numéricos e total = lançamento (Café, Cesta, Alimentação)", async () => {
+  const { buildBreakfastWorkbook } = await import("../src/modules/accounts-payable/breakfast/workbook");
+  const { buildBasicBasketWorkbook } = await import("../src/modules/accounts-payable/basic-basket/workbook");
+  const { buildFoodRateioWorkbook } = await import("../src/modules/accounts-payable/food/rateio-export");
+  const { ALLOCATION_VIEW_SHEET_NAMES } = await import("../src/modules/accounts-payable/shared/allocation-views-workbook");
+  for (const name of Object.values(ALLOCATION_VIEW_SHEET_NAMES)) assert.ok(name.length <= 31, name);
+  const values = (sheet: ExcelJS.Worksheet, n: number) => (sheet.getRow(n).values as unknown[]).slice(1);
+  const lastRow = (sheet: ExcelJS.Worksheet) => values(sheet, sheet.rowCount);
+  const collaboratorSum = (sheet: ExcelJS.Worksheet, valueColumn: number) => { let cents = 0; sheet.eachRow((row, n) => { if (n > 1 && row.getCell(valueColumn + 1).value === "Colaborador") cents += Math.round(Number(row.getCell(valueColumn).value) * 100); }); return cents; };
+
+  // Café: snapshots da alocação, sem recalcular
+  const breakfast = buildBreakfastWorkbook({ id: "m", version: 1, createdAt: new Date("2026-09-01T00:00:00Z"), administrativeEntityId: "e", totalAmount: "1500.00", holidaysSnapshot: [], competence: { year: 2026, month: 9 }, administrativeEntity: { tradeName: "F" },
+    allocations: RATEIO_FIXTURE.map((row) => ({ ...row, workingDays: 21, baseQuantity: 21, extraQuantity: 0, discountQuantity: 0, finalQuantity: 21, unitPrice: "12.50", observationType: null, observationDetails: null })) } as unknown as Parameters<typeof buildBreakfastWorkbook>[0]);
+  const v4 = breakfast.getWorksheet("Rateio - Empresa CC Depto")!;
+  assert.deepEqual(values(v4, 1), ["Empresa", "Centro de Custo", "Departamento", "Colaborador", "Valor", "Linha"]);
+  assert.deepEqual(values(v4, 2), ["PROJETA", "CC-001", "ADMINISTRATIVO", "Maria", 350, "Colaborador"]); // colunas explícitas em toda linha
+  assert.deepEqual(values(v4, 3), ["PROJETA", "CC-001", "ADMINISTRATIVO", "", 350, "Subtotal Departamento"]);
+  assert.deepEqual(lastRow(v4), ["Total Geral", "", "", "", 1500, "Total Geral"]);
+  assert.equal(typeof v4.getRow(2).getCell(5).value, "number"); assert.equal(v4.getColumn(5).numFmt, "R$ #,##0.00");
+  assert.equal(collaboratorSum(v4, 5), RATEIO_TOTAL);
+  for (const [sheetName, columns] of [["Rateio - Departamento", ["Departamento"]], ["Rateio - Centro de Custo", ["Centro de Custo"]], ["Rateio - Empresa Departamento", ["Empresa", "Departamento"]]] as const) {
+    const sheet = breakfast.getWorksheet(sheetName)!;
+    assert.deepEqual(values(sheet, 1), [...columns, "Colaborador", "Valor", "Linha"]);
+    assert.equal(lastRow(sheet)[columns.length + 1], 1500); assert.equal(collaboratorSum(sheet, columns.length + 2), RATEIO_TOTAL);
+  }
+  assert.ok(breakfast.getWorksheet("Rateio - Centro de Custo")!.getSheetValues().some((row) => Array.isArray(row) && row.includes("Sem centro de custo")));
+  // divergência bloqueia a geração (nunca exporta rateio divergente)
+  assert.throws(() => buildBreakfastWorkbook({ id: "m", version: 1, createdAt: new Date(), administrativeEntityId: "e", totalAmount: "1500.01", holidaysSnapshot: [], competence: { year: 2026, month: 9 }, administrativeEntity: { tradeName: "F" }, allocations: RATEIO_FIXTURE.map((row) => ({ ...row, workingDays: 21, baseQuantity: 21, extraQuantity: 0, discountQuantity: 0, finalQuantity: 21, unitPrice: "12.50", observationType: null, observationDetails: null })) } as unknown as Parameters<typeof buildBreakfastWorkbook>[0]), /Inconsistência no rateio de Café da Manhã/);
+
+  // Cesta: Total salvo de cada alocação (Bonificação + Acordo + Cesta paga + Retroativo), nunca recalculado
+  const basket = buildBasicBasketWorkbook({ version: 1, createdAt: new Date("2026-10-01T12:00:00Z"), previousPaymentDate: "2026-09-09T00:00:00.000Z", paymentDate: "2026-10-14T00:00:00.000Z", daysInMonth: 31, totalAmount: "1500.00", competence: { year: 2026, month: 10 }, administrativeEntity: { tradeName: "F" }, financialRecord: { identifier: "PG-X", grossAmount: "1500.00" },
+    allocations: RATEIO_FIXTURE.map((row) => ({ ...row, driverBonus: "0", agreementAmount: "0", basketAmount: row.amount, retroactiveAmount: "0", monthlyBasketAmount: row.amount, admissionDate: null, currentCalculationDays: 30, currentBasketDays: 30, referenceCalculationDays: 30, retroactiveDays: 0, observation: null, currentVacationDays: 0, currentUnjustifiedAbsence: false, currentPayableDays: 30, retroactiveVacationDays: 0, retroactiveUnjustifiedAbsence: false, retroactivePayableDays: 0 })) });
+  for (const name of Object.values(ALLOCATION_VIEW_SHEET_NAMES)) { const sheet = basket.getWorksheet(name)!; assert.equal(lastRow(sheet).at(-2), 1500, name); }
+  assert.equal(collaboratorSum(basket.getWorksheet("Rateio - Empresa Departamento")!, 4), RATEIO_TOTAL);
+
+  // Alimentação: Departamento (MA e PA) e Empresa/Departamento só no PA (Empresa derivada da Emissão NF); sem CC histórico
+  const occurrence = (id: string, employeeId: string, name: string, sector: string, invoiceEmission: string | null, amount: number) => ({ id, employeeId, normalizedReceivedName: name.toLowerCase(), receivedName: name, officialName: name, receivedDepartment: sector, confirmedDepartment: null, mealQuantity: 1, restaurantName: null, invoiceEmission, amount, included: true });
+  const meals = [occurrence("1", "ana", "ANA", "ENGENHARIA", "NF 02", 12.5), occurrence("2", "ana", "ANA", "ENGENHARIA", "NF 02", 12.5), occurrence("3", "bia", "BIA", "ADMINISTRATIVO", "NF 01", 12.5)];
+  const pa = buildFoodRateioWorkbook({ locality: "PA", mealOccurrences: meals });
+  const department = pa.getWorksheet("Rateio - Departamento")!;
+  assert.deepEqual(values(department, 2), ["ADMINISTRATIVO", "BIA", 12.5, "Colaborador"]); assert.equal(lastRow(department)[2], 37.5);
+  const company = pa.getWorksheet("Rateio - Empresa Departamento")!;
+  assert.deepEqual(values(company, 2), ["BOINGA", "ADMINISTRATIVO", "BIA", 12.5, "Colaborador"]); assert.equal(lastRow(company)[3], 37.5);
+  assert.equal(pa.getWorksheet("Rateio - Centro de Custo"), undefined); assert.equal(pa.getWorksheet("Rateio - Empresa CC Depto"), undefined);
+  const ma = buildFoodRateioWorkbook({ locality: "MA", mealOccurrences: meals });
+  assert.equal(ma.getWorksheet("Rateio - Empresa Departamento"), undefined); assert.equal(lastRow(ma.getWorksheet("Rateio - Departamento")!)[2], 37.5);
+  // planilha válida após round-trip
+  const reread = new ExcelJS.Workbook(); await reread.xlsx.load(await pa.xlsx.writeBuffer() as ArrayBuffer);
+  assert.equal(Number(reread.getWorksheet("Rateio - Empresa Departamento")!.getRow(2).getCell(4).value), 12.5);
+});
+
+test("cesta básica: Máscara Flash (mesma especificação do Café) — colunas, CNPJ texto, CPF, FLEXIVEL = Total salvo, validações, rota", async () => {
+  const { buildFlashWorkbook, buildFlashRows, FlashExportError, FLASH_SHEET_NAME } = await import("../src/modules/accounts-payable/shared/flash");
+  const breakfast = await import("../src/modules/accounts-payable/breakfast/flash");
+  assert.equal(breakfast.buildBreakfastFlashWorkbook, buildFlashWorkbook); assert.equal(breakfast.BreakfastFlashExportError, FlashExportError); // Café e Cesta: mesma implementação
+  const leadingZero = cpfWithDigits("012345678");
+  // alocações da Cesta (Total = Bonificação + Acordo + Cesta paga + Retroativo, já gravado pelo servidor)
+  const alloc = (id: string, name: string, company: string, taxId: string | null, cpf: string | null, amount: string) => ({ id, employeeId: id, employeeName: name, company, companyId: taxId ? company : null, companyRef: taxId === null ? null : { taxId }, employee: { cpf }, amount });
+  const allocations = [alloc("b", "PESSOA B", "PROJETA", "04892580000120", "52998224725", "480.0000"), alloc("a", "PESSOA A", "BOINGA", "02801028000153", leadingZero, "530.00"), alloc("c", "PESSOA C", "PROJETA", "04892580000120", null, "0.00")];
+  const map = { totalAmount: "1010.00", financialRecord: { grossAmount: "1010.0000" }, allocations };
+  const sheet = buildFlashWorkbook(map).worksheets[0];
+  assert.equal(sheet.name, FLASH_SHEET_NAME); assert.equal(sheet.columnCount, 4);
+  assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1), ["CNPJ", "NOME COMPLETO", "CPF", "FLEXIVEL (R$)"]);
+  assert.deepEqual([2, 3, 4].map((n) => [sheet.getCell(`A${n}`).value, sheet.getCell(`B${n}`).value]), [["02801028000153", "PESSOA A"], ["04892580000120", "PESSOA B"], ["04892580000120", "PESSOA C"]]);
+  assert.equal(sheet.getCell("A2").numFmt, "@"); assert.equal(typeof sheet.getCell("A2").value, "string"); // CNPJ texto com zero à esquerda
+  assert.equal(String(sheet.getCell("C2").value).padStart(11, "0"), leadingZero); assert.equal(sheet.getCell("C2").numFmt, '000"."000"."000"-"00'); // CPF: mesma regra do Café
+  assert.equal(sheet.getCell("C4").value, null); // sem CPF cadastrado: célula vazia (política do Café)
+  assert.deepEqual([2, 3, 4].map((n) => sheet.getCell(`D${n}`).value), [530, 480, 0]); assert.equal(typeof sheet.getCell("D3").value, "number");
+  assert.equal(buildFlashRows(map).totalCents, 101000); // Σ FLEXIVEL = Σ alocações = Map = obrigação
+  assert.throws(() => buildFlashRows({ ...map, allocations: [alloc("x", "X", "ACME", null, null, "10.00")] }), (error: Error) => error instanceof FlashExportError && /A empresa ACME não possui CNPJ cadastrado/.test(error.message));
+  assert.throws(() => buildFlashRows({ ...map, allocations: [...allocations, { ...allocations[0], id: "b2" }] }), /mais de uma vez/);
+  assert.throws(() => buildFlashRows({ ...map, totalAmount: "1010.01" }), /Inconsistência na Máscara Flash/);
+  assert.throws(() => buildFlashRows({ ...map, financialRecord: null }), /sem obrigação financeira/);
+  assert.throws(() => buildFlashRows({ ...map, allocations: [] }), /Não há colaboradores/);
+  const [route, cafeRoute, section, view] = await Promise.all([
+    readFile(new URL("../src/app/api/accounts-payable/basic-basket/[mapId]/flash/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/api/accounts-payable/breakfast/[mapId]/flash/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/basic-basket/BasicBasketSection.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/accounts-payable/basic-basket/ui/BasicBasketAllocationView.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(route, /requirePermission\(PERMISSIONS\.FINANCIAL_RECORDS_READ\)/); assert.match(cafeRoute, /requirePermission\(PERMISSIONS\.FINANCIAL_RECORDS_READ\)/); // mesma permissão do Café
+  assert.match(route, /basicBasketMap\.findFirst\(\{ where: \{ id: mapId, current: true, cancelledAt: null \}/); assert.match(route, /deletedAt: null/); // só lançamento salvo/vigente
+  assert.match(route, /status: 404/); assert.match(route, /status: 422/);
+  assert.match(route, /Mascara_Flash_Cesta_Basica_\$\{map\.competence\.year\}-\$\{String\(map\.competence\.month\)\.padStart\(2, "0"\)\}\.xlsx/);
+  assert.match(route, /employee: \{ select: \{ cpf: true \} \}/); assert.doesNotMatch(route, /calculateBasicBasketLine|request\.json|searchParams/); // sem cálculo e sem valor vindo do cliente
+  assert.match(section, /\/api\/accounts-payable\/basic-basket\/\$\{mapId\}\/flash/); assert.match(view, />Máscara Flash</); assert.match(view, /variant="secondary"[^>]*onClick=\{\(\) => onFlash\(map\.id\)\}/);
 });
 

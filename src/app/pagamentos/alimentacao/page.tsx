@@ -17,6 +17,9 @@ import { FoodMaEditor } from "@/modules/accounts-payable/food/ui/FoodMaEditor";
 import type { CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { ManualEntrySection } from "@/components/ManualEntryLayout";
 import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList } from "@/components/allocation/AllocationCard";
+import { AllocationViews } from "@/components/allocation/AllocationViews";
+import { amountToCents } from "@/modules/accounts-payable/breakfast/rateio";
+import { normalizeAllocationRow, type AllocationViewId } from "@/modules/accounts-payable/shared/allocation-views";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { BreakfastSection } from "@/modules/accounts-payable/breakfast/BreakfastSection";
 import { BasicBasketSection } from "@/modules/accounts-payable/basic-basket/BasicBasketSection";
@@ -386,6 +389,15 @@ function MaRateio({
     const sector = normalizeOrganizationalValue(row.department);
     sectors.set(sector, [...(sectors.get(sector) ?? []), row]);
   }
+  // Perspectivas de rateio (só agrupam valores já salvos). Departamento: alocações do lote (snapshot do setor).
+  // Empresa/Departamento: somente PA, com a Empresa DERIVADA da Emissão NF gravada em cada refeição (companyRateio,
+  // calculado no servidor). Centro de Custo não existe historicamente na Alimentação e o MA não tem empresa:
+  // essas perspectivas ficam indisponíveis em vez de usar o cadastro atual.
+  const [view, setView] = useState<AllocationViewId>("department");
+  const viewRows = view === "companyDepartment" && batch.companyRateio
+    ? batch.companyRateio.companies.flatMap((company) => company.people.map((person) => normalizeAllocationRow({ id: person.key, company: company.company, department: person.department, employeeId: person.key.split("|")[0], employeeName: person.name, cents: person.amountCents, source: person as { meals: number; invoiceEmission: string } | null })))
+    : batch.allocations.map((row) => normalizeAllocationRow({ id: row.id, department: normalizeOrganizationalValue(row.department), employeeId: row.sourceIdentifier, employeeName: row.employeeName, cents: amountToCents(row.amount), source: null as { meals: number; invoiceEmission: string } | null }));
+  const availableViews: AllocationViewId[] = batch.locality === "PA" && batch.companyRateio ? ["department", "companyDepartment"] : ["department"];
   return (
     <AllocationCard
       title={batch.administrativeEntity.tradeName}
@@ -435,9 +447,17 @@ function MaRateio({
             {batch.companyRateio.companies.map((company) => `${company.company} ${money(company.amountCents / 100)}`).join(" + ")} = {money(batch.companyRateio.companiesCents / 100)}
             {companyTotalsMatch ? " · confere com o total do lote e a obrigação" : ` · diferença de ${money((Math.round(Number(batch.totalAmount) * 100) - batch.companyRateio.companiesCents) / 100)}`}
           </p>
-          <h4 className="mb-2 mt-4 text-sm font-semibold">Por setor</h4>
+          <h4 className="mb-2 mt-4 text-sm font-semibold">Rateio por perspectiva</h4>
         </section>
       )}
+      <AllocationViews
+        rows={viewRows}
+        value={view}
+        onValueChange={setView}
+        available={availableViews}
+        unavailableReason={batch.locality === "PA" ? "Centro de Custo indisponível: a Alimentação não guarda o centro de custo histórico." : "Centro de Custo e Empresa indisponíveis: a Alimentação não guarda o centro de custo histórico e o lote MA não possui empresa."}
+        expectedCents={amountToCents(batch.totalAmount)}
+        custom={{ department: (
       <AllocationDepartmentList>
         {[...sectors.entries()]
           .sort(([a], [b]) => comparePtBr(a, b))
@@ -466,6 +486,18 @@ function MaRateio({
             );
           })}
       </AllocationDepartmentList>
+        ) }}
+        renderLeaf={(rows) => (
+          <ul className="divide-y divide-border">
+            {rows.map((row) => (
+              <li key={row.id} className="flex items-center justify-between gap-3 px-1 py-1.5 text-sm">
+                <span className="min-w-0">{row.employeeName}{row.source && <small className="block text-secondary">{row.source.invoiceEmission}</small>}</span>
+                <span className="shrink-0 tabular-nums">{row.source ? `${row.source.meals} refeições · ` : ""}{money(row.cents / 100)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      />
       <div className="mt-4 flex flex-wrap gap-2">
         <Button type="button" onClick={beginEditing} loading={loadingEditor} variant="secondary" size="sm">
           Editar rateio

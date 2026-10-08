@@ -7,6 +7,8 @@
 // (BreakfastCompetence/Map/Allocation), sem nenhuma relação com TransitVoucher*.
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AllocationCard, AllocationDepartmentAccordion, AllocationDepartmentList } from "@/components/allocation/AllocationCard";
+import { AllocationViews } from "@/components/allocation/AllocationViews";
+import { normalizeAllocationRow, type AllocationViewId } from "@/modules/accounts-payable/shared/allocation-views";
 import { CompetenceCalendar, HolidayModal, type Holiday } from "@/components/allocation/CompetenceHolidays";
 import { CompanyModal, companyLabel, normalizeText as normalize, type Company } from "@/components/allocation/CompanyPicker";
 import { Badge, Button, DeletionModal, EmptyState, FileInput, MetricCard, buttonClassName, useToast } from "@/components/ui";
@@ -15,7 +17,7 @@ import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobo
 import { ManualEntrySection } from "@/components/ManualEntryLayout";
 import { BREAKFAST_ALLOWED_DEPARTMENT, calculateBreakfastEmployeeTotal, calculateFinalQuantity, formatBreakfastObservation, parseUnitPriceToCents, type BreakfastObservationKind } from "./calculations";
 import { comparePtBr } from "@/lib/sorting/ptBr";
-import { groupBreakfastByCompanyCostCenter } from "./rateio";
+import { amountToCents, groupBreakfastByCompanyCostCenter } from "./rateio";
 import { applyBreakfastExtraSuggestions } from "./point-mirror";
 
 type PointMirrorStatus = "APPLY" | "NOT_SELECTED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "INVALID_CPF" | "NOT_IN_FILE";
@@ -32,7 +34,7 @@ import { triggerDownload } from "@/lib/export/download";
 type Entity = { id: string; cnpj: string | null; tradeName: string; legalName: string; activityArea: string; locality: string };
 type Context = { year: number; month: number; unitPrice: string; unitPriceDefined: boolean; holidays: Holiday[]; weekdays: number; holidaysInMonth: number; holidaysOnWeekdays: number; workingDays: number };
 type Allocation = {
-  id: string; employeeId: string | null; company: string; employeeName: string; department: string | null; costCenter: string | null;
+  id: string; employeeId: string | null; company: string; companyId?: string | null; employeeName: string; department: string | null; costCenter: string | null;
   amount: string; workingDays: number | null; baseQuantity: number | null; extraQuantity: number | null; discountQuantity: number; finalQuantity: number | null; unitPrice: string | null;
   observationType: BreakfastObservationKind | null; observationDetails: string | null;
 };
@@ -155,6 +157,8 @@ export function BreakfastSection() {
   // Máscara Flash: gerada no backend a partir do lançamento salvo; erros de validação (sem CNPJ,
   // sem colaboradores, total divergente) chegam como JSON e viram toast — nenhum arquivo parcial.
   const [flashBusy, setFlashBusy] = useState<string | null>(null);
+  // Perspectiva do Rateio por lançamento (local; padrão = Empresa → Departamento, a visão que já existia).
+  const [rateioView, setRateioView] = useState<Record<string, AllocationViewId>>({});
   async function downloadFlash(mapId: string) {
     setFlashBusy(mapId);
     try {
@@ -358,13 +362,23 @@ export function BreakfastSection() {
         const rows = map.allocations; const mapTree = new Map<string, Map<string, Allocation[]>>();
         for (const row of rows) { const departments = mapTree.get(row.company) ?? new Map<string, Allocation[]>(); const key = row.department ?? "Não informado"; departments.set(key, [...(departments.get(key) ?? []), row]); mapTree.set(row.company, departments); }
         const mapSum = sum(rows); const diff = mapSum - cents(map.totalAmount);
+        // Linhas do colaborador (mesma tabela de sempre), reaproveitada nas perspectivas de rateio.
+        const rowsTable = (deptRows: Allocation[]) => <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead><tr className="border-b border-border text-left text-xs text-secondary"><th className="py-2 pr-2">Colaborador</th><th className="w-16 py-2 pr-2 text-center">Quantidade</th><th className="w-16 py-2 pr-2 text-center">Desconto</th><th className="w-16 py-2 pr-2 text-center">Extras</th><th className="w-16 py-2 pr-2 text-center">Final</th><th className="w-24 py-2 pr-2 text-right">Valor</th><th className="py-2 pr-2">Observação</th><th /></tr></thead><tbody>{[...deptRows].sort((a, b) => comparePtBr(a.employeeName, b.employeeName)).map((row) => <tr key={row.id} className="border-b border-border last:border-0"><td className="py-2 pr-2">{row.employeeName}</td><td className="py-2 pr-2 text-center">{row.baseQuantity ?? "—"}</td><td className="py-2 pr-2 text-center">{row.discountQuantity}</td><td className="py-2 pr-2 text-center">{row.extraQuantity ?? "—"}</td><td className="py-2 pr-2 text-center">{row.finalQuantity ?? "—"}</td><td className="whitespace-nowrap py-2 pr-2 text-right">{money(row.amount)}</td><td className="py-2 pr-2">{formatBreakfastObservation(row.observationType, row.observationDetails) || "—"}</td><td className="whitespace-nowrap py-2 text-right">{row.finalQuantity !== null && <button type="button" className="text-xs font-semibold text-primary" onClick={() => setCorrecting({ mapId: map.id, row })}>Corrigir</button>}</td></tr>)}</tbody></table></div>;
+        const viewRows = rows.map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: amountToCents(row.amount), source: row }));
         return <AllocationCard key={map.id} title={map.administrativeEntity.tradeName} subtitle={`competência ${String(month).padStart(2, "0")}/${year} · v${map.version}`} badge={<Badge tone="success">Concluído</Badge>}
           indicators={[{ label: "Empresas / setores", value: `${mapTree.size} / ${[...mapTree.values()].reduce((total, departments) => total + departments.size, 0)}` }, { label: "Colaboradores", value: new Set(rows.map((row) => row.employeeId ?? row.employeeName)).size }, { label: "Dias úteis · valor", value: `${mapBase(map)?.workingDays ?? ctx?.workingDays ?? "—"} · ${mapBase(map) ? money(mapBase(map)!.unitPrice) : ctx ? money(ctx.unitPrice) : "—"}` }, { label: "Valor total · obrigação", value: `${money(map.totalAmount)}${map.financialRecord ? ` · ${map.financialRecord.identifier}` : ""}` }]}>
-          <AllocationDepartmentList>{[...mapTree].sort(([a], [b]) => comparePtBr(a, b)).map(([company, departments]) => { const companyRows = [...departments.values()].flat(); return <AllocationDepartmentAccordion key={company} name={company} summary={`${people(new Set(companyRows.map((row) => row.employeeId ?? row.employeeName)).size)} · ${money(sum(companyRows) / 100)}`}>
+          <AllocationViews
+            rows={viewRows}
+            value={rateioView[map.id] ?? "companyDepartment"}
+            onValueChange={(value) => setRateioView((current) => ({ ...current, [map.id]: value }))}
+            expectedCents={amountToCents(map.totalAmount)}
+            custom={{ companyDepartment: <AllocationDepartmentList>{[...mapTree].sort(([a], [b]) => comparePtBr(a, b)).map(([company, departments]) => { const companyRows = [...departments.values()].flat(); return <AllocationDepartmentAccordion key={company} name={company} summary={`${people(new Set(companyRows.map((row) => row.employeeId ?? row.employeeName)).size)} · ${money(sum(companyRows) / 100)}`}>
             <div className="grid gap-3">{[...departments].sort(([a], [b]) => comparePtBr(a, b)).map(([department, deptRows]) => <AllocationDepartmentAccordion key={department} name={department} summary={`${people(deptRows.length)} · ${money(sum(deptRows) / 100)}`}>
-              <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead><tr className="border-b border-border text-left text-xs text-secondary"><th className="py-2 pr-2">Colaborador</th><th className="w-16 py-2 pr-2 text-center">Quantidade</th><th className="w-16 py-2 pr-2 text-center">Desconto</th><th className="w-16 py-2 pr-2 text-center">Extras</th><th className="w-16 py-2 pr-2 text-center">Final</th><th className="w-24 py-2 pr-2 text-right">Valor</th><th className="py-2 pr-2">Observação</th><th /></tr></thead><tbody>{[...deptRows].sort((a, b) => comparePtBr(a.employeeName, b.employeeName)).map((row) => <tr key={row.id} className="border-b border-border last:border-0"><td className="py-2 pr-2">{row.employeeName}</td><td className="py-2 pr-2 text-center">{row.baseQuantity ?? "—"}</td><td className="py-2 pr-2 text-center">{row.discountQuantity}</td><td className="py-2 pr-2 text-center">{row.extraQuantity ?? "—"}</td><td className="py-2 pr-2 text-center">{row.finalQuantity ?? "—"}</td><td className="whitespace-nowrap py-2 pr-2 text-right">{money(row.amount)}</td><td className="py-2 pr-2">{formatBreakfastObservation(row.observationType, row.observationDetails) || "—"}</td><td className="whitespace-nowrap py-2 text-right">{row.finalQuantity !== null && <button type="button" className="text-xs font-semibold text-primary" onClick={() => setCorrecting({ mapId: map.id, row })}>Corrigir</button>}</td></tr>)}</tbody></table></div>
+              {rowsTable(deptRows)}
             </AllocationDepartmentAccordion>)}</div>
-          </AllocationDepartmentAccordion>; })}</AllocationDepartmentList>
+          </AllocationDepartmentAccordion>; })}</AllocationDepartmentList> }}
+            renderLeaf={(leafRows) => rowsTable(leafRows.map((row) => row.source))}
+          />
           <div className={`mt-4 flex flex-wrap gap-x-6 gap-y-1 rounded-md border px-3 py-2 text-sm ${diff !== 0 ? "border-error/40 bg-error/5 text-error" : "border-border"}`} role={diff !== 0 ? "alert" : undefined}><span>Valor total <strong>{money(map.totalAmount)}</strong></span><span>Rateado <strong>{money(mapSum / 100)}</strong></span><span>Diferença <strong>{money(diff / 100)}</strong></span></div>
           <div className="mt-4 flex flex-wrap gap-2"><a href={`/api/accounts-payable/breakfast/${map.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}>Download do rateio XLSX</a><Button size="sm" variant="secondary" loading={flashBusy === map.id} disabled={flashBusy !== null} onClick={() => downloadFlash(map.id)}>Download da Máscara Flash</Button><Button size="sm" variant="error" onClick={() => setDeleteTarget({ mapId: map.id })}>Cancelar lançamento</Button></div>
         </AllocationCard>;

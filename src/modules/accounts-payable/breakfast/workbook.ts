@@ -2,7 +2,9 @@ import ExcelJS from "exceljs";
 import type { Prisma } from "@/generated/prisma";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 import { formatBreakfastObservation } from "./calculations";
-import { groupBreakfastByCompanyCostCenter } from "./rateio";
+import { addAllocationViewSheets } from "@/modules/accounts-payable/shared/allocation-views-workbook";
+import { normalizeAllocationRow } from "@/modules/accounts-payable/shared/allocation-views";
+import { amountToCents, groupBreakfastByCompanyCostCenter } from "./rateio";
 
 // Montagem pura do XLSX do Café da Manhã (sem server-only) — o download (export.ts) só serializa.
 export type BreakfastWorkbookMap = Prisma.BreakfastMapGetPayload<{ include: { competence: true; administrativeEntity: true; allocations: true } }>;
@@ -37,6 +39,10 @@ export function buildBreakfastWorkbook(map: BreakfastWorkbookMap) {
   const audit = workbook.addWorksheet("Auditoria");
   audit.addRows([["Competência", `${String(map.competence.month).padStart(2, "0")}/${map.competence.year}`], ["Versão", map.version], ["Lançado em", map.createdAt], ["Cadastro da obrigação", `${map.administrativeEntity.tradeName} / ${map.administrativeEntityId}`], ["Valor total", Number(map.totalAmount)], ["Feriados considerados", holidaysText(map.holidaysSnapshot)]]);
   audit.getColumn(1).font = { bold: true }; audit.getColumn(1).width = 28; audit.getColumn(2).width = 70; audit.getCell("B5").numFmt = MONEY;
+
+  // Perspectivas de rateio (abas novas, ao final, sem alterar as existentes): só agrupam o valor final salvo
+  // (snapshots de Empresa/Centro de Custo/Departamento da alocação) e precisam fechar com o total do lançamento.
+  addAllocationViewSheets(workbook, rows.map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: amountToCents(row.amount), source: row })), { expectedCents: amountToCents(map.totalAmount), context: "Café da Manhã", style: { header, total, moneyFormat: MONEY } });
   return workbook;
 }
 
