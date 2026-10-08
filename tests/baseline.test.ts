@@ -2531,3 +2531,19 @@ test("compartilhados 7G: calendário, feriado, empresa e combobox no Design Syst
   const breakfast = await readFile(new URL("../src/modules/accounts-payable/breakfast/BreakfastSection.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(breakfast, /basic-basket\/ui/); assert.match(breakfast, /shared\/ui\/CompetenceSummary/);
 });
+
+test("DeletionModal 7G: devolve o foco ao gatilho ao fechar (sem focar elemento removido) e mantém a confirmação destrutiva", async () => {
+  const { restoreDeletionFocus } = await import("../src/components/ui/DeletionModal");
+  let focused = 0;
+  restoreDeletionFocus({ isConnected: true, focus: () => { focused++; } }); assert.equal(focused, 1); // Cancelar / Esc: gatilho ainda na página
+  restoreDeletionFocus({ isConnected: false, focus: () => { focused++; } }); assert.equal(focused, 1); // exclusão concluída removeu o gatilho
+  restoreDeletionFocus(null); assert.equal(focused, 1);
+  const source = await readFile(new URL("../src/components/ui/DeletionModal.tsx", import.meta.url), "utf8");
+  // gatilho capturado ANTES do showModal (o modal só existe aberto); devolvido ao desmontar e no close nativo (backdrop)
+  assert.ok(source.indexOf("opener.current=document.activeElement") < source.indexOf("dialog.showModal()"));
+  assert.match(source, /addEventListener\("close",restore\);return\(\)=>\{dialog\?\.removeEventListener\("close",restore\);restore\(\);\}/);
+  // regras destrutivas inalteradas: palavra-chave EXCLUIR + motivo obrigatório no lote, Esc bloqueado durante a operação
+  assert.match(source, /const ready=\(!requireKeyword\|\|confirmation==="EXCLUIR"\)&&\(!requireKeyword\|\|Boolean\(reason\)\);/);
+  assert.match(source, /onCancel=\{busy\?event=>event\.preventDefault\(\):onClose\}/); assert.match(source, /onClick=\{\(\)=>onConfirm\(reason\)\}/);
+  assert.match(source, /export function DeletionModal\(props:DeletionModalProps\)\{return props\.open\?<OpenDeletionModal \{\.\.\.props\}\/>:null;\}/);
+});
