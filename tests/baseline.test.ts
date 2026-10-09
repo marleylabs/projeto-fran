@@ -2709,6 +2709,7 @@ test("cadastros 7I: entidades administrativas no Design System, CNPJ/SIM-NÃO/pa
 });
 
 // ---- Fase 7J: Usuários + Treinamentos no Design System (só apresentação) e Switch foundation.
+const stripComments = (source: string) => source.replace(/^\s*\/\/.*$/gm, "");
 
 test("Switch 7J: role=switch, aria-checked, nome pelo rótulo visível, descrição e disabled reais", async () => {
   const { createElement } = await import("react");
@@ -2719,10 +2720,24 @@ test("Switch 7J: role=switch, aria-checked, nome pelo rótulo visível, descriç
   assert.match(on, /<label id="s-label" for="s"[^>]*>Acesso ativo<\/label>/); assert.match(on, /id="s-description"[^>]*>Contas inativas não podem autenticar\./);
   const off = renderToStaticMarkup(createElement(Switch, { id: "t", checked: false, disabled: true, onCheckedChange: () => undefined, label: "X" }));
   assert.match(off, /aria-checked="false"/); assert.match(off, /disabled=""/); assert.doesNotMatch(off, /aria-describedby/);
-  // consumidor: Colaboradores (situação) — sem o toggle do daisyUI
-  const collaborator = await readFile(new URL("../src/modules/collaborators/ui/CollaboratorFormFields.tsx", import.meta.url), "utf8");
-  assert.match(collaborator, /<Switch /); assert.doesNotMatch(collaborator, /className="toggle/);
+  // consumidores: Usuários (acesso ativo) e Colaboradores (situação) — sem o toggle do daisyUI
+  const [users, collaborator] = await Promise.all(["../src/app/usuarios/page.tsx", "../src/modules/collaborators/ui/CollaboratorFormFields.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  for (const source of [users, collaborator]) { assert.match(source, /<Switch /); assert.doesNotMatch(source, /className="toggle/); }
   assert.match(collaborator, /onCheckedChange=\{\(active\) => onChange\(\{ active \}\)\}/);
+});
+
+test("usuários 7J: Design System sem dialog local, mesmos payloads de criação/edição/senha e RBAC no servidor", async () => {
+  const [page, table] = await Promise.all(["../src/app/usuarios/page.tsx", "../src/modules/users/ui/UserTable.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  assert.doesNotMatch(stripComments(page), /function Dialog\(|className="modal|modal-box|<table|input-bordered|select-bordered|[×]/);
+  assert.match(page, /<FilterBar/); assert.match(page, /<SearchInput/); assert.match(page, /<UserTable/); assert.match(table, /<DataTable/); assert.match(table, /<StatusBadge tone="success">Ativo/);
+  // payloads idênticos aos de antes
+  assert.match(page, /JSON\.stringify\(\{ email, name, password, roleKey: newRole \}\)/);
+  assert.match(page, /JSON\.stringify\(\{ name: editName, roleKey: editRole, active: editActive \}\)/);
+  assert.match(page, /JSON\.stringify\(\{ strategy: "email" \}\)/); assert.match(page, /JSON\.stringify\(\{ strategy: "temporary", password: tempPassword, confirmation: tempConfirmation \}\)/);
+  // proteções de interface preservadas (o servidor continua a autoridade): não desativar a si mesmo, alerta de elevação
+  assert.match(page, /disabled=\{editing\.id === currentUserId\}/); assert.match(page, /editRole === "ADMIN" && editing\.roles\[0\]\?\.role\.key !== "ADMIN"/);
+  assert.match(page, /disabled=\{tempPassword\.length < 8 \|\| tempPassword !== tempConfirmation\}/); assert.match(page, /minLength=\{8\}/);
+  assert.doesNotMatch(stripComments(table), /fetch\(|password|roleKey/);
 });
 
 test("FloatingActionMenu 7J: escolher um item devolve o foco ao gatilho (Dialog aberto pelo menu retorna o foco a ele)", async () => {
