@@ -33,7 +33,7 @@ export { Skeleton, SkeletonCard, SkeletonGroup, SkeletonTableRows, type Skeleton
 export { Tooltip, tooltipPosition, type TooltipProps } from "./Tooltip";
 export { CurrencyInput, formatCurrencyInput, parseCurrencyInput, type CurrencyInputProps } from "./CurrencyInput";
 export { CalculatedValue, type CalculatedValueProps } from "./CalculatedValue";
-export { UploadDropzone, formatFileSize, matchesAccept, validateUploadFile, type UploadDropzoneProps, type UploadFileLike } from "./UploadDropzone";
+export { UploadDropzone, formatAcceptedFileTypes, formatFileSize, matchesAccept, validateUploadFile, type UploadDropzoneProps, type UploadFileLike } from "./UploadDropzone";
 // Fase 7J: interruptor acessível (substitui o toggle do daisyUI).
 export { Switch, type SwitchProps } from "./Switch";
 export { ImportFlow, ImportIssues, ImportStepper, IMPORT_FLOW_STEPS, IMPORT_FLOW_REVIEW_STEPS, canApplyImport, importStepStates, type ImportFlowProps, type ImportFlowStep, type ImportIssue } from "./ImportFlow";

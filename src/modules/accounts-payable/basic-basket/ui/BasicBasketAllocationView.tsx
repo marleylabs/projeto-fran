@@ -2,7 +2,7 @@
 
 // Aba "Rateio" da Cesta Básica: Empresa → Departamento → Colaborador, por lançamento (mapa). SÓ APRESENTAÇÃO:
 // o agrupamento e as somas vêm de groupBasicBasketByCompanyDepartment (rateio.ts), a partir dos snapshots salvos.
-// Implementação visual própria da Cesta (o AllocationCard compartilhado segue intacto no Café da Manhã e no VT).
+// Implementação visual própria da Cesta (Café e VT usam as perspectivas compartilhadas de AllocationViews).
 // Fase 7E.1: "Visualizar por" — Departamento, Centro de Custo, Empresa/Departamento (padrão) e Empresa/CC/Departamento,
 // todas sobre a MESMA base (Total salvo de cada alocação + snapshots), via AllocationViews compartilhado.
 import { useState } from "react";

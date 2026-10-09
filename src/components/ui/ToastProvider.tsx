@@ -2,6 +2,7 @@
 
 import { createContext,useCallback,useContext,useEffect,useMemo,useRef,useState,type ReactNode } from "react";
 import clsx from "clsx";
+import { AlertTriangle, CheckCircle2, Info, X, XCircle, type LucideIcon } from "lucide-react";
 
 export type ToastType="info"|"success"|"warning"|"error";
 type ToastInput={type?:ToastType;title?:string;message:string;duration?:number};
@@ -9,17 +10,19 @@ type ToastItem=ToastInput&{id:number;type:ToastType;closing?:boolean};
 type ToastApi={notify:(input:ToastInput)=>number;success:(message:string,title?:string)=>number;error:(message:string,title?:string)=>number;warning:(message:string,title?:string)=>number;info:(message:string,title?:string)=>number;dismiss:(id:number)=>void};
 const ToastContext=createContext<ToastApi|null>(null);
 const durations:Record<ToastType,number>={success:3500,info:4500,warning:5500,error:7000};
-const icons:Record<ToastType,string>={success:"✓",error:"×",warning:"!",info:"i"};
+// Fase 7M: ícones lucide no lugar de glifos (✓ × ! i).
+const icons:Record<ToastType,LucideIcon>={success:CheckCircle2,error:XCircle,warning:AlertTriangle,info:Info};
 
 function ToastCard({toast,onDismiss}:{toast:ToastItem;onDismiss:(id:number)=>void}){
  const timer=useRef<ReturnType<typeof setTimeout>|null>(null),remaining=useRef(toast.duration??durations[toast.type]),started=useRef(0);
  const start=useCallback(()=>{started.current=Date.now();timer.current=setTimeout(()=>onDismiss(toast.id),remaining.current)},[onDismiss,toast.id]);
  const pause=useCallback(()=>{if(timer.current){clearTimeout(timer.current);timer.current=null;remaining.current=Math.max(0,remaining.current-(Date.now()-started.current))}},[]);
  useEffect(()=>{start();return()=>{if(timer.current)clearTimeout(timer.current)}},[start]);
+ const Icon=icons[toast.type];
  return <div role={toast.type==="error"?"alert":"status"} aria-live={toast.type==="error"?"assertive":"polite"} onMouseEnter={pause} onMouseLeave={start} className={clsx("alert pointer-events-auto grid grid-cols-[auto_1fr_auto] items-start gap-2 shadow-lg toast-card",`alert-${toast.type}`,toast.closing&&"toast-card-closing")}>
-  <span aria-hidden="true" className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-current text-xs font-bold">{icons[toast.type]}</span>
+  <span aria-hidden="true" className="flex h-5 w-5 shrink-0 items-center justify-center"><Icon size={18}/></span>
   <div className="min-w-0">{toast.title&&<strong className="block font-semibold">{toast.title}</strong>}<p className="break-words text-xs">{toast.message}</p></div>
-  <button type="button" aria-label="Fechar notificação" onClick={()=>onDismiss(toast.id)} className="-mr-1 -mt-1 flex h-8 w-8 items-center justify-center rounded-full text-base hover:bg-black/10 focus-visible:outline-2 focus-visible:outline-offset-2">×</button>
+  <button type="button" aria-label="Fechar notificação" onClick={()=>onDismiss(toast.id)} className="-mr-1 -mt-1 flex h-8 w-8 items-center justify-center rounded-full text-base hover:bg-black/10 focus-visible:outline-2 focus-visible:outline-offset-2"><X size={16} aria-hidden="true"/></button>
  </div>
 }
 

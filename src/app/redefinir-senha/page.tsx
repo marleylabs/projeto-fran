@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LoaderCircle } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { AuthLayout } from "@/components/auth/AuthLayout";
@@ -62,7 +63,7 @@ function RedefinirSenhaForm() {
 
 export default function RedefinirSenhaPage() {
   return (
-    <Suspense fallback={<div className="grid min-h-dvh place-items-center bg-background"><span className="loading loading-spinner text-primary" role="status" aria-label="Carregando" /></div>}>
+    <Suspense fallback={<div className="grid min-h-dvh place-items-center bg-background"><span role="status" aria-label="Carregando"><LoaderCircle size={24} className="animate-spin text-primary motion-reduce:animate-none" aria-hidden="true" /></span></div>}>
       <RedefinirSenhaForm />
     </Suspense>
   );

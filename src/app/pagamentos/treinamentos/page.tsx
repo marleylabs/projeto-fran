@@ -7,7 +7,7 @@
 // mesmos payloads (valores como texto decimal com ponto). O servidor recalcula e valida tudo.
 // O rateio de treinamento é um sistema próprio (Fornecedor → Departamento), sem Empresa/4 perspectivas; o XLSX dele
 // continua o mesmo (rota rateio/download).
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRight, Download, PencilLine, Plus } from "lucide-react";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import type { CollaboratorOption } from "@/components/CollaboratorCombobox";
@@ -315,8 +315,8 @@ function RateioTab({ year, month, canManage }: { year: number; month: number; ca
   const [data, setData] = useState<RateioData | null>(null);
   const [editing, setEditing] = useState<RateioCardData | null>(null);
 
-  const load = () => fetch(`/api/accounts-payable/training-expense/rateio?year=${year}&month=${month}`).then((r) => r.json()).then(setData).catch(() => undefined);
-  useEffect(() => { const t = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(t); }, [year, month]);
+  const load = useCallback(() => fetch(`/api/accounts-payable/training-expense/rateio?year=${year}&month=${month}`).then((r) => r.json()).then(setData).catch(() => undefined), [year, month]);
+  useEffect(() => { const t = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(t); }, [load]);
 
   if (!data) return <SkeletonGroup label="Carregando rateio"><SkeletonCard lines={3} /></SkeletonGroup>;
   if (!data.cards.length) return <EmptyState title="Nenhum rateio nesta competência" description="Conclua ao menos um lançamento de treinamento para ver o rateio por setor." />;
@@ -366,7 +366,7 @@ export default function TrainingExpensePage() {
 
   const canManage = permissions.includes("financial-records.create") || permissions.includes("financial-records.update");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ year: String(year), month: String(month) });
@@ -380,9 +380,9 @@ export default function TrainingExpensePage() {
       setError(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao carregar os lançamentos."); }
     finally { setLoading(false); }
-  };
+  }, [year, month, supplierFilter, statusFilter, query]);
 
-  useEffect(() => { const t = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(t); }, [year, month, supplierFilter, statusFilter, query]);
+  useEffect(() => { const t = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(t); }, [load]);
   useEffect(() => {
     fetch("/api/auth/me").then((r) => r.json()).then((me) => { setPermissions(me.permissions ?? []); }).catch(() => undefined);
     fetch("/api/administrative-entities").then((r) => r.json()).then((b) => setSuppliers(b.items ?? [])).catch(() => undefined);

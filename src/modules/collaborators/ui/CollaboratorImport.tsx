@@ -5,7 +5,7 @@
 // SÓ APRESENTAÇÃO: chamadas, overrides e o reenvio ficam na página; matching, CPF, datas e upsert seguem no servidor.
 import { CheckCircle2 } from "lucide-react";
 import clsx from "clsx";
-import { DataTable, FeedbackAlert, ImportFlow, StatusBadge, type DataTableColumn, type ImportFlowStep, type ImportIssue, type StatusTone } from "@/components/ui";
+import { DataTable, FeedbackAlert, ImportFlow, StatusBadge, textInputClassName, type DataTableColumn, type ImportFlowStep, type ImportIssue, type StatusTone } from "@/components/ui";
 import { IMPORT_STATUS_LABELS, MATCHED_BY_LABELS, type ImportOverride, type ImportPreview, type ImportResult, type ImportRow, type ImportStatus } from "./types";
 
 const STATUS_TONE: Record<ImportStatus, StatusTone> = { CREATE: "success", UPDATE: "info", UNCHANGED: "neutral", REVIEW: "warning", SKIP: "neutral", ERROR: "danger" };
@@ -51,7 +51,7 @@ export function CollaboratorImport({ step, file, preview, result, filter, overri
       </span>
     ) },
     { id: "decision", header: "Decisão", cell: (row) => (needsDecision(row)
-      ? <select aria-label={`Decisão da linha ${row.sourceRow}`} className="select select-bordered select-sm" disabled={busy} value={overrides[row.sourceRow] ?? "SKIP"} onChange={(event) => onDecide(row.sourceRow, event.target.value as ImportOverride)}>
+      ? <select aria-label={`Decisão da linha ${row.sourceRow}`} className={`${textInputClassName} h-9 min-w-[9rem]`} disabled={busy} value={overrides[row.sourceRow] ?? "SKIP"} onChange={(event) => onDecide(row.sourceRow, event.target.value as ImportOverride)}>
           <option value="SKIP">Ignorar linha</option>
           {row.match && <option value="UPDATE">Atualizar o cadastro sugerido</option>}
           <option value="CREATE">Criar novo colaborador</option>

@@ -2912,3 +2912,61 @@ test("home 7L: '/' é a Home, a Folha segue em /contabilidade/folha e o login co
   assert.match(payroll, /<PayrollWorkspace \/>/);
   assert.match(login, /router\.push\("\/"\)/); assert.match(proxy, /NextResponse\.redirect\(new URL\("\/", req\.nextUrl\)\)/); // redirect inalterado
 });
+
+// ---- Fase 7M: limpeza global (componentes legados na fundação, glifos → lucide, código/dependência mortos).
+test("ConfirmModal 7M: Dialog da fundação, mesma API; busy bloqueia fechar e cancelar", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { ConfirmModal } = await import("../src/components/ui/ConfirmModal");
+  const props = { open: true, title: "Inativar colaborador?", description: "Ana deixará de aparecer em novos lançamentos.", confirmLabel: "Inativar", destructive: true, onConfirm: () => undefined, onClose: () => undefined };
+  const html = renderToStaticMarkup(createElement(ConfirmModal, props));
+  assert.match(html, /<dialog[^>]*aria-labelledby="[^"]+-title"[^>]*aria-describedby="[^"]+-description"/); assert.match(html, /Inativar colaborador\?/); assert.match(html, /Ana deixará de aparecer/);
+  assert.match(html, />Cancelar</); assert.match(html, />Inativar</); assert.doesNotMatch(html, /modal-box|modal-action|modal-backdrop|class="modal"/); // (Button da fundação segue sobre .btn — intencional)
+  const busy = renderToStaticMarkup(createElement(ConfirmModal, { ...props, busy: true }));
+  assert.match(busy, /<button(?=[^>]*aria-label="Fechar")(?=[^>]*disabled="")[^>]*>/); // Dialog não dispensável durante a operação
+  assert.match(busy, /<button[^>]*disabled=""[^>]*>Cancelar<\/button>/);
+  const source = await readFile(new URL("../src/components/ui/ConfirmModal.tsx", import.meta.url), "utf8");
+  assert.match(source, /<Dialog/); assert.match(source, /dismissible=\{!busy\}/); assert.match(source, /onClose=\{\(\) => \{ if \(!busy\) onClose\(\); \}\}/);
+  // consumidores continuam usando a mesma API
+  const [collaborators, review] = await Promise.all(["../src/app/cadastros/colaboradores/page.tsx", "../src/modules/accounts-payable/food/ui/FoodMaReview.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  for (const consumer of [collaborators, review]) assert.match(consumer, /<ConfirmModal open=\{/);
+});
+
+test("UploadDropzone 7M: rótulo amigável dos formatos sem duplicar; accept/validação reais intactos", async () => {
+  const { formatAcceptedFileTypes, validateUploadFile, matchesAccept } = await import("../src/components/ui/UploadDropzone");
+  assert.equal(formatAcceptedFileTypes("application/pdf,.pdf"), "PDF");
+  assert.equal(formatAcceptedFileTypes(".csv,.xlsx"), "CSV, XLSX");
+  assert.equal(formatAcceptedFileTypes(".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"), "XLSX");
+  assert.equal(formatAcceptedFileTypes("text/csv,.CSV"), "CSV"); assert.equal(formatAcceptedFileTypes("image/*"), "Imagens"); assert.equal(formatAcceptedFileTypes(undefined), "");
+  assert.equal(validateUploadFile({ name: "a.txt", size: 1, type: "text/plain" }, { accept: "application/pdf,.pdf" }), "Formato não aceito. Envie um arquivo PDF.");
+  assert.equal(matchesAccept({ name: "folha", size: 1, type: "application/pdf" }, "application/pdf,.pdf"), true); // MIME real ainda aceito
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { UploadDropzone } = await import("../src/components/ui/UploadDropzone");
+  const html = renderToStaticMarkup(createElement(UploadDropzone, { id: "f", label: "PDF", file: null, onFileSelect: () => undefined, accept: "application/pdf,.pdf", maxSize: 30 * 1024 * 1024 }));
+  assert.match(html, /accept="application\/pdf,\.pdf"/); assert.match(html, /Formatos: PDF · até 30 MB/); assert.doesNotMatch(html, /APPLICATION\/PDF/);
+});
+
+test("limpeza 7M: componentes legados sem glifo/daisyUI como ícone/visual", async () => {
+  const read = (path: string) => readFile(new URL(path, import.meta.url), "utf8");
+  const code = (source: string) => source.replace(/^\s*\/\/.*$/gm, "");
+  const files = {
+    MultiDatePicker: await read("../src/components/MultiDatePicker.tsx"),
+    CollaboratorCombobox: await read("../src/components/CollaboratorCombobox.tsx"),
+    DeletionModal: await read("../src/components/ui/DeletionModal.tsx"),
+    ConfirmModal: await read("../src/components/ui/ConfirmModal.tsx"),
+    ToastProvider: await read("../src/components/ui/ToastProvider.tsx"),
+    FileInput: await read("../src/components/ui/FileInput.tsx"),
+    FloatingActionMenu: await read("../src/components/ui/FloatingActionMenu.tsx"),
+  };
+  for (const [name, source] of Object.entries(files)) {
+    assert.doesNotMatch(code(source), /📅|✕|✓|⚠|>×<|"×"|>•••</, name); // glifos como ícone → lucide
+    assert.doesNotMatch(code(source), /modal-box|modal-action|modal-backdrop|input-bordered|select-bordered|base-[123]00|\bbtn-(ghost|xs|sm)\b|loading-spinner|bg-red-50/, name);
+  }
+  assert.match(files.MultiDatePicker, /<CalendarDays /); assert.match(files.ToastProvider, /CheckCircle2/); assert.match(files.FileInput, /<AlertTriangle /);
+  // combobox e calendário: só visual — busca/teclado/serialização intactos
+  assert.match(files.CollaboratorCombobox, /if\(event\.key==="ArrowDown"\)/); assert.match(files.CollaboratorCombobox, /\.slice\(0, query\.trim\(\) \? 40 : 8\)/);
+  assert.match(files.MultiDatePicker, /onChange\(sorted\(draft\)\)/); assert.match(files.MultiDatePicker, /timeZone: "UTC"/);
+  // DeletionModal: Field/TextInput da fundação; backdrop fecha pelo onClose (exceto busy)
+  assert.match(files.DeletionModal, /<Field label=/); assert.match(files.DeletionModal, /if\(event\.target===event\.currentTarget&&!busy\)onClose\(\);/);
+});

@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+// Confirmação SIMPLES (sim/não). Fase 7M: usa o Dialog da fundação (foco preso no <dialog> nativo, Esc, retorno de foco
+// a quem abriu, rolagem interna, largura móvel) — API pública inalterada. Não é o DeletionModal (exclusão com motivo e
+// palavra-chave) nem um formulário. Durante `busy` não fecha por Esc/backdrop/Fechar (o Dialog bloqueia).
 import { Button } from "./Button";
+import { Dialog } from "./Dialog";
 
 type ConfirmModalProps = {
   open: boolean;
@@ -26,36 +29,22 @@ export function ConfirmModal({
   open,
   title,
 }: ConfirmModalProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    if (!open && dialog.open) dialog.close();
-  }, [open]);
-
   return (
-    <dialog ref={dialogRef} className="modal" onCancel={onClose} onClose={onClose}>
-      <div className="modal-box border border-base-300 bg-base-100">
-        <h2 className="text-lg font-bold text-neutral">{title}</h2>
-        <p className="mt-2 text-sm text-secondary">{description}</p>
-        <div className="modal-action">
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
-            {cancelLabel}
-          </Button>
-          <Button
-            variant={destructive ? "error" : "primary"}
-            onClick={onConfirm}
-            loading={busy}
-          >
-            {confirmLabel}
-          </Button>
-        </div>
-      </div>
-      <form method="dialog" className="modal-backdrop">
-        <button aria-label="Fechar modal">Fechar</button>
-      </form>
-    </dialog>
+    <Dialog
+      open={open}
+      onClose={() => { if (!busy) onClose(); }}
+      dismissible={!busy}
+      size="sm"
+      title={title}
+      description={description}
+      footer={<>
+        <Button variant="secondary" onClick={onClose} disabled={busy}>
+          {cancelLabel}
+        </Button>
+        <Button variant={destructive ? "error" : "primary"} onClick={onConfirm} loading={busy}>
+          {confirmLabel}
+        </Button>
+      </>}
+    />
   );
 }

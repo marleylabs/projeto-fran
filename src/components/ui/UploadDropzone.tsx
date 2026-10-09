@@ -36,12 +36,31 @@ export function matchesAccept(file: UploadFileLike, accept?: string) {
 
 /** Mensagem de erro de formato/tamanho (ou null). Só usa as regras recebidas. */
 export function validateUploadFile(file: UploadFileLike, { accept, maxSize }: { accept?: string; maxSize?: number }) {
-  if (!matchesAccept(file, accept)) return `Formato não aceito. Envie um arquivo ${acceptLabel(accept)}.`;
+  if (!matchesAccept(file, accept)) return `Formato não aceito. Envie um arquivo ${formatAcceptedFileTypes(accept)}.`;
   if (maxSize !== undefined && file.size > maxSize) return `O arquivo tem ${formatFileSize(file.size)}; o limite é ${formatFileSize(maxSize)}.`;
   return null;
 }
 
-const acceptLabel = (accept?: string) => (accept ?? "").split(",").map((rule) => rule.trim()).filter(Boolean).map((rule) => rule.replace(/^\./, "").toUpperCase()).join(", ");
+// Rótulo AMIGÁVEL dos formatos aceitos (só texto; o `accept` real do input e a validação não mudam). Extensão e MIME do
+// mesmo formato viram um nome só (".pdf,application/pdf" → "PDF"); a ordem do accept é mantida e não há duplicatas.
+const MIME_LABELS: Record<string, string> = {
+  "application/pdf": "PDF",
+  "text/csv": "CSV",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "XLSX",
+  "application/vnd.ms-excel": "XLS",
+  "application/json": "JSON",
+};
+const typeLabel = (rule: string) => {
+  const value = rule.trim().toLowerCase();
+  if (value.startsWith(".")) return value.slice(1).toUpperCase();
+  if (MIME_LABELS[value]) return MIME_LABELS[value];
+  if (value === "image/*") return "Imagens";
+  const subtype = value.split("/")[1];
+  return subtype && subtype !== "*" ? subtype.toUpperCase() : value.toUpperCase();
+};
+export function formatAcceptedFileTypes(accept?: string) {
+  return [...new Set((accept ?? "").split(",").map((rule) => rule.trim()).filter(Boolean).map(typeLabel))].join(", ");
+}
 
 export type UploadDropzoneProps = {
   label: ReactNode;
@@ -67,7 +86,7 @@ export function UploadDropzone({ label, file, onFileSelect, onClear, accept, max
   const [dragging, setDragging] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const shownError = localError ?? error;
-  const rules = [accept && `Formatos: ${acceptLabel(accept)}`, maxSize !== undefined && `até ${formatFileSize(maxSize)}`].filter(Boolean).join(" · ");
+  const rules = [accept && `Formatos: ${formatAcceptedFileTypes(accept)}`, maxSize !== undefined && `até ${formatFileSize(maxSize)}`].filter(Boolean).join(" · ");
 
   const take = (candidate: File | undefined) => {
     if (!candidate || disabled) return;
