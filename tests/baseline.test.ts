@@ -2740,6 +2740,40 @@ test("usuários 7J: Design System sem dialog local, mesmos payloads de criação
   assert.doesNotMatch(stripComments(table), /fetch\(|password|roleKey/);
 });
 
+test("treinamentos 7J: catálogo no Design System, payloads (texto decimal) e permissão preservados, UI sem regra", async () => {
+  const base = "../src/modules/trainings/ui/";
+  const [page, table, form, format] = await Promise.all(["../src/app/treinamentos/page.tsx", base + "TrainingTable.tsx", base + "TrainingFormFields.tsx", base + "format.ts"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  assert.doesNotMatch(stripComments(page), /modal-box|className="modal|<table|MetricCard|input-bordered|select-bordered/);
+  assert.match(page, /<FilterBar/); assert.match(page, /<SearchInput/); assert.match(page, /<TrainingTable/); assert.match(page, /<Dialog/); assert.match(table, /<DataTable/); assert.match(form, /<CurrencyInput/);
+  assert.match(page, /permissions\.includes\("training\.manage"\)/); assert.match(page, /useState\("PRESENCIAL"\)/); assert.match(page, /useState<"" \| "true" \| "false">\("true"\)/);
+  for (const key of ["additionalStudentPrice", "unitPrice", "totalPrice"]) assert.equal(page.match(new RegExp(`${key}: form\\.${key}\\.replace\\(",", "\\."\\)`, "g"))?.length, 2, key); // criar e editar
+  assert.match(page, /JSON\.stringify\(\{ active: !item\.active \}\)/); assert.match(page, /proposalId: form\.proposalId \|\| null/);
+  for (const [name, source] of Object.entries({ table, form })) assert.doesNotMatch(stripComments(source), /fetch\(|prisma/, name);
+  assert.doesNotMatch(format, /fetch\(|prisma/);
+  // ponte CurrencyInput ↔ texto decimal: valor da API exibido sem cortar casas; digitação vira texto com ponto
+  const { currencyText, currencyValue } = await import("../src/modules/trainings/ui/format");
+  assert.equal(currencyValue("150.0000"), 150); assert.equal(currencyValue("12.5"), 12.5); assert.equal(currencyValue(""), null); assert.equal(currencyValue("abc"), null);
+  assert.equal(currencyText(150.5), "150.50"); assert.equal(currencyText(null), ""); assert.equal(currencyText(currencyValue("99.90")), "99.90");
+});
+
+test("despesas de treinamento 7J: Tabs/Dialog/DataTable, mesmas regras e payloads, rateio próprio e XLSX inalterados", async () => {
+  const base = "../src/modules/accounts-payable/training-expense/ui/";
+  const [page, table, rateio, summary] = await Promise.all(["../src/app/pagamentos/treinamentos/page.tsx", base + "ExpenseTable.tsx", base + "TrainingRateioPanel.tsx", base + "TrainingSummaryPanel.tsx"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  assert.doesNotMatch(stripComments(page), /modal-box|className="modal|role="tablist"|<table|AllocationCard|AllocationDepartment|MetricCard|input-bordered|select-bordered|tabs-boxed|[—→]/);
+  assert.match(page, /<Tabs label="Visões de treinamentos"/); assert.match(page, /<Dialog/); assert.match(page, /<ExpenseTable/); assert.match(page, /<TrainingRateioPanel/); assert.match(page, /<CollaboratorMultiCombobox/); assert.match(page, /<CurrencyInput/);
+  // regras na página (inalteradas): prévia, divergência exige justificativa, POST + PATCH de ajuste, cancelar com motivo
+  assert.match(page, /const extra = Math\.max\(0, participantCount - training\.quantity\);/); assert.match(page, /const total = unit \+ extra \* additional;/);
+  assert.match(page, /const finalAmount = finalAmountOverride \? Number\(finalAmountOverride\.replace\(",", "\."\)\) : calculatedAmount;/);
+  assert.match(page, /if \(diverges && !adjustmentReason\.trim\(\)\)/);
+  assert.match(page, /JSON\.stringify\(\{ year, month, trainingId, trainingDate, employeeIds \}\)/); assert.match(page, /JSON\.stringify\(\{ finalAmount: String\(finalAmount\), adjustmentReason: adjustmentReason\.trim\(\) \}\)/);
+  assert.match(page, /if \(!cancelReason\.trim\(\)\)/); assert.match(page, /JSON\.stringify\(\{ reason: cancelReason \}\)/); assert.match(page, /\/complete`, \{ method: "POST" \}/);
+  assert.match(page, /allocatedAmount: values\[row\.participantId\]/); assert.match(page, /method: "PUT"/); assert.match(page, /disabled=\{saving \|\| !allValid \|\| !changed\.length\}/);
+  assert.match(page, /permissions\.includes\("financial-records\.create"\) \|\| permissions\.includes\("financial-records\.update"\)/);
+  assert.match(page, /\/api\/accounts-payable\/training-expense\/rateio\/download\?year=\$\{year\}&month=\$\{month\}&supplierId=\$\{card\.supplierId\}/); // mesmo XLSX
+  for (const [name, source] of Object.entries({ table, rateio, summary })) assert.doesNotMatch(stripComments(source), /fetch\(|prisma|Empresa/, name); // rateio próprio: sem Empresa/4 perspectivas
+  assert.match(rateio, /<Disclosure/); assert.match(rateio, /FeedbackAlert status="error" title="Inconsistência no rateio"/);
+});
+
 test("FloatingActionMenu 7J: escolher um item devolve o foco ao gatilho (Dialog aberto pelo menu retorna o foco a ele)", async () => {
   const menu = await readFile(new URL("../src/components/ui/FloatingActionMenu.tsx", import.meta.url), "utf8");
   assert.match(menu, /onClick=\{\(\)=>\{onOpenChange\(false\);trigger\.current\?\.focus\(\)\}\}/); // seleção de item
