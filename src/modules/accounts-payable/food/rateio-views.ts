@@ -20,24 +20,29 @@ export type FoodRateioViewOccurrence = {
 /** Uma linha por colaborador + Empresa + CC + Departamento (refeições com snapshots diferentes ficam separadas). */
 export type FoodRateioViewRow = { id: string; employeeId: string; employeeName: string; companyId: string | null; company: string | null; costCenter: string | null; department: string; meals: number; cents: number; invoiceEmission: string | null };
 
+/** Dimensões e chave de agrupamento de UMA refeição (mesma regra para tela, perspectivas e base detalhada). */
+export function foodRateioViewDimensions(locality: string, occurrence: FoodRateioViewOccurrence) {
+  const identity = occurrence.employeeId || occurrence.normalizedReceivedName || occurrence.receivedName;
+  const department = normalizeOrganizationalValue(occurrence.confirmedDepartment ?? occurrence.receivedDepartment);
+  let companyId: string | null = null, company: string | null = null, invoiceEmission: string | null = null;
+  if (locality === "PA") {
+    const code = parseFoodPaInvoice(occurrence.invoiceEmission);
+    company = code ? FOOD_PA_INVOICES[code].company : FOOD_PA_UNIDENTIFIED_COMPANY;
+    invoiceEmission = code ? foodPaInvoiceLabel(code) : occurrence.invoiceEmission?.trim() || null;
+  } else {
+    companyId = occurrence.companyId ?? null; company = occurrence.company ?? null;
+  }
+  const costCenter = occurrence.costCenter?.trim() || null;
+  return { key: [identity, companyId ?? company ?? "", costCenter ?? "", department].join("|"), identity, department, companyId, company, invoiceEmission, costCenter };
+}
+
 export function buildFoodRateioViewRows(locality: string, occurrences: readonly FoodRateioViewOccurrence[]) {
   const rows = new Map<string, FoodRateioViewRow>();
   let legacyCompany = 0, legacyCostCenter = 0;
   for (const occurrence of occurrences.filter((item) => item.included)) {
-    const identity = occurrence.employeeId || occurrence.normalizedReceivedName || occurrence.receivedName;
-    const department = normalizeOrganizationalValue(occurrence.confirmedDepartment ?? occurrence.receivedDepartment);
-    let companyId: string | null = null, company: string | null = null, invoiceEmission: string | null = null;
-    if (locality === "PA") {
-      const code = parseFoodPaInvoice(occurrence.invoiceEmission);
-      company = code ? FOOD_PA_INVOICES[code].company : FOOD_PA_UNIDENTIFIED_COMPANY;
-      invoiceEmission = code ? foodPaInvoiceLabel(code) : occurrence.invoiceEmission?.trim() || null;
-    } else {
-      companyId = occurrence.companyId ?? null; company = occurrence.company ?? null;
-      if (!company) legacyCompany += 1;
-    }
-    const costCenter = occurrence.costCenter?.trim() || null;
+    const { key, identity, department, companyId, company, invoiceEmission, costCenter } = foodRateioViewDimensions(locality, occurrence);
+    if (locality !== "PA" && !company) legacyCompany += 1;
     if (!costCenter) legacyCostCenter += 1;
-    const key = [identity, companyId ?? company ?? "", costCenter ?? "", department].join("|");
     const current = rows.get(key) ?? { id: key, employeeId: identity, employeeName: occurrence.officialName ?? occurrence.receivedName, companyId, company, costCenter, department, meals: 0, cents: 0, invoiceEmission };
     current.employeeName = occurrence.officialName ?? occurrence.receivedName;
     current.meals += occurrence.mealQuantity ?? 1;

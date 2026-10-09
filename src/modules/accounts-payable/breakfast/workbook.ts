@@ -40,9 +40,21 @@ export function buildBreakfastWorkbook(map: BreakfastWorkbookMap) {
   audit.addRows([["Competência", `${String(map.competence.month).padStart(2, "0")}/${map.competence.year}`], ["Versão", map.version], ["Lançado em", map.createdAt], ["Cadastro da obrigação", `${map.administrativeEntity.tradeName} / ${map.administrativeEntityId}`], ["Valor total", Number(map.totalAmount)], ["Feriados considerados", holidaysText(map.holidaysSnapshot)]]);
   audit.getColumn(1).font = { bold: true }; audit.getColumn(1).width = 28; audit.getColumn(2).width = 70; audit.getCell("B5").numFmt = MONEY;
 
-  // Perspectivas de rateio (abas novas, ao final, sem alterar as existentes): só agrupam o valor final salvo
-  // (snapshots de Empresa/Centro de Custo/Departamento da alocação) e precisam fechar com o total do lançamento.
-  addAllocationViewSheets(workbook, rows.map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: amountToCents(row.amount), source: row })), { expectedCents: amountToCents(map.totalAmount), context: "Café da Manhã", style: { header, total, moneyFormat: MONEY } });
+  // Perspectivas de rateio + "Detalhado - Colaborador" (abas novas, ao final, sem alterar as existentes): só agrupam o
+  // valor final salvo (snapshots de Empresa/Centro de Custo/Departamento da alocação) e precisam fechar com o total do
+  // lançamento. A base detalhada lê as quantidades e o valor unitário gravados na alocação (nada é recalculado).
+  addAllocationViewSheets(workbook, rows.map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: amountToCents(row.amount), source: row })), { expectedCents: amountToCents(map.totalAmount), context: "Café da Manhã", style: { header, total, moneyFormat: MONEY }, detail: {
+    competence: `${String(map.competence.month).padStart(2, "0")}/${map.competence.year}`,
+    columns: [
+      { header: "Fornecedor", width: 24, wrap: true, value: () => map.administrativeEntity.tradeName },
+      { header: "Dias Úteis", width: 11, value: (row) => row.source.workingDays },
+      { header: "Quantidade Base", width: 14, value: (row) => row.source.baseQuantity },
+      { header: "Desconto", width: 11, value: (row) => row.source.discountQuantity },
+      { header: "Extras", width: 10, value: (row) => row.source.extraQuantity },
+      { header: "Quantidade Final", width: 14, value: (row) => row.source.finalQuantity },
+      { header: "Valor Unitário", width: 15, numFmt: MONEY, value: (row) => (row.source.unitPrice == null ? null : Number(row.source.unitPrice)) },
+    ],
+  } });
   return workbook;
 }
 

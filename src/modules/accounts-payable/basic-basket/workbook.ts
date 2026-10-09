@@ -16,13 +16,17 @@ export type BasicBasketWorkbookMap = {
   administrativeEntity: { tradeName: string; legalName?: string | null };
   financialRecord?: { identifier: string; grossAmount: Numeric } | null;
   allocations: Array<BasicBasketRateioRow & { id?: string; companyId?: string | null; admissionDate: Date | string | null; monthlyBasketAmount: Numeric; currentCalculationDays: number; currentBasketDays: number; referenceCalculationDays: number; retroactiveDays: number; observation: string | null;
-    currentVacationDays: number; currentUnjustifiedAbsence: boolean; currentPayableDays: number; retroactiveVacationDays: number; retroactiveUnjustifiedAbsence: boolean; retroactivePayableDays: number }>;
+    currentVacationDays: number; currentUnjustifiedAbsence: boolean; currentPayableDays: number; retroactiveVacationDays: number; retroactiveUnjustifiedAbsence: boolean; retroactivePayableDays: number;
+    // Snapshot das Férias da competência (Fase 7E.3): manual informado no lançamento × importado do Espelho.
+    manualVacationDays?: number | null; importedVacationDays?: number | null }>;
 };
 
 const MONEY = 'R$ #,##0.00';
 function header(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAF1B1B" } }; }
 function total(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF000000" } }; }
 const money = (cents: number) => cents / 100;
+// Origem das Férias da competência, lida do snapshot: manual (override do lançamento) ou importada do Espelho.
+const vacationOrigin = (row: { manualVacationDays?: number | null; importedVacationDays?: number | null }) => (row.manualVacationDays != null ? "Manual" : row.importedVacationDays != null ? "Espelho" : "Sem importação");
 
 export function buildBasicBasketWorkbook(map: BasicBasketWorkbookMap, generatedBy?: string) {
   const workbook = new ExcelJS.Workbook(); workbook.creator = "Gestão Administrativa";
@@ -80,8 +84,20 @@ export function buildBasicBasketWorkbook(map: BasicBasketWorkbookMap, generatedB
   ]);
   audit.getColumn(1).font = { bold: true }; audit.getColumn(1).width = 36; audit.getColumn(2).width = 80; audit.getCell("B10").numFmt = MONEY;
 
-  // Perspectivas de rateio (abas novas, ao final, sem alterar Detalhado/Resumo/Auditoria): agrupam o Total salvo de cada
-  // alocação (snapshots de Empresa/Centro de Custo/Departamento) e precisam fechar com o total do lançamento.
-  addAllocationViewSheets(workbook, rows.map((row, index) => normalizeAllocationRow({ id: row.id ?? `linha-${index + 1}`, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: amountToCents(row.amount), source: row })), { expectedCents: mapCents, context: "Cesta Básica", style: { header, total, moneyFormat: MONEY } });
+  // Perspectivas de rateio + "Detalhado - Colaborador" (abas novas, ao final, sem alterar Detalhado/Resumo/Auditoria):
+  // agrupam o Total salvo de cada alocação (snapshots de Empresa/Centro de Custo/Departamento) e precisam fechar com o
+  // total do lançamento. A base detalhada só lê os componentes e as Férias gravados na alocação (nada é recalculado).
+  addAllocationViewSheets(workbook, rows.map((row, index) => normalizeAllocationRow({ id: row.id ?? `linha-${index + 1}`, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: amountToCents(row.amount), source: row })), { expectedCents: mapCents, context: "Cesta Básica", style: { header, total, moneyFormat: MONEY }, detail: {
+    competence: `${String(map.competence.month).padStart(2, "0")}/${map.competence.year}`,
+    columns: [
+      { header: "Fornecedor", width: 24, wrap: true, value: () => supplier },
+      { header: "Bonificação Condutor", width: 20, numFmt: MONEY, value: (row) => money(amountToCents(row.source.driverBonus)) },
+      { header: "Acordo", width: 14, numFmt: MONEY, value: (row) => money(amountToCents(row.source.agreementAmount)) },
+      { header: "Cesta", width: 14, numFmt: MONEY, value: (row) => money(amountToCents(row.source.basketAmount)) },
+      { header: "Retroativo", width: 14, numFmt: MONEY, value: (row) => money(amountToCents(row.source.retroactiveAmount)) },
+      { header: "Férias Utilizadas (dias)", width: 16, value: (row) => row.source.currentVacationDays },
+      { header: "Origem das Férias", width: 16, value: (row) => vacationOrigin(row.source) },
+    ],
+  } });
   return workbook;
 }

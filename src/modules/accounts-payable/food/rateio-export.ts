@@ -10,13 +10,18 @@ import {
 import { buildFoodPaCompanyRateio } from "./invoice-company";
 import { amountToCents } from "@/modules/accounts-payable/breakfast/rateio";
 import { normalizeAllocationRow } from "@/modules/accounts-payable/shared/allocation-views";
-import { buildFoodRateioViewRows } from "./rateio-views";
+import { buildFoodRateioViewRows, foodRateioViewDimensions, type FoodRateioViewRow } from "./rateio-views";
+import { foodMaCycleLabel } from "./cycles";
 import { addAllocationViewSheets } from "@/modules/accounts-payable/shared/allocation-views-workbook";
 
 type NumericValue = number | string | { toString(): string };
 export type FoodRateioBatch = {
   // PA: o rateio por colaborador ganha Empresa (derivada da Emissão NF) e a NF ao lado das Refeições.
   locality?: string;
+  // Contexto do lote para a base "Detalhado - Colaborador" (já carregado pela rota de download; opcional nos testes).
+  cycle?: number;
+  competence?: { year: number; month: number };
+  administrativeEntity?: { tradeName: string };
   mealOccurrences: Array<{
     id: string;
     employeeId: string | null;
@@ -28,6 +33,7 @@ export type FoodRateioBatch = {
     mealQuantity?: number;
     restaurantName?: string | null;
     invoiceEmission?: string | null;
+    unitPrice?: NumericValue;
     amount: NumericValue;
     included: boolean;
     // Snapshots do rateio (Fase 7E.2); ausentes/null em refeições anteriores à captura.
@@ -134,12 +140,36 @@ export function buildFoodRateioWorkbook(batch: FoodRateioBatch) {
 // Empresa/Departamento e Empresa/CC/Departamento, sobre a MESMA base da tela (buildFoodRateioViewRows): valor salvo de
 // cada refeição incluída + snapshots (CC; Empresa no MA) ou Empresa derivada da Emissão NF (PA). Refeições anteriores à
 // captura histórica saem explicitamente em "Sem centro de custo"/"Sem empresa" — nunca completadas pelo cadastro atual.
+// "Detalhado - Colaborador": uma linha por linha dessa base (colaborador + Empresa + CC + Departamento), com Refeições,
+// Restaurante e Valor Unitário lidos das refeições salvas que a compõem (mesma chave de agrupamento).
 function addFoodAllocationViewSheets(workbook: ExcelJS.Workbook, batch: FoodRateioBatch) {
-  const base = buildFoodRateioViewRows(batch.locality ?? "MA", batch.mealOccurrences);
+  const locality = batch.locality ?? "MA";
+  const base = buildFoodRateioViewRows(locality, batch.mealOccurrences);
   if (!base.rows.length) return;
-  const rows = base.rows.map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: row.cents, source: null }));
+  const extras = new Map<string, { restaurants: Set<string>; unitPrices: Set<number> }>();
+  for (const occurrence of batch.mealOccurrences.filter((item) => item.included)) {
+    const { key } = foodRateioViewDimensions(locality, occurrence);
+    const current = extras.get(key) ?? { restaurants: new Set<string>(), unitPrices: new Set<number>() };
+    if (occurrence.restaurantName) current.restaurants.add(occurrence.restaurantName);
+    if (occurrence.unitPrice != null) current.unitPrices.add(amountToCents(occurrence.unitPrice));
+    extras.set(key, current);
+  }
+  const rows = base.rows.map((row) => normalizeAllocationRow<FoodRateioViewRow>({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: row.cents, source: row }));
   const expectedCents = batch.mealOccurrences.filter((occurrence) => occurrence.included).reduce((sum, row) => sum + amountToCents(row.amount), 0);
-  addAllocationViewSheets(workbook, rows, { expectedCents, context: `Alimentação ${batch.locality ?? "MA"}`, style: { header: styleFoodExcelHeader, total: styleFoodExcelTotal, moneyFormat: FOOD_EXCEL_MONEY_FORMAT } });
+  // Valor Unitário: o preço salvo nas refeições da linha; se houver mais de um preço, fica vazio (Valor é a soma salva).
+  const unitPrice = (id: string) => { const prices = [...(extras.get(id)?.unitPrices ?? [])]; return prices.length === 1 ? prices[0] / 100 : null; };
+  addAllocationViewSheets(workbook, rows, { expectedCents, context: `Alimentação ${locality}`, style: { header: styleFoodExcelHeader, total: styleFoodExcelTotal, moneyFormat: FOOD_EXCEL_MONEY_FORMAT }, detail: {
+    competence: batch.competence ? `${String(batch.competence.month).padStart(2, "0")}/${batch.competence.year}` : "",
+    columns: [
+      { header: "Localidade", width: 11, value: () => locality },
+      ...(locality === "MA" ? [{ header: "Ciclo", width: 30, value: () => (batch.cycle === undefined ? null : foodMaCycleLabel(batch.cycle)) }] : []),
+      { header: "Fornecedor", width: 24, wrap: true, value: () => batch.administrativeEntity?.tradeName ?? null },
+      { header: "Restaurante", width: 26, wrap: true, value: (row) => [...(extras.get(row.source.id)?.restaurants ?? [])].join(", ") },
+      { header: "Refeições", width: 11, value: (row) => row.source.meals },
+      ...(locality === "PA" ? [{ header: "Emissão NF", width: 13, value: (row: { source: FoodRateioViewRow }) => row.source.invoiceEmission }] : []),
+      { header: "Valor Unitário", width: 15, numFmt: FOOD_EXCEL_MONEY_FORMAT, value: (row) => unitPrice(row.source.id) },
+    ],
+  } });
 }
 
 // PA: "Resumo por Empresa" (Empresa = NF 01 → BOINGA, NF 02 → PROJETA) e "Rateio por Colaborador" com
