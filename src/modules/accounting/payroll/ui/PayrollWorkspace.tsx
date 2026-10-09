@@ -1,30 +1,32 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+// Contabilidade → Folha (Extrato Mensal / Relatório Sintético). Fase 7K: workspace no Design System. Este componente
+// continua sendo a ORQUESTRAÇÃO (envio do PDF para /api/extract com progresso e duplicidade, restauração da última
+// extração, uploads recentes, filtros, correção local com recálculo dos totais por computeTotaisGerais, reset); a
+// apresentação foi extraída para ./Payroll* e recebe só dados e callbacks. Parser, OCR, API e exportações inalterados.
+import { useEffect, useMemo, useState } from "react";
+import { FilePlus2 } from "lucide-react";
 import type { Colaborador } from "@/lib/types/payroll";
 import type { PayrollExtractionResult } from "@/lib/parser/router";
 import { computeTotaisGerais } from "@/lib/parser/computeTotals";
 import { uploadPdf, type DuplicateExisting } from "@/lib/uploadWithProgress";
-import { FileUpload } from "@/components/FileUpload";
-import { ProgressBar } from "@/components/ProgressBar";
-import { SummaryCards } from "@/components/SummaryCards";
-import { SinteticoSummaryCards } from "@/components/SinteticoSummaryCards";
-import { Filters, EMPTY_FILTERS, type FiltersState } from "@/components/Filters";
-import { EmployeeTable } from "@/components/EmployeeTable";
-import { SinteticoTable } from "@/components/SinteticoTable";
-import { EmployeeDetailModal } from "@/components/EmployeeDetailModal";
-import { ExportButtons } from "@/components/ExportButtons";
-import { RecentUploads, type UploadSummary } from "@/components/RecentUploads";
-import { DuplicateUploadModal } from "@/components/DuplicateUploadModal";
-import { Button, PageHeader } from "@/components/ui";
+import { Button, FeedbackAlert, FilterBar, PageHeader, SearchInput, SkeletonCard, SkeletonGroup, type UploadFileLike } from "@/components/ui";
+import { PayrollUploadPanel, type PayrollUploadStage } from "./PayrollUploadPanel";
+import { PayrollRecentUploads, type UploadSummary } from "./PayrollRecentUploads";
+import { ExtratoTotals, PayrollContext, ReadingNotices, SinteticoTotals } from "./PayrollSummary";
+import { PayrollFilters, EMPTY_FILTERS, type FiltersState } from "./PayrollFilters";
+import { PayrollEmployeeTable, PayrollSinteticoTable } from "./PayrollTables";
+import { PayrollEmployeeDrawer } from "./PayrollEmployeeDrawer";
+import { PayrollExportActions } from "./PayrollExportActions";
+import { PayrollDuplicateDialog } from "./PayrollDuplicateDialog";
+import { leituraLabel } from "./format";
 
-type Stage = "idle" | "uploading" | "processing" | "error";
+type Stage = PayrollUploadStage;
 
 const LAST_UPLOAD_KEY = "extratoMensal:currentUploadId";
 
 export function PayrollWorkspace() {
   const [stage, setStage] = useState<Stage>("idle");
-  const [progress, setProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [result, setResult] = useState<PayrollExtractionResult | null>(null);
   const [filters, setFilters] = useState<FiltersState>(EMPTY_FILTERS);
@@ -35,8 +37,10 @@ export function PayrollWorkspace() {
   const [recentUploads, setRecentUploads] = useState<UploadSummary[]>([]);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [duplicateExisting, setDuplicateExisting] = useState<DuplicateExisting | null>(null);
-
-  const processingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Só apresentação: arquivo exibido no UploadDropzone (nome/tamanho) e percentual REAL do envio. A leitura/extração no
+  // servidor não informa progresso: a tela mostra a etapa sem porcentagem (o antigo percentual simulado foi removido).
+  const [uploadFile, setUploadFile] = useState<UploadFileLike | null>(null);
+  const [uploadPercent, setUploadPercent] = useState(0);
 
   const loadRecentUploads = () => {
     fetch("/api/uploads")
@@ -69,31 +73,19 @@ export function PayrollWorkspace() {
     setStage("uploading");
     setErrorMessage(null);
     setResult(null);
-    setProgress(0);
     setFileName(file.name);
+    setUploadFile({ name: file.name, size: file.size, type: file.type });
+    setUploadPercent(0);
 
     try {
       const outcome = await uploadPdf(
         file,
         (uploadPercent) => {
-          const mapped = uploadPercent * 0.5;
-          setProgress(mapped);
-          if (uploadPercent >= 100) {
-            setStage("processing");
-            if (!processingIntervalRef.current) {
-              processingIntervalRef.current = setInterval(() => {
-                setProgress((p) => (p < 92 ? p + (92 - p) * 0.08 : p));
-              }, 200);
-            }
-          }
+          setUploadPercent(uploadPercent);
+          if (uploadPercent >= 100) setStage("processing");
         },
         duplicateAction
       );
-
-      if (processingIntervalRef.current) {
-        clearInterval(processingIntervalRef.current);
-        processingIntervalRef.current = null;
-      }
 
       if (outcome.status === "duplicate") {
         setPendingFile(file);
@@ -103,7 +95,6 @@ export function PayrollWorkspace() {
       }
 
       const data = outcome.data;
-      setProgress(100);
       setResult(data);
       if (data.id) localStorage.setItem(LAST_UPLOAD_KEY, data.id);
 
@@ -117,10 +108,6 @@ export function PayrollWorkspace() {
         setErrorMessage(data.avisos[0]);
       }
     } catch (err) {
-      if (processingIntervalRef.current) {
-        clearInterval(processingIntervalRef.current);
-        processingIntervalRef.current = null;
-      }
       setStage("error");
       setErrorMessage(err instanceof Error ? err.message : "Erro desconhecido ao processar o PDF.");
     }
@@ -201,166 +188,99 @@ export function PayrollWorkspace() {
     setStage("idle");
     setResult(null);
     setErrorMessage(null);
-    setProgress(0);
     setFilters(EMPTY_FILTERS);
     setSinteticoBusca("");
     localStorage.removeItem(LAST_UPLOAD_KEY);
     loadRecentUploads();
+    setUploadFile(null);
+    setUploadPercent(0);
   };
 
-  return (
-    <div className="flex-1 flex flex-col">
+  const busy = stage === "uploading" || stage === "processing";
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col gap-6">
-        <PageHeader title="Extrato mensal" description="Extração, conferência e consolidação de relatórios de folha de pagamento." actions={result ? <Button variant="secondary" onClick={reset}>Novo upload</Button> : undefined}/>
-        {restoring && (
-          <div className="flex-1 flex items-center justify-center py-16 text-sm text-text-muted">Carregando...</div>
-        )}
+  return (
+    <div className="flex flex-1 flex-col">
+      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-5 px-4 py-8 sm:px-6">
+        <PageHeader
+          eyebrow="Contabilidade"
+          title="Extrato mensal"
+          description="Extração, conferência e consolidação de relatórios de folha de pagamento."
+          actions={result ? <Button variant="secondary" onClick={reset}><FilePlus2 size={16} aria-hidden="true" />Novo upload</Button> : undefined}
+        />
+
+        {restoring && <SkeletonGroup label="Carregando a última extração"><SkeletonCard lines={4} /></SkeletonGroup>}
 
         {!restoring && !result && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-6 py-16">
-            <FileUpload
-              onFileSelected={handleFileSelected}
-              disabled={stage === "uploading" || stage === "processing"}
-              loading={stage === "uploading" || stage === "processing"}
-              fileName={fileName}
-              error={stage === "error"}
-            />
-
-            {(stage === "uploading" || stage === "processing") && (
-              <ProgressBar
-                percent={progress}
-                label={stage === "uploading" ? `Enviando ${fileName}...` : "Lendo PDF e extraindo colaboradores..."}
-              />
-            )}
-
-            {stage === "error" && errorMessage && (
-              <div className="max-w-md rounded-md border border-error/30 bg-error/5 text-error text-sm px-4 py-3">
-                {errorMessage}
-              </div>
-            )}
-
-            <RecentUploads uploads={recentUploads} onSelect={handleSelectRecent} />
+          <div className="grid gap-5">
+            <PayrollUploadPanel stage={stage} file={uploadFile ?? (fileName ? { name: fileName, size: 0 } : null)} uploadPercent={uploadPercent} errorMessage={errorMessage} onFileSelect={handleFileSelected} />
+            {!busy && <PayrollRecentUploads uploads={recentUploads} onSelect={handleSelectRecent} />}
           </div>
         )}
 
+        {/* Extração vazia (formato desconhecido ou sem colaboradores): erro visível, não só toast. */}
+        {!restoring && result && stage === "error" && <FeedbackAlert status="error" title="Não foi possível extrair a folha">{errorMessage ?? "Nenhum colaborador foi identificado neste PDF. Verifique o arquivo e envie novamente."}</FeedbackAlert>}
+
         {extrato && extrato.colaboradores.length > 0 && (
           <>
-            {extrato.avisos.length > 0 && (
-              <details className="card p-4 text-sm text-warning bg-warning-soft border border-warning/30">
-                <summary className="cursor-pointer font-medium">
-                  {extrato.avisos.length} aviso(s) de leitura — revisar antes de exportar
-                </summary>
-                <ul className="list-disc list-inside mt-2 space-y-1">
-                  {extrato.avisos.map((a, i) => (
-                    <li key={i}>{a}</li>
-                  ))}
-                </ul>
-              </details>
-            )}
-
-            <div className="flex items-center justify-between text-sm text-text-muted">
-              <span>
-                {extrato.consolidado
-                  ? `${extrato.empresa.nome} · Competência ${extrato.empresa.competencia} · ${empresasDisponiveis.length} empresa(s) · Leitura por ${
-                      extrato.metodoLeitura === "texto" ? "texto" : "OCR"
-                    } · Formato: Extrato Mensal`
-                  : `${extrato.empresa.nome} · CNPJ ${extrato.empresa.cnpj} · Competência ${extrato.empresa.competencia} · Leitura por ${
-                      extrato.metodoLeitura === "texto" ? "texto" : "OCR"
-                    } · Formato: Extrato Mensal`}
-              </span>
-            </div>
-
-            <SummaryCards totais={extrato.totaisGerais} />
-
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-              <Filters
-                filters={filters}
-                onChange={setFilters}
-                empresasDisponiveis={empresasDisponiveis}
-                situacoesDisponiveis={situacoesDisponiveis}
-              />
-              <ExportButtons result={extrato} />
-            </div>
-
-            <p className="text-sm text-text-muted">
-              Exibindo {filteredColaboradores.length} de {extrato.colaboradores.length} colaboradores.
-            </p>
-
-            <EmployeeTable colaboradores={filteredColaboradores} onVerDetalhes={setSelectedId} />
+            <PayrollContext
+              format="Extrato Mensal"
+              items={[
+                ["Empresa", extrato.empresa.nome],
+                ...(extrato.consolidado ? [["Empresas", String(empresasDisponiveis.length)] as [string, string]] : [["CNPJ", extrato.empresa.cnpj] as [string, string]]),
+                ["Competência", extrato.empresa.competencia],
+                ["Leitura", leituraLabel(extrato.metodoLeitura)],
+              ]}
+            />
+            <ReadingNotices avisos={extrato.avisos} />
+            <ExtratoTotals totais={extrato.totaisGerais} />
+            <PayrollFilters
+              filters={filters}
+              onChange={setFilters}
+              empresasDisponiveis={empresasDisponiveis}
+              situacoesDisponiveis={situacoesDisponiveis}
+              actions={<PayrollExportActions result={extrato} />}
+            />
+            <p className="text-body text-foreground-muted tabular-nums" role="status">Exibindo {filteredColaboradores.length} de {extrato.colaboradores.length} colaboradores.</p>
+            <PayrollEmployeeTable colaboradores={filteredColaboradores} onVerDetalhes={setSelectedId} />
           </>
         )}
 
         {sintetico && sintetico.linhas.length > 0 && (
           <>
-            <div className="card p-4 text-sm text-warning bg-warning-soft border border-warning/30">
-              Formato experimental: o suporte a &quot;Relatório Sintético&quot; ainda não foi validado contra um PDF real deste
-              layout. Revise os valores com atenção antes de usar para folha oficial.
-            </div>
-
-            {sintetico.avisos.length > 1 && (
-              <details className="card p-4 text-sm text-warning bg-warning-soft border border-warning/30">
-                <summary className="cursor-pointer font-medium">
-                  {sintetico.avisos.length} aviso(s) de leitura — revisar antes de exportar
-                </summary>
-                <ul className="list-disc list-inside mt-2 space-y-1">
-                  {sintetico.avisos.map((a, i) => (
-                    <li key={i}>{a}</li>
-                  ))}
-                </ul>
-              </details>
-            )}
-
-            <div className="flex items-center justify-between text-sm text-text-muted">
-              <span>
-                {sintetico.empresa.nome} · Departamento {sintetico.empresa.departamento} · Período{" "}
-                {sintetico.empresa.periodoInicio} a {sintetico.empresa.periodoFim} · Formato: Relatório Sintético
-              </span>
-            </div>
-
-            <SinteticoSummaryCards totais={sintetico.totais} />
-
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-              <div className="card p-4 flex items-end gap-3">
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-xs font-medium text-text-muted">Nome ou matrícula</span>
-                  <input
-                    type="text"
-                    value={sinteticoBusca}
-                    onChange={(e) => setSinteticoBusca(e.target.value)}
-                    placeholder="Buscar colaborador"
-                    className="input input-bordered input-sm"
-                  />
-                </label>
-              </div>
-              <ExportButtons result={sintetico} />
-            </div>
-
-            <p className="text-sm text-text-muted">
-              Exibindo {filteredLinhas.length} de {sintetico.linhas.length} colaboradores.
-            </p>
-
-            <SinteticoTable linhas={filteredLinhas} />
+            <PayrollContext
+              format="Relatório Sintético"
+              items={[
+                ["Empresa", sintetico.empresa.nome],
+                ["Departamento", sintetico.empresa.departamento],
+                ["Período", `${sintetico.empresa.periodoInicio} a ${sintetico.empresa.periodoFim}`],
+              ]}
+            />
+            <FeedbackAlert status="warning" title="Formato experimental">
+              O suporte a &quot;Relatório Sintético&quot; ainda não foi validado contra um PDF real deste layout. Revise os valores com atenção antes de usar para folha oficial.
+            </FeedbackAlert>
+            {sintetico.avisos.length > 1 && <ReadingNotices avisos={sintetico.avisos} />}
+            <SinteticoTotals totais={sintetico.totais} />
+            <FilterBar
+              label="Busca no Relatório Sintético"
+              search={<SearchInput label="Nome ou matrícula" placeholder="Buscar por nome ou matrícula" value={sinteticoBusca} onValueChange={setSinteticoBusca} />}
+              activeCount={sinteticoBusca.trim() ? 1 : 0}
+              onClear={() => setSinteticoBusca("")}
+              actions={<PayrollExportActions result={sintetico} />}
+            />
+            <p className="text-body text-foreground-muted tabular-nums" role="status">Exibindo {filteredLinhas.length} de {sintetico.linhas.length} colaboradores.</p>
+            <PayrollSinteticoTable linhas={filteredLinhas} />
           </>
         )}
       </main>
 
-      {selectedColaborador && (
-        <EmployeeDetailModal
-          colaborador={selectedColaborador}
-          onClose={() => setSelectedId(null)}
-          onSave={handleSaveColaborador}
-        />
-      )}
+      <PayrollEmployeeDrawer colaborador={selectedColaborador} onClose={() => setSelectedId(null)} onSave={handleSaveColaborador} />
 
-      {duplicateExisting && (
-        <DuplicateUploadModal
-          existing={duplicateExisting}
-          onReplace={() => handleDuplicateDecision("replace")}
-          onKeepBoth={() => handleDuplicateDecision("keep_both")}
-          onCancel={() => handleDuplicateDecision("cancel")}
-        />
-      )}
+      <PayrollDuplicateDialog
+        existing={duplicateExisting}
+        onReplace={() => handleDuplicateDecision("replace")}
+        onKeepBoth={() => handleDuplicateDecision("keep_both")}
+        onCancel={() => handleDuplicateDecision("cancel")}
+      />
     </div>
   );
 }

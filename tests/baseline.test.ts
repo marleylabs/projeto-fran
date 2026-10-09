@@ -2781,3 +2781,72 @@ test("FloatingActionMenu 7J: escolher um item devolve o foco ao gatilho (Dialog 
   const dialog = await readFile(new URL("../src/components/ui/Dialog.tsx", import.meta.url), "utf8");
   assert.match(dialog, /opener\.current = document\.activeElement/); assert.match(dialog, /opener\.current\?\.focus\(\)/);
 });
+
+// ---- Fase 7K: Folha (Extrato Mensal / Relatório Sintético) como workspace no Design System (só apresentação).
+test("folha 7K: workspace mantém a orquestração (envio, duplicidade, restauração, correção local) e a UI não tem regra", async () => {
+  const base = "../src/modules/accounting/payroll/ui/";
+  const names = ["PayrollWorkspace", "PayrollUploadPanel", "PayrollRecentUploads", "PayrollSummary", "PayrollFilters", "PayrollTables", "PayrollEmployeeDrawer", "PayrollExportActions", "PayrollDuplicateDialog"];
+  const files = Object.fromEntries(await Promise.all(names.map(async (name) => [name, await readFile(new URL(`${base}${name}.tsx`, import.meta.url), "utf8")] as const)));
+  const code = (source: string) => source.replace(/^\s*\/\/.*$/gm, "");
+  const workspace = files.PayrollWorkspace;
+  // orquestração preservada no workspace
+  assert.match(workspace, /const outcome = await uploadPdf\(\s*file,/); assert.match(workspace, /duplicateAction\s*\)/);
+  assert.match(workspace, /if \(outcome\.status === "duplicate"\) \{\s*setPendingFile\(file\);\s*setDuplicateExisting\(outcome\.existing\);/);
+  assert.match(workspace, /runUpload\(file, action\)/); assert.match(workspace, /const LAST_UPLOAD_KEY = "extratoMensal:currentUploadId";/);
+  assert.match(workspace, /fetch\(`\/api\/uploads\/\$\{lastId\}`\)/); assert.match(workspace, /fetch\("\/api\/uploads"\)/);
+  assert.match(workspace, /setResult\(\{ \.\.\.extrato, colaboradores, totaisGerais: computeTotaisGerais\(colaboradores\) \}\)/); // correção local + recálculo
+  assert.match(workspace, /data\.formato === "desconhecido" \|\|/); assert.match(workspace, /if \(f\.departamento && c\.departamento !== f\.departamento && !c\.departamento\.includes\(f\.departamento\)\) return false;/);
+  assert.match(workspace, /if \(uploadPercent >= 100\) setStage\("processing"\);/); assert.doesNotMatch(code(workspace), /setInterval|setProgress/); // sem percentual simulado
+  // apresentação no Design System, sem tabela/modal/daisyUI antigos e sem title= como informação
+  for (const [name, source] of Object.entries(files)) {
+    assert.doesNotMatch(code(source), /<table|fixed inset-0|className="modal|modal-box|input-bordered|loading-spinner|<[a-z][\w-]*\b[^>]*\stitle=|bg-amber|text-amber|bg-blue-|bg-green-|bg-red-|#[0-9a-fA-F]{6}\b/, name);
+    if (name !== "PayrollWorkspace") assert.doesNotMatch(code(source), /fetch\(|uploadPdf|computeTotaisGerais|localStorage/, name); // UI recebe dados/callbacks
+  }
+  assert.match(workspace, /<PayrollUploadPanel/); assert.match(workspace, /<PayrollEmployeeTable/); assert.match(workspace, /<PayrollEmployeeDrawer/); assert.match(workspace, /<PayrollDuplicateDialog/);
+  assert.match(files.PayrollTables, /<DataTable/); assert.match(files.PayrollTables, /<Tooltip/); assert.match(files.PayrollEmployeeDrawer, /<Drawer/); assert.match(files.PayrollEmployeeDrawer, /<Tabs/);
+  assert.match(files.PayrollDuplicateDialog, /<Dialog/); assert.match(files.PayrollUploadPanel, /<UploadDropzone/); assert.match(files.PayrollUploadPanel, /accept=\{ACCEPT\}/);
+  // correção do colaborador: mesmas regras de antes (nome obrigatório, CPF no padrão, valores numéricos, revisado)
+  const drawer = files.PayrollEmployeeDrawer;
+  assert.match(drawer, /register\("nome", \{ required: true \}\)/); assert.match(drawer, /pattern: \/\\d\{3\}\\\.\\d\{3\}\\\.\\d\{3\}-\\d\{2\}\//);
+  for (const key of ["salario", "proventos", "descontos", "liquido"]) assert.match(drawer, new RegExp(`${key}: Number\\(values\\.${key}\\)`), key);
+  assert.match(drawer, /revisadoManualmente: true/); assert.match(drawer, /<CurrencyInput/);
+  // exportações: mesmos exportadores
+  assert.match(files.PayrollExportActions, /exportSinteticoExcel\(result\)/); assert.match(files.PayrollExportActions, /exportCsv\(result\.colaboradores\)/);
+  // componentes antigos removidos (substituídos pelos do módulo)
+  for (const old of ["FileUpload", "ProgressBar", "EmployeeTable", "SinteticoTable", "EmployeeDetailModal", "DuplicateUploadModal", "RecentUploads", "Filters"]) {
+    await assert.rejects(readFile(new URL(`../src/components/${old}.tsx`, import.meta.url), "utf8"), old);
+  }
+});
+
+test("folha 7K: upload com progresso REAL do envio e etapa de extração sem porcentagem; mesmos limites do servidor", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { PayrollUploadPanel } = await import("../src/modules/accounting/payroll/ui/PayrollUploadPanel");
+  const props = { file: { name: "folha.pdf", size: 2048 }, errorMessage: null, onFileSelect: () => undefined };
+  const uploading = renderToStaticMarkup(createElement(PayrollUploadPanel, { ...props, stage: "uploading", uploadPercent: 42.4 }));
+  assert.match(uploading, /role="progressbar" aria-label="Envio do arquivo" aria-valuemin="0" aria-valuemax="100" aria-valuenow="42"/); assert.match(uploading, /Envio · 42%/);
+  const processing = renderToStaticMarkup(createElement(PayrollUploadPanel, { ...props, stage: "processing", uploadPercent: 100 }));
+  assert.match(processing, /role="progressbar" aria-label="Leitura e extração em andamento"/); assert.doesNotMatch(processing, /aria-valuenow/); assert.match(processing, /Envio concluído/);
+  const error = renderToStaticMarkup(createElement(PayrollUploadPanel, { ...props, stage: "error", uploadPercent: 0, errorMessage: "PDF inválido." }));
+  assert.match(error, /Não foi possível extrair a folha/); assert.match(error, /PDF inválido\./);
+  assert.match(uploading, /accept="application\/pdf,\.pdf"/);
+  const [panel, route] = await Promise.all(["../src/modules/accounting/payroll/ui/PayrollUploadPanel.tsx", "../src/app/api/extract/route.ts"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  assert.match(panel, /const MAX_SIZE = 30 \* 1024 \* 1024;/); assert.match(route, /const MAX_SIZE_BYTES = 30 \* 1024 \* 1024;/); // mesmo limite do servidor
+});
+
+test("folha 7K: uploads recentes agrupados por competência (como antes) e ordenação de exibição sem alterar dados", async () => {
+  const { groupUploadsByPeriod } = await import("../src/modules/accounting/payroll/ui/PayrollRecentUploads");
+  const { sortRows, situacaoTone } = await import("../src/modules/accounting/payroll/ui/format");
+  const groups = groupUploadsByPeriod([
+    { id: "a", fileName: "a.pdf", formato: "extrato-mensal", createdAt: "2026-09-01T10:00:00Z", totalColaboradores: 10, liquidoGeral: 1000, periodoChave: "08/2026" },
+    { id: "b", fileName: "b.pdf", formato: "extrato-mensal", createdAt: "2026-09-02T10:00:00Z", totalColaboradores: 5, liquidoGeral: 500.5, periodoChave: "08/2026" },
+    { id: "c", fileName: "c.pdf", formato: "relatorio-sintetico", createdAt: "2026-09-03T10:00:00Z", totalColaboradores: 3, liquidoGeral: 300, periodoChave: "01/08/2026_31/08/2026" },
+    { id: "d", fileName: "d.pdf", formato: "relatorio-sintetico", createdAt: "2026-08-30T10:00:00Z", totalColaboradores: 2, liquidoGeral: 200, periodoChave: "01/08/2026_31/08/2026" },
+  ]);
+  assert.deepEqual(groups.map((g) => [g.id, g.uploadCount, g.totalColaboradores, g.liquidoGeral]), [["c", 1, 3, 300], ["b", 2, 15, 1500.5], ["d", 1, 2, 200]]); // sintético não agrupa
+  const rows = [{ n: "Ébano", v: 10 }, { n: "abel", v: 2 }, { n: "Carla", v: 30 }];
+  assert.deepEqual(sortRows(rows, { key: "n", direction: "asc" }, (r, k) => (k === "n" ? r.n : r.v)).map((r) => r.n), ["abel", "Carla", "Ébano"]);
+  assert.deepEqual(sortRows(rows, { key: "v", direction: "desc" }, (r, k) => (k === "n" ? r.n : r.v)).map((r) => r.v), [30, 10, 2]);
+  assert.deepEqual(rows.map((r) => r.n), ["Ébano", "abel", "Carla"]); // não muta a origem
+  assert.equal(situacaoTone("Trabalhando"), "success"); assert.equal(situacaoTone("Férias"), "info"); assert.equal(situacaoTone("Afastado"), "warning"); assert.equal(situacaoTone("Outro"), "neutral");
+});
