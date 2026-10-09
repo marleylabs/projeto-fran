@@ -4,7 +4,7 @@
 // APRESENTAÇÃO: o estado, a máscara/validação do CPF (helpers de @/lib/cpf) e o envio ficam na página; o servidor
 // normaliza e valida tudo de novo. Admissão é date-only (input type=date, sem conversão de fuso).
 import type { FormEvent, ReactNode } from "react";
-import { Field, TextInput } from "@/components/ui";
+import { Field, Switch, TextInput } from "@/components/ui";
 import type { CollaboratorForm } from "./types";
 
 type Props = {
@@ -45,11 +45,7 @@ export function CollaboratorFormFields({ formId, form, cpfError, onChange, onCpf
       </Section>
       <fieldset className="grid gap-2">
         <legend className="mb-1 text-label text-foreground-muted">Situação</legend>
-        <label className="inline-flex w-fit cursor-pointer items-center gap-2 text-body">
-          <input type="checkbox" className="toggle toggle-primary" checked={form.active} onChange={(event) => onChange({ active: event.target.checked })} />
-          {form.active ? "Ativo" : "Inativo"}
-          <span className="text-caption text-foreground-muted">· inativos não aparecem em novos lançamentos</span>
-        </label>
+        <Switch checked={form.active} onCheckedChange={(active) => onChange({ active })} label={form.active ? "Ativo" : "Inativo"} description="Inativos não aparecem em novos lançamentos." />
       </fieldset>
     </form>
   );

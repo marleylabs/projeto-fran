@@ -2707,3 +2707,28 @@ test("cadastros 7I: entidades administrativas no Design System, CNPJ/SIM-NÃO/pa
   for (const [name, source] of Object.entries({ table, form })) assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ""), /fetch\(|isValidCnpj|prisma/, name);
   assert.match(form, /list="activity-area-options"/); assert.match(table, /formatCnpj\(item\.cnpj\)/);
 });
+
+// ---- Fase 7J: Usuários + Treinamentos no Design System (só apresentação) e Switch foundation.
+
+test("Switch 7J: role=switch, aria-checked, nome pelo rótulo visível, descrição e disabled reais", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { Switch } = await import("../src/components/ui/Switch");
+  const on = renderToStaticMarkup(createElement(Switch, { id: "s", checked: true, onCheckedChange: () => undefined, label: "Acesso ativo", description: "Contas inativas não podem autenticar." }));
+  assert.match(on, /<button[^>]*id="s"[^>]*type="button"[^>]*role="switch"[^>]*aria-checked="true"[^>]*aria-labelledby="s-label"[^>]*aria-describedby="s-description"/);
+  assert.match(on, /<label id="s-label" for="s"[^>]*>Acesso ativo<\/label>/); assert.match(on, /id="s-description"[^>]*>Contas inativas não podem autenticar\./);
+  const off = renderToStaticMarkup(createElement(Switch, { id: "t", checked: false, disabled: true, onCheckedChange: () => undefined, label: "X" }));
+  assert.match(off, /aria-checked="false"/); assert.match(off, /disabled=""/); assert.doesNotMatch(off, /aria-describedby/);
+  // consumidor: Colaboradores (situação) — sem o toggle do daisyUI
+  const collaborator = await readFile(new URL("../src/modules/collaborators/ui/CollaboratorFormFields.tsx", import.meta.url), "utf8");
+  assert.match(collaborator, /<Switch /); assert.doesNotMatch(collaborator, /className="toggle/);
+  assert.match(collaborator, /onCheckedChange=\{\(active\) => onChange\(\{ active \}\)\}/);
+});
+
+test("FloatingActionMenu 7J: escolher um item devolve o foco ao gatilho (Dialog aberto pelo menu retorna o foco a ele)", async () => {
+  const menu = await readFile(new URL("../src/components/ui/FloatingActionMenu.tsx", import.meta.url), "utf8");
+  assert.match(menu, /onClick=\{\(\)=>\{onOpenChange\(false\);trigger\.current\?\.focus\(\)\}\}/); // seleção de item
+  assert.match(menu, /event\.key==="Escape"\)\{onOpenChange\(false\);trigger\.current\?\.focus\(\)/); // Esc (já existente)
+  const dialog = await readFile(new URL("../src/components/ui/Dialog.tsx", import.meta.url), "utf8");
+  assert.match(dialog, /opener\.current = document\.activeElement/); assert.match(dialog, /opener\.current\?\.focus\(\)/);
+});
