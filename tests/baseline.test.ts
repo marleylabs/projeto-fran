@@ -2096,7 +2096,7 @@ test("cesta básica 7E: apresentação no Design System, sem regra financeira no
   const files = ["ui/BasicBasketPointMirror.tsx", "ui/BasicBasketAllocationView.tsx", "ui/BasicBasketSummaryView.tsx", "ui/BasicBasketCalendar.tsx", "../shared/ui/CompetenceSummary.tsx", "../shared/ui/parts.tsx", "ui/format.ts", "ui/types.ts"];
   const [section, page, ...ui] = await Promise.all([dir + "BasicBasketSection.tsx", "../src/app/pagamentos/alimentacao/page.tsx", ...files.map((file) => dir + file)].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
   // componentes do Design System na seção (abas, tabela, moeda, valor calculado, importação, diálogo)
-  for (const name of ["<Tabs", "<TabPanel", "<DataTable", "<CurrencyInput", "<CalculatedValue", "<BasicBasketPointMirror", "<Dialog"]) assert.ok(section.includes(name), name);
+  for (const name of ["<BenefitWorkspace", "<DataTable", "<CurrencyInput", "<CalculatedValue", "<BasicBasketPointMirror", "<Dialog"]) assert.ok(section.includes(name), name);
   assert.match(ui[0], /<ImportFlow/); assert.match(page, /<Tabs label="Subseções de Alimentação"/);
   // visuais não calculam: sem cálculo de linha, sem parser monetário, sem chamadas de API
   for (const [index, source] of ui.entries()) {
@@ -2561,7 +2561,7 @@ test("café da manhã 7F: apresentação no Design System, regras na seção e c
   const base = "../src/modules/accounts-payable/breakfast/";
   const [section, fill, mirror, view, summary] = await Promise.all(["BreakfastSection.tsx", "ui/BreakfastFillTable.tsx", "ui/BreakfastPointMirror.tsx", "ui/BreakfastAllocationView.tsx", "ui/BreakfastSummaryView.tsx"].map((path) => readFile(new URL(base + path, import.meta.url), "utf8")));
   // estrutura: Tabs da foundation, Dialog na correção, componentes visuais extraídos
-  assert.match(section, /<Tabs label="Etapas do Café da Manhã" items=\{STAGES\}/); assert.match(section, /<Dialog\s/); assert.doesNotMatch(section, /modal-box|role="tablist"|<table/);
+  assert.match(section, /<BenefitWorkspace\s+title="Café da Manhã"/); assert.match(section, /<Dialog\s/); assert.doesNotMatch(section, /modal-box|role="tablist"|<table/);
   for (const name of ["BreakfastFillTable", "BreakfastPointMirror", "BreakfastAllocationView", "BreakfastSummaryView"]) assert.match(section, new RegExp(`<${name}\\s`), name);
   // regras e payloads continuam na seção (Quantidade Final = base + extras − desconto; Total = final × valor unitário)
   assert.match(section, /calculateFinalQuantity\(baseDays, Number\(value\.extra\), Number\(value\.discount\)\)/); assert.match(section, /calculateBreakfastEmployeeTotal\(priceCents, finalQuantity\)/);
@@ -2972,4 +2972,53 @@ test("limpeza 7M: componentes legados sem glifo/daisyUI, código e dependência 
   }
   const [index, pkg] = await Promise.all([read("../src/components/ui/index.ts"), read("../package.json")]);
   assert.doesNotMatch(index, /SurfaceCard|MetricCard/); assert.doesNotMatch(pkg, /@tanstack\/react-table/);
+});
+
+// ---- Fase 7N: Alimentação, Café da Manhã e Cesta Básica com a MESMA estrutura (contexto → Operação/Rateio/Histórico).
+test("benefícios 7N: estrutura comum — contexto da competência e abas Operação, Rateio e Histórico, nessa ordem", async () => {
+  const read = (path: string) => readFile(new URL(path, import.meta.url), "utf8");
+  const [workspace, cafe, cesta, food] = await Promise.all([
+    read("../src/modules/accounts-payable/shared/ui/BenefitWorkspace.tsx"),
+    read("../src/modules/accounts-payable/breakfast/BreakfastSection.tsx"),
+    read("../src/modules/accounts-payable/basic-basket/BasicBasketSection.tsx"),
+    read("../src/app/pagamentos/alimentacao/page.tsx"),
+  ]);
+  // abas na ordem fixa; Operação mantida montada (não perde formulário); Rateio e Histórico sob demanda
+  const order = ["operacao", "rateio", "historico"].map((value) => workspace.indexOf(`{ value: "${value}"`));
+  assert.ok(order.every((index) => index > 0) && order[0] < order[1] && order[1] < order[2], "ordem Operação → Rateio → Histórico");
+  assert.match(workspace, /label: "Operação"[\s\S]*label: "Rateio"[\s\S]*label: "Histórico"/);
+  assert.match(workspace, /<TabPanel value="operacao" keepMounted/); assert.doesNotMatch(workspace, /<TabPanel value="(rateio|historico)" keepMounted/);
+  assert.match(workspace, /aria-label="Contexto da competência"/); assert.match(workspace, /type="month"/);
+  // componente compartilhado só de estrutura: sem fetch, sem regra financeira, sem rota
+  assert.doesNotMatch(workspace, /fetch\(|prisma|amountToCents|parseMoneyToCents|\/api\//);
+  // os três usam a mesma estrutura, cada um com o próprio contexto, resultado e histórico
+  for (const [name, source, id] of [["Café", cafe, "cafe"], ["Cesta", cesta, "cesta"], ["Alimentação", food, "food"]] as const) {
+    assert.match(source, /<BenefitWorkspace\s/, name); assert.match(source, /<BenefitCompetenceContext\s/, name); assert.match(source, /<BenefitHistory\s/, name);
+    assert.match(source, new RegExp(`id="${id}-competence"`), name); assert.match(source, new RegExp(`id="${id}-result-title"[^>]*>Resultado da competência<`), name);
+    assert.match(source, /useState<BenefitTab>\("operacao"\)/, name);
+    assert.doesNotMatch(source, /items=\{STAGES\}|"preenchimento"|"resumo"/, name);
+  }
+  // Rateio reaproveita as visões existentes (sem mudança); Café/Cesta voltam ao Rateio depois de salvar
+  assert.match(cafe, /allocation=\{<BreakfastAllocationView\s/); assert.match(cesta, /allocation=\{<BasicBasketAllocationView\s/);
+  assert.match(cesta, /setTab\("rateio"\)/);
+  // Máscara Flash só em Café e Cesta (nunca em Alimentação MA/PA)
+  for (const source of [cafe, cesta]) assert.match(source, /Máscara Flash/);
+  assert.doesNotMatch(food, /Flash/);
+});
+
+test("alimentação 7N: MA/PA subordinados à Operação, Rateio por estado sem misturar totais, Histórico identifica MA/PA", async () => {
+  const food = await readFile(new URL("../src/app/pagamentos/alimentacao/page.tsx", import.meta.url), "utf8");
+  // hierarquia Alimentação › Operação › MA|PA (estado e ciclos dentro da Operação, ainda mantidos montados)
+  const operation = food.slice(food.indexOf("operation={"), food.indexOf("allocation={<FoodAllocationTab"));
+  assert.match(operation, /<LocalityTabs\s/); assert.match(food, /<TabPanel value="MA" keepMounted/); assert.match(food, /<TabPanel value="PA" keepMounted/);
+  // Rateio: escolha MA/PA, MA agrupado por ciclo; cada lote pronto no MaRateio (perspectivas, edição e exclusão)
+  assert.match(food, /<Tabs label="Rateio por estado"/); assert.match(food, /RATEIO_GROUPS: Record<Locality/);
+  assert.match(food, /onOpenRateio \? <FoodBatchReadyCard batch=\{batch\} onOpenRateio=\{onOpenRateio\} \/> : <MaRateio /);
+  // os mesmos dados da página (nenhuma chamada nova): colaboradores do editor vêm da resposta já carregada
+  assert.match(food, /setEmployees\(body\.employees \?\? \[\]\)/);
+  assert.equal((food.match(/fetch\(\s*`\/api\/accounts-payable\/food\?year=/g) ?? []).length, 3);
+  // consolidado continua informativo e com o download na região de contexto
+  assert.match(food, /actions=\{ready\.length > 0 && \([\s\S]*?consolidated\/download/);
+  // Histórico identifica estado e ciclo
+  assert.match(food, /<StatusBadge tone="neutral">\{batch\.locality\}<\/StatusBadge>/); assert.match(food, /cycleLabel\(batch\)/);
 });

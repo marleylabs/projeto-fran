@@ -4,7 +4,7 @@
 // VT. Estado, chamadas de API, validações da prévia e payloads continuam AQUI; os componentes em food/ui só exibem.
 // Regras MA/PA (ciclos, NF → empresa, snapshots, rateios, XLSX) seguem no servidor e nos helpers já existentes.
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Download, FileSpreadsheet, PencilLine, Trash2 } from "lucide-react";
+import { Download, FileSpreadsheet, ListTree, PencilLine, Trash2 } from "lucide-react";
 import {
   Button,
   CalculatedValue,
@@ -13,6 +13,7 @@ import {
   CurrencyInput,
   DataTable,
   DeletionModal,
+  EmptyState,
   FeedbackAlert,
   Field,
   PageHeader,
@@ -42,6 +43,7 @@ import { MultiDatePicker } from "@/components/MultiDatePicker";
 import { compareDateThenId, comparePtBr, sortedPtBr } from "@/lib/sorting/ptBr";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
 import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
+import { BenefitCompetenceContext, BenefitHistory, BenefitWorkspace, type BenefitTab } from "@/modules/accounts-payable/shared/ui/BenefitWorkspace";
 import { Disclosure, Note } from "@/modules/accounts-payable/shared/ui/parts";
 import {
   FoodInformativeTotalSummary,
@@ -431,16 +433,56 @@ function MaRateio({
   );
 }
 
+// Fase 7N: na Operação, o lote pronto (com refeições) aparece como resumo; o rateio completo (perspectivas, edição e
+// exclusão) fica na aba Rateio. Mesmos dados do lote; nenhuma chamada nova.
+function FoodBatchReadyCard({ batch, onOpenRateio }: { batch: Batch; onOpenRateio: () => void }) {
+  const sectors = new Set(batch.allocations.map((row) => normalizeOrganizationalValue(row.department))).size;
+  return (
+    <Card padding="none" as="article" className="overflow-hidden">
+      <div className="grid gap-4 p-4 sm:p-5">
+        <CardHeader
+          title={batch.administrativeEntity.tradeName}
+          description={`cadastro_id: ${batch.administrativeEntity.id} · v${batch.version}${batch.revisions?.length ? ` · ${batch.revisions.length} revisão(ões)` : ""}`}
+          actions={<StatusBadge tone="success">Pronto · Aguardando Financeiro</StatusBadge>}
+        />
+        <CompetenceSummary
+          className="xl:grid-cols-4"
+          items={[
+            { label: "Registros importados / válidos", value: `${batch.totalRows} / ${batch.validRows}` },
+            { label: "Colaboradores únicos / setores", value: `${batch.allocations.length} / ${sectors}` },
+            { label: "Refeições · valor unitário", value: `${batch.validRows} · ${money(batch.unitPrice)}` },
+            { label: `Total ${batch.locality} · obrigação`, value: money(batch.totalAmount), helper: batch.financialRecord?.identifier, emphasis: true },
+          ]}
+        />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-border bg-surface-muted px-4 py-3 sm:px-5">
+        <Button type="button" onClick={onOpenRateio} variant="secondary" size="sm">
+          <ListTree size={14} aria-hidden="true" />
+          Ver rateio
+        </Button>
+        <a href={`/api/accounts-payable/food/${batch.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}>
+          <Download size={14} aria-hidden="true" />
+          Download do rateio XLSX
+        </a>
+        <span className="text-caption text-foreground-muted">Edição e exclusão de registros ficam na aba Rateio.</span>
+      </div>
+    </Card>
+  );
+}
+
 function BatchCard({
   batch,
   employees,
   reload,
   resetImport,
+  onOpenRateio,
 }: {
   batch: Batch;
   employees: FoodEmployee[];
   reload: () => Promise<void>;
   resetImport: () => void;
+  /** Presente na Operação: lote pronto vira resumo com atalho para a aba Rateio. */
+  onOpenRateio?: () => void;
 }) {
   const [details, setDetails] = useState(false);
   const sectors = useMemo(() => {
@@ -472,7 +514,7 @@ function BatchCard({
       />
     );
   if (batch.mealOccurrenceCount > 0 && batch.status === "READY")
-    return <MaRateio batch={batch} employees={employees} reload={reload} />;
+    return onOpenRateio ? <FoodBatchReadyCard batch={batch} onOpenRateio={onOpenRateio} /> : <MaRateio batch={batch} employees={employees} reload={reload} />;
   const allocationColumns: DataTableColumn<Allocation>[] = [
     { id: "name", header: "Colaborador", rowHeader: true, width: "16rem", cell: (row) => <span className="block truncate">{row.employeeName}</span> },
     { id: "sector", header: "Setor", cell: (row) => row.department },
@@ -549,6 +591,7 @@ function LocalityPanel({
   month,
   reload,
   selectCompetence,
+  onOpenRateio,
 }: {
   locality: Locality;
   cycle?: 1 | 2;
@@ -559,6 +602,7 @@ function LocalityPanel({
   month: number;
   reload: () => Promise<void>;
   selectCompetence: (value: string) => void;
+  onOpenRateio: (locality: Locality) => void;
 }) {
   const toast = useToast();
   const allowed = sortedPtBr(
@@ -1055,6 +1099,7 @@ function LocalityPanel({
               employees={availableEmployees}
               reload={reload}
               resetImport={resetFoodImportReview}
+              onOpenRateio={() => onOpenRateio(locality)}
             />
           ))
         ) : (
@@ -1135,6 +1180,7 @@ function LocalityTabs({
   month,
   reload,
   selectCompetence,
+  onOpenRateio,
 }: {
   entities: Entity[];
   batches: Batch[];
@@ -1143,6 +1189,7 @@ function LocalityTabs({
   month: number;
   reload: () => Promise<void>;
   selectCompetence: (value: string) => void;
+  onOpenRateio: (locality: Locality) => void;
 }) {
   const [active, setActive] = useState<Locality>("MA");
   // MA e PA ficam montados (keepMounted): trocar de estado não perde o que já foi digitado em cada um.
@@ -1172,6 +1219,7 @@ function LocalityTabs({
             month={month}
             reload={reload}
             selectCompetence={selectCompetence}
+            onOpenRateio={onOpenRateio}
           />
         </TabPanel>
         <TabPanel value="PA" keepMounted className="mt-4 min-w-0">
@@ -1185,10 +1233,59 @@ function LocalityTabs({
             month={month}
             reload={reload}
             selectCompetence={selectCompetence}
+            onOpenRateio={onOpenRateio}
           />
         </TabPanel>
       </Tabs>
     </section>
+  );
+}
+
+const RATEIO_GROUPS: Record<Locality, { cycle: number; title: string }[]> = {
+  MA: [{ cycle: 1, title: "1º Ciclo · dias 1 a 15" }, { cycle: 2, title: "2º Ciclo · dia 16 ao fim do mês" }, { cycle: 0, title: "Mensal · anterior aos ciclos" }],
+  PA: [{ cycle: 0, title: "Competência" }],
+};
+const cycleLabel = (batch: Batch) => batch.locality === "PA" ? "competência" : batch.cycle === 1 ? "1º ciclo" : batch.cycle === 2 ? "2º ciclo" : "mensal (anterior aos ciclos)";
+
+function FoodAllocationTab({ batches, employees, reload, locality, onLocalityChange }: {
+  batches: Batch[];
+  employees: FoodEmployee[];
+  reload: () => Promise<void>;
+  locality: Locality;
+  onLocalityChange: (locality: Locality) => void;
+}) {
+  const ready = batches.filter((batch) => batch.status === "READY");
+  const items = (["MA", "PA"] as Locality[]).map((value) => ({
+    value,
+    // rótulo curto (cabe em 375px): sigla + total do estado; o nome completo fica no título do painel
+    label: (
+      <span className="inline-flex items-baseline gap-1.5" title={value === "MA" ? "Maranhão" : "Pará"}>
+        {value}
+        <span className="text-caption tabular-nums text-foreground-muted">{money(ready.filter((batch) => batch.locality === value).reduce((sum, batch) => sum + Number(batch.totalAmount), 0))}</span>
+      </span>
+    ),
+  }));
+  return (
+    <Tabs label="Rateio por estado" items={items} value={locality} onValueChange={(value) => onLocalityChange(value as Locality)} variant="segmented">
+      {(["MA", "PA"] as Locality[]).map((value) => {
+        const stateReady = ready.filter((batch) => batch.locality === value);
+        const groups = RATEIO_GROUPS[value]
+          .map((group) => ({ ...group, batches: sortedPtBr(stateReady.filter((batch) => value === "PA" || batch.cycle === group.cycle), (batch) => batch.administrativeEntity.tradeName || batch.administrativeEntity.legalName, (a, b) => comparePtBr(a.id, b.id)) }))
+          .filter((group) => group.batches.length);
+        return (
+          <TabPanel key={value} value={value} className="mt-4 grid min-w-0 gap-5">
+            {groups.length ? groups.map((group) => (
+              <section key={group.cycle} aria-label={`Rateio ${value} · ${group.title}`} className="grid gap-3">
+                <h3 className="text-card-title text-foreground">{value === "MA" ? "Maranhão" : "Pará"} · {group.title} · {money(group.batches.reduce((sum, batch) => sum + Number(batch.totalAmount), 0))}</h3>
+                {group.batches.map((batch) => <BatchCard key={batch.id} batch={batch} employees={employees} reload={reload} resetImport={() => undefined} />)}
+              </section>
+            )) : (
+              <Card><EmptyState title={`Nenhum rateio pronto em ${value === "MA" ? "Maranhão" : "Pará"}`} description="Lotes prontos na Operação aparecem aqui com as perspectivas de rateio, a edição e a exclusão de registros." /></Card>
+            )}
+          </TabPanel>
+        );
+      })}
+    </Tabs>
   );
 }
 
@@ -1201,6 +1298,10 @@ export default function FoodAccountsPayablePage() {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [prices, setPrices] = useState<Record<string, string>>({});
+  const [employees, setEmployees] = useState<FoodEmployee[]>([]);
+  const [loaded, setLoaded] = useState<string | null>(null);
+  const [tab, setTab] = useState<BenefitTab>("operacao");
+  const [rateioLocality, setRateioLocality] = useState<Locality>("MA");
   const [error, setError] = useState<string | null>(null);
   const [year, month] = competence.split("-").map(Number);
   const load = useCallback(async () => {
@@ -1212,6 +1313,7 @@ export default function FoodAccountsPayablePage() {
       if (!response.ok) throw new Error(body.error);
       setBatches(body.competence?.batches ?? []);
       setPrices(body.supplierPrices ?? {});
+      setEmployees(body.employees ?? []);
       setError(null);
     } catch (cause) {
       setError(
@@ -1227,6 +1329,8 @@ export default function FoodAccountsPayablePage() {
       .then((body) => {
         setBatches(body.competence?.batches ?? []);
         setPrices(body.supplierPrices ?? {});
+        setEmployees(body.employees ?? []);
+        setLoaded(`${year}-${month}`);
       })
       .catch(() => setError("Falha ao carregar competência."));
   }, [year, month]);
@@ -1249,6 +1353,21 @@ export default function FoodAccountsPayablePage() {
     0,
   );
   const totalMeals = ready.reduce((sum, batch) => sum + batch.validRows, 0);
+  const monthLabel = `${String(month).padStart(2, "0")}/${year}`;
+  const openRateio = (locality: Locality) => { setRateioLocality(locality); setTab("rateio"); };
+  const historyRows = sortedPtBr(batches, (batch) => `${batch.locality}-${batch.cycle}-${batch.administrativeEntity.tradeName || batch.administrativeEntity.legalName}`, (a, b) => comparePtBr(a.id, b.id)).map((batch) => ({
+    id: batch.id,
+    title: <span className="inline-flex items-center gap-2"><StatusBadge tone="neutral">{batch.locality}</StatusBadge>{batch.administrativeEntity.tradeName}</span>,
+    detail: `${batch.locality === "MA" ? "Maranhão" : "Pará"} · ${cycleLabel(batch)} · ${batch.validRows} refeição(ões)`,
+    status: batch.status === "READY" ? { tone: "success" as const, label: "Pronto" } : batch.status === "UNDER_REVIEW" ? { tone: "pending" as const, label: "Em revisão" } : { tone: "warning" as const, label: "Com inconsistências" },
+    version: `v${batch.version}`,
+    obligation: batch.financialRecord?.identifier ?? null,
+    amount: money(batch.totalAmount),
+    actions: batch.status === "READY" ? <span className="flex flex-wrap justify-end gap-1">
+      <Button size="sm" variant="ghost" onClick={() => openRateio(batch.locality)} aria-label={`Ver rateio de ${batch.administrativeEntity.tradeName} (${batch.locality})`}><ListTree size={14} aria-hidden="true" />Rateio</Button>
+      <a href={`/api/accounts-payable/food/${batch.id}/download`} className={buttonClassName({ variant: "ghost", size: "sm" })} aria-label={`Download XLSX de ${batch.administrativeEntity.tradeName} (${batch.locality})`}><Download size={14} aria-hidden="true" />XLSX</a>
+    </span> : undefined,
+  }));
   return (
     <div className="flex flex-1 flex-col">
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
@@ -1262,84 +1381,97 @@ export default function FoodAccountsPayablePage() {
             subseção segue o mesmo, só dentro do painel da aba. */}
         <Tabs label="Subseções de Alimentação" items={FOOD_SUBSECTIONS} value={subsection} onValueChange={(value) => setSubsection(value as typeof subsection)}>
         <TabPanel value="alimentacao" className="mt-6 flex flex-col gap-5">
-        {subsection === "alimentacao" && <>
-        <Card className="flex flex-wrap items-end justify-between gap-3">
-          <CardHeader titleAs="h2" title="Competência" description="Os lotes, ciclos (MA) e obrigações são carregados por competência." />
-          <Field label="Competência" className="w-full sm:w-56">
-            {(control) => (
-              <input
-                {...control}
-                type="month"
-                value={competence}
-                onChange={(event) => setCompetence(event.target.value)}
-                className={textInputClassName}
+        {subsection === "alimentacao" && (
+          <BenefitWorkspace
+            title="Alimentação"
+            description="Maranhão (ciclos) e Pará: um lote e uma obrigação por fornecedor; o consolidado é só informativo."
+            tab={tab}
+            onTabChange={setTab}
+            context={
+              <BenefitCompetenceContext
+                id="food-competence"
+                competence={competence}
+                onCompetenceChange={setCompetence}
+                loading={loaded !== `${year}-${month}` && !error}
+                actions={ready.length > 0 && (
+                  <a
+                    href={`/api/accounts-payable/food/consolidated/download?year=${year}&month=${month}`}
+                    className={buttonClassName({ variant: "secondary", size: "sm" })}
+                  >
+                    <Download size={14} aria-hidden="true" />
+                    Download consolidado
+                  </a>
+                )}
+                items={[
+                  { label: "Competência", value: monthLabel },
+                  { label: "Obrigações", value: ready.length, helper: `${batches.length - ready.length} lote(s) pendente(s)` },
+                  { label: "Colaboradores", value: totalPeople },
+                  { label: "Refeições", value: totalMeals },
+                  { label: "Total MA + PA", value: money(totalAmount), helper: "Informativo", emphasis: true },
+                ]}
               />
-            )}
-          </Field>
-        </Card>
-        {error && <FeedbackAlert status="error">{error}</FeedbackAlert>}
-        <LocalityTabs
-          entities={entities}
-          batches={batches}
-          prices={prices}
-          year={year}
-          month={month}
-          reload={load}
-          selectCompetence={setCompetence}
-        />
-        <Card className="grid gap-5">
-          <CardHeader
-            titleAs="h2"
-            title="Resumo · Consolidado informativo"
-            description="As obrigações permanecem separadas por fornecedor."
-            actions={ready.length > 0 && (
-              <a
-                href={`/api/accounts-payable/food/consolidated/download?year=${year}&month=${month}`}
-                className={buttonClassName({ variant: "secondary", size: "sm" })}
-              >
-                <Download size={14} aria-hidden="true" />
-                Download consolidado
-              </a>
-            )}
-          />
-          <div className="grid gap-5">
-            {(["MA", "PA"] as Locality[]).map((locality) => {
-              const values = ready.filter(
-                (batch) => batch.locality === locality,
-              );
-              const collaborators = uniqueCollaborators(values);
-              const meals = values.reduce(
-                (sum, batch) => sum + batch.validRows,
-                0,
-              );
-              const localityTotal = values.reduce(
-                (sum, batch) => sum + Number(batch.totalAmount),
-                0,
-              );
-              return (
-                <FoodLocalitySummary
-                  key={locality}
-                  locality={locality}
-                  suppliers={
-                    new Set(
-                      values.map((batch) => batch.administrativeEntity.id),
-                    ).size
-                  }
-                  collaborators={collaborators}
-                  meals={meals}
-                  formattedTotal={money(localityTotal)}
+            }
+            operation={
+              <div className="grid min-w-0 gap-5">
+                {error && <FeedbackAlert status="error">{error}</FeedbackAlert>}
+                <LocalityTabs
+                  entities={entities}
+                  batches={batches}
+                  prices={prices}
+                  year={year}
+                  month={month}
+                  reload={load}
+                  selectCompetence={setCompetence}
+                  onOpenRateio={openRateio}
                 />
-              );
-            })}
-            <FoodInformativeTotalSummary
-              obligations={ready.length}
-              collaborators={totalPeople}
-              meals={totalMeals}
-              formattedTotal={money(totalAmount)}
-            />
-          </div>
-        </Card>
-        </>}
+                <section aria-labelledby="food-result-title" className="grid gap-3">
+                  <div>
+                    <h3 id="food-result-title" className="text-card-title text-foreground">Resultado da competência</h3>
+                    <p className="text-caption text-foreground-muted">Consolidado informativo: as obrigações permanecem separadas por fornecedor.</p>
+                  </div>
+                <div className="grid gap-5">
+                  {(["MA", "PA"] as Locality[]).map((locality) => {
+                    const values = ready.filter(
+                      (batch) => batch.locality === locality,
+                    );
+                    const collaborators = uniqueCollaborators(values);
+                    const meals = values.reduce(
+                      (sum, batch) => sum + batch.validRows,
+                      0,
+                    );
+                    const localityTotal = values.reduce(
+                      (sum, batch) => sum + Number(batch.totalAmount),
+                      0,
+                    );
+                    return (
+                      <FoodLocalitySummary
+                        key={locality}
+                        locality={locality}
+                        suppliers={
+                          new Set(
+                            values.map((batch) => batch.administrativeEntity.id),
+                          ).size
+                        }
+                        collaborators={collaborators}
+                        meals={meals}
+                        formattedTotal={money(localityTotal)}
+                      />
+                    );
+                  })}
+                  <FoodInformativeTotalSummary
+                    obligations={ready.length}
+                    collaborators={totalPeople}
+                    meals={totalMeals}
+                    formattedTotal={money(totalAmount)}
+                  />
+                </div>
+                </section>
+              </div>
+            }
+            allocation={<FoodAllocationTab batches={batches} employees={employees} reload={load} locality={rateioLocality} onLocalityChange={setRateioLocality} />}
+            history={<BenefitHistory caption={`Lotes de Alimentação · ${monthLabel}`} rows={historyRows} emptyTitle="Nenhum lote nesta competência" emptyDescription="Os lotes de Maranhão e Pará processados na Operação aparecem aqui, identificados por estado e ciclo." />}
+          />
+        )}
         </TabPanel>
         <TabPanel value="cafe" className="mt-6">{subsection === "cafe" && <BreakfastSection />}</TabPanel>
         <TabPanel value="cesta" className="mt-6">{subsection === "cesta" && <BasicBasketSection />}</TabPanel>

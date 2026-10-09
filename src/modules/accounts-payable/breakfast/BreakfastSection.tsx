@@ -8,13 +8,14 @@
 // Fase 7F: apresentação no Design System (Tabs, DataTable, CalculatedValue, ImportFlow, Dialog, AllocationViews).
 // Estado, chamadas de API, prévia de cálculo e save continuam AQUI; os componentes em ./ui só exibem.
 import { FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, Download, FileSpreadsheet, ListTree } from "lucide-react";
 import { CompetenceCalendar, HolidayModal } from "@/components/allocation/CompetenceHolidays";
 import { CompanyModal, companyLabel, normalizeText as normalize, type Company } from "@/components/allocation/CompanyPicker";
-import { Button, CalculatedValue, Card, CardHeader, DeletionModal, Dialog, FeedbackAlert, Field, TabPanel, Tabs, TextInput, textInputClassName, useToast } from "@/components/ui";
+import { Button, buttonClassName, CalculatedValue, Card, CardHeader, DeletionModal, Dialog, FeedbackAlert, Field, TextInput, textInputClassName, useToast } from "@/components/ui";
 import { type CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
+import { BenefitCompetenceContext, BenefitHistory, BenefitWorkspace, type BenefitTab } from "@/modules/accounts-payable/shared/ui/BenefitWorkspace";
 import { BREAKFAST_ALLOWED_DEPARTMENT, calculateBreakfastEmployeeTotal, calculateFinalQuantity, parseUnitPriceToCents, type BreakfastObservationKind } from "./calculations";
 import { groupBreakfastByCompanyCostCenter } from "./rateio";
 import { applyBreakfastExtraSuggestions } from "./point-mirror";
@@ -26,7 +27,6 @@ import { BreakfastSummaryView } from "./ui/BreakfastSummaryView";
 import { dayMonth, money, moneyCents, people } from "./ui/format";
 import type { BreakfastAllocationRow as Allocation, BreakfastContext as Context, BreakfastEntity as Entity, BreakfastEntryValue as EntryValue, BreakfastMapData as MapData } from "./ui/types";
 
-const STAGES = [{ value: "preenchimento", label: "Preenchimento" }, { value: "rateio", label: "Rateio" }, { value: "resumo", label: "Resumo" }];
 const cents = (value: string | number) => Math.round(Number(value) * 100);
 // O mapa é a fonte histórica: valor unitário e dias úteis vêm dos registros do próprio mapa, nunca da competência atual.
 const mapBase = (map: MapData | undefined) => { const row = map?.allocations.find((item) => item.workingDays !== null && item.unitPrice !== null); return row ? { workingDays: row.workingDays as number, unitPrice: Number(row.unitPrice).toFixed(2) } : null; };
@@ -96,7 +96,7 @@ export function BreakfastSection() {
   const now = new Date();
   const [competence, setCompetence] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [year, month] = competence.split("-").map(Number);
-  const [tab, setTab] = useState<"preenchimento" | "rateio" | "resumo">("preenchimento");
+  const [tab, setTab] = useState<BenefitTab>("operacao");
   const [entities, setEntities] = useState<Entity[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([]);
@@ -253,124 +253,148 @@ export function BreakfastSection() {
   const severalDays = [...new Set(maps.map((map) => mapBase(map)?.workingDays))].length > 1;
   const severalPrices = [...new Set(maps.map((map) => mapBase(map)?.unitPrice))].length > 1;
 
-  return <div className="grid gap-5">
-    <div>
-      <h2 className="text-section-title text-foreground">Café da Manhã</h2>
-      <p className="mt-0.5 text-body text-foreground-muted">Quantidade por dias úteis da competência, com Desconto e Quantidade Extras (Espelho de Ponto) por colaborador do {BREAKFAST_ALLOWED_DEPARTMENT}.</p>
-    </div>
-    <Tabs label="Etapas do Café da Manhã" items={STAGES} value={tab} onValueChange={(value) => setTab(value as typeof tab)} variant="segmented">
-      <TabPanel value="preenchimento" className="mt-4">
-        <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-4">
-          <Card padding="none">
-            <div className="grid gap-4 p-4 sm:p-5">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <CardHeader titleAs="h3" title="Competência, calendário e valor" description="Dias úteis = segunda a sexta menos os feriados em dias úteis." />
-                <div className="grid w-full gap-3 sm:w-auto sm:grid-cols-[12rem_16rem]">
-                  <Field label="Competência" required>{(control) => <input {...control} type="month" className={textInputClassName} value={competence} onChange={(event) => { setCompetence(event.target.value); setPointMirror(null); setPointApplied(null); }} />}</Field>
-                  <Field label="Cadastro da obrigação" required>{(control) => <select {...control} required className={textInputClassName} value={entityId} onChange={(event) => setEntityId(event.target.value)}><option value="">Selecionar cadastro</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select>}</Field>
-                </div>
-              </div>
-              <CompetenceSummary items={[
-                { label: "Competência", value: monthLabel },
-                { label: "Dias úteis", value: String(ctx?.workingDays ?? "—"), helper: ctx ? `${ctx.weekdays} seg–sex − ${ctx.holidaysOnWeekdays} feriado(s)` : undefined },
-                { label: "Feriados", value: String(ctx?.holidaysInMonth ?? "—"), helper: "No mês" },
-                { label: "Valor unitário", value: basePrice ? money(basePrice) : "—", helper: entityBase ? "Base histórica do mapa" : ctx?.unitPriceDefined ? "Salvo na competência" : "Padrão (não salvo)" },
-                { label: "Colaboradores", value: selectedIds.length, helper: "Selecionados" },
-                { label: "Prévia do total", value: moneyCents(previewTotal), helper: "Recalculado ao salvar", emphasis: true },
-              ]} />
+  // Fase 7N: estrutura comum (Operação → Rateio → Histórico). Só reorganiza regiões; estado, cálculos e payloads iguais.
+  const historyRows = maps.map((map) => ({
+    id: map.id,
+    title: map.administrativeEntity.tradeName,
+    detail: `Competência ${monthLabel}`,
+    status: map.financialRecord ? { tone: "success" as const, label: "Obrigação gerada" } : { tone: "warning" as const, label: "Sem obrigação" },
+    version: `v${map.version}`,
+    obligation: map.financialRecord?.identifier ?? null,
+    amount: money(map.totalAmount),
+    actions: <span className="flex flex-wrap justify-end gap-1">
+      <Button size="sm" variant="ghost" onClick={() => setTab("rateio")} aria-label={`Ver rateio de ${map.administrativeEntity.tradeName}`}><ListTree size={14} aria-hidden="true" />Rateio</Button>
+      <a href={`/api/accounts-payable/breakfast/${map.id}/download`} className={buttonClassName({ variant: "ghost", size: "sm" })} aria-label={`Download XLSX de ${map.administrativeEntity.tradeName}`}><Download size={14} aria-hidden="true" />XLSX</a>
+      <Button size="sm" variant="ghost" loading={flashBusy === map.id} disabled={flashBusy !== null} onClick={() => downloadFlash(map.id)} aria-label={`Máscara Flash de ${map.administrativeEntity.tradeName}`}><FileSpreadsheet size={14} aria-hidden="true" />Máscara Flash</Button>
+    </span>,
+  }));
+
+  return <>
+    <BenefitWorkspace
+      title="Café da Manhã"
+      description={`Quantidade por dias úteis da competência, com Desconto e Quantidade Extras (Espelho de Ponto) por colaborador do ${BREAKFAST_ALLOWED_DEPARTMENT}.`}
+      tab={tab}
+      onTabChange={setTab}
+      context={
+        <BenefitCompetenceContext
+          id="cafe-competence"
+          competence={competence}
+          onCompetenceChange={(value) => { setCompetence(value); setPointMirror(null); setPointApplied(null); }}
+          loading={!ctx && !error}
+          items={[
+            { label: "Competência", value: monthLabel },
+            { label: "Dias úteis", value: String(ctx?.workingDays ?? "—") },
+            { label: "Valor unitário", value: ctx ? money(ctx.unitPrice) : "—", helper: ctx?.unitPriceDefined ? "Salvo na competência" : "Padrão (não salvo)" },
+            { label: "Lançamentos", value: maps.length, helper: maps.length ? `${maps.filter((map) => map.financialRecord).length} com obrigação` : "Nenhum salvo" },
+            { label: "Colaboradores", value: uniquePeople, helper: "Lançados" },
+            { label: "Total lançado", value: moneyCents(mapsTotal), emphasis: true },
+          ]}
+        />
+      }
+      operation={
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
+    <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-4">
+      <Card padding="none">
+        <div className="grid gap-4 p-4 sm:p-5">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <CardHeader titleAs="h3" title="Configuração da competência" description="Calendário, feriados e valor unitário. Dias úteis = segunda a sexta menos os feriados em dias úteis." />
+            <Field label="Cadastro da obrigação" required className="w-full sm:w-64">{(control) => <select {...control} required className={textInputClassName} value={entityId} onChange={(event) => setEntityId(event.target.value)}><option value="">Selecionar cadastro</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select>}</Field>
+          </div>
+          <CompetenceSummary items={[
+            { label: "Dias úteis", value: String(ctx?.workingDays ?? "—"), helper: ctx ? `${ctx.weekdays} seg–sex − ${ctx.holidaysOnWeekdays} feriado(s)` : undefined },
+            { label: "Feriados", value: String(ctx?.holidaysInMonth ?? "—"), helper: "No mês" },
+            { label: "Valor unitário", value: basePrice ? money(basePrice) : "—", helper: entityBase ? "Base histórica do mapa" : ctx?.unitPriceDefined ? "Salvo na competência" : "Padrão (não salvo)" },
+            { label: "Colaboradores", value: selectedIds.length, helper: "Selecionados" },
+            { label: "Prévia do total", value: moneyCents(previewTotal), helper: "Recalculado ao salvar", emphasis: true },
+          ]} />
+        </div>
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-5 border-t border-border p-4 sm:p-5 lg:grid-cols-[minmax(0,22rem)_1fr]">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-2">
+            <CompetenceCalendar year={year} month={month} holidays={ctx?.holidays ?? []} onSelect={setHolidayDate} />
+            <p className="text-caption text-foreground-muted">Feriados nacionais são automáticos. Clique em uma data para cadastrar feriados estaduais, municipais ou internos (ou para editar/remover os manuais).</p>
+          </div>
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-4">
+            <div>
+              <h4 className="mb-2 text-label text-foreground-muted">Feriados cadastrados{ctx ? ` (${ctx.holidays.length})` : ""}</h4>
+              {ctx?.holidays.length ? (
+                <ul className="grid gap-1">
+                  {ctx.holidays.map((holiday) => (
+                    <li key={holiday.date}>
+                      <button type="button" className="flex w-full cursor-pointer items-start gap-2 rounded-control px-1.5 py-1 text-left text-body hover:bg-surface-muted" onClick={() => setHolidayDate(holiday.date)}>
+                        <CalendarDays size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-success-text" />
+                        <span className="min-w-0"><strong className="tabular-nums">{dayMonth(holiday.date)}</strong> — {holiday.name}<span className="block text-caption text-foreground-muted">{holiday.source === "NATIONAL" ? "Nacional" : "Manual"}</span></span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="text-body text-foreground-muted">Nenhum feriado marcado.</p>}
             </div>
-            <div className="grid grid-cols-[minmax(0,1fr)] gap-5 border-t border-border p-4 sm:p-5 lg:grid-cols-[minmax(0,22rem)_1fr]">
-              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-2">
-                <CompetenceCalendar year={year} month={month} holidays={ctx?.holidays ?? []} onSelect={setHolidayDate} />
-                <p className="text-caption text-foreground-muted">Feriados nacionais são automáticos. Clique em uma data para cadastrar feriados estaduais, municipais ou internos (ou para editar/remover os manuais).</p>
+            <div className="grid gap-2 rounded-control border border-border p-3">
+              <div className="flex flex-wrap items-end gap-2">
+                <Field label="Valor unitário do café da manhã (R$)" className="min-w-40 flex-1">{(control) => <TextInput {...control} inputMode="decimal" className="tabular-nums" value={priceInput} onChange={(event) => setPriceInput(event.target.value)} />}</Field>
+                <Button variant="secondary" onClick={savePrice} disabled={!priceDirty}>Salvar valor</Button>
               </div>
-              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-4">
-                <div>
-                  <h4 className="mb-2 text-label text-foreground-muted">Feriados cadastrados{ctx ? ` (${ctx.holidays.length})` : ""}</h4>
-                  {ctx?.holidays.length ? (
-                    <ul className="grid gap-1">
-                      {ctx.holidays.map((holiday) => (
-                        <li key={holiday.date}>
-                          <button type="button" className="flex w-full cursor-pointer items-start gap-2 rounded-control px-1.5 py-1 text-left text-body hover:bg-surface-muted" onClick={() => setHolidayDate(holiday.date)}>
-                            <CalendarDays size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-success-text" />
-                            <span className="min-w-0"><strong className="tabular-nums">{dayMonth(holiday.date)}</strong> — {holiday.name}<span className="block text-caption text-foreground-muted">{holiday.source === "NATIONAL" ? "Nacional" : "Manual"}</span></span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : <p className="text-body text-foreground-muted">Nenhum feriado marcado.</p>}
-                </div>
-                <div className="grid gap-2 rounded-control border border-border p-3">
-                  <div className="flex flex-wrap items-end gap-2">
-                    <Field label="Valor unitário do café da manhã (R$)" className="min-w-40 flex-1">{(control) => <TextInput {...control} inputMode="decimal" className="tabular-nums" value={priceInput} onChange={(event) => setPriceInput(event.target.value)} />}</Field>
-                    <Button variant="secondary" onClick={savePrice} disabled={!priceDirty}>Salvar valor</Button>
-                  </div>
-                  <p className="text-caption text-foreground-muted">{ctx?.unitPriceDefined ? "Valor salvo nesta competência; lançamentos antigos não mudam se ele for alterado." : "Valor padrão R$ 12,50 (ainda não salvo para esta competência)."}</p>
-                </div>
-              </div>
+              <p className="text-caption text-foreground-muted">{ctx?.unitPriceDefined ? "Valor salvo nesta competência; lançamentos antigos não mudam se ele for alterado." : "Valor padrão R$ 12,50 (ainda não salvo para esta competência)."}</p>
             </div>
-          </Card>
+          </div>
+        </div>
+      </Card>
 
-          <Card className="grid gap-4">
-            <CardHeader titleAs="h3" title="Colaboradores" description={`Somente ${BREAKFAST_ALLOWED_DEPARTMENT}. A empresa começa com o padrão de cada colaborador e continua editável por linha.`} />
-            {entityBase && <FeedbackAlert status="info">Este lançamento já possui mapa: novos colaboradores usarão a base histórica do mapa ({entityBase.workingDays} dias úteis · {money(entityBase.unitPrice)} por café), mesmo que a competência tenha sido alterada depois.</FeedbackAlert>}
-            <CollaboratorMultiCombobox value={selectedIds} options={topogeoCollaborators} onChange={changeSelection} fixedDepartment={BREAKFAST_ALLOWED_DEPARTMENT} />
-            {selectedIds.length > 0 && (
-              <div className="flex flex-wrap items-end gap-3 rounded-control border border-border bg-surface-muted p-3" role="group" aria-label="Aplicar a todos os selecionados">
-                <datalist id="cafe-companies">{companies.map((company) => <option key={company.id} value={companyLabel(company)} />)}</datalist>
-                <Field label="Empresa para todos os selecionados" className="min-w-56 flex-1">{(control) => <input {...control} list="cafe-companies" className={textInputClassName} value={bulkCompany} onChange={(event) => applyCompany(event.target.value)} placeholder="Digite para buscar" />}</Field>
-                <Button variant="secondary" onClick={() => setCompanyModal(true)}>Cadastrar empresa</Button>
-              </div>
-            )}
-          </Card>
+      <Card className="grid gap-4">
+        <CardHeader titleAs="h3" title="Colaboradores (base)" description={`Somente ${BREAKFAST_ALLOWED_DEPARTMENT}. A empresa começa com o padrão de cada colaborador e continua editável por linha.`} />
+        {entityBase && <FeedbackAlert status="info">Este lançamento já possui mapa: novos colaboradores usarão a base histórica do mapa ({entityBase.workingDays} dias úteis · {money(entityBase.unitPrice)} por café), mesmo que a competência tenha sido alterada depois.</FeedbackAlert>}
+        <CollaboratorMultiCombobox value={selectedIds} options={topogeoCollaborators} onChange={changeSelection} fixedDepartment={BREAKFAST_ALLOWED_DEPARTMENT} />
+        {selectedIds.length > 0 && (
+          <div className="flex flex-wrap items-end gap-3 rounded-control border border-border bg-surface-muted p-3" role="group" aria-label="Aplicar a todos os selecionados">
+            <datalist id="cafe-companies">{companies.map((company) => <option key={company.id} value={companyLabel(company)} />)}</datalist>
+            <Field label="Empresa para todos os selecionados" className="min-w-56 flex-1">{(control) => <input {...control} list="cafe-companies" className={textInputClassName} value={bulkCompany} onChange={(event) => applyCompany(event.target.value)} placeholder="Digite para buscar" />}</Field>
+            <Button variant="secondary" onClick={() => setCompanyModal(true)}>Cadastrar empresa</Button>
+          </div>
+        )}
+      </Card>
 
-          <Card>
-            <BreakfastPointMirror
-              description="Sugere Quantidade Extras: +1 por data trabalhada em sábado, domingo ou feriado (Horas Trabalhadas > 00:00 e Jornada diferente de “Trabalho Esperado”), no máximo +1 por colaborador/data. Identificação somente por CPF. Nada é alterado antes de aplicar."
-              file={pointFile}
-              busy={pointBusy}
-              preview={pointMirror}
-              stale={Boolean(pointMirror && pointMirror.competence !== competence)}
-              appliedCount={pointApplied}
-              monthLabel={monthLabel}
-              currentExtra={(employeeId) => (employeeId && values[employeeId] && selectedIds.includes(employeeId) ? values[employeeId].extra : undefined)}
-              onSelect={(file) => { setPointFile(file); setPointMirror(null); setPointApplied(null); }}
-              onClearFile={resetPointMirror}
-              onProcess={processPointMirror}
-              onApply={applyPointMirror}
-              onReset={resetPointMirror}
-            />
-          </Card>
+      <Card>
+        <BreakfastPointMirror
+          description="Sugere Quantidade Extras: +1 por data trabalhada em sábado, domingo ou feriado (Horas Trabalhadas > 00:00 e Jornada diferente de “Trabalho Esperado”), no máximo +1 por colaborador/data. Identificação somente por CPF. Nada é alterado antes de aplicar."
+          file={pointFile}
+          busy={pointBusy}
+          preview={pointMirror}
+          stale={Boolean(pointMirror && pointMirror.competence !== competence)}
+          appliedCount={pointApplied}
+          monthLabel={monthLabel}
+          currentExtra={(employeeId) => (employeeId && values[employeeId] && selectedIds.includes(employeeId) ? values[employeeId].extra : undefined)}
+          onSelect={(file) => { setPointFile(file); setPointMirror(null); setPointApplied(null); }}
+          onClearFile={resetPointMirror}
+          onProcess={processPointMirror}
+          onApply={applyPointMirror}
+          onReset={resetPointMirror}
+        />
+      </Card>
 
-          {selectedIds.length > 0 && (
-            <BreakfastFillTable
-              rows={preview}
-              values={values}
-              baseDays={baseDays}
-              unitPrice={basePrice}
-              companyListId="cafe-companies"
-              previewTotal={previewTotal}
-              onPatch={patchValue}
-              onCompanyText={(id, text) => { const company = companyByText(text); patchValue(id, { companyText: text, companyId: company?.id ?? "" }); }}
-            />
-          )}
+      {selectedIds.length > 0 && (
+        <BreakfastFillTable
+          rows={preview}
+          values={values}
+          baseDays={baseDays}
+          unitPrice={basePrice}
+          companyListId="cafe-companies"
+          previewTotal={previewTotal}
+          onPatch={patchValue}
+          onCompanyText={(id, text) => { const company = companyByText(text); patchValue(id, { companyText: text, companyId: company?.id ?? "" }); }}
+        />
+      )}
 
-          <Card className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-            <CalculatedValue label="Prévia do Total Geral" value={moneyCents(previewTotal)} helper={`${people(selectedIds.length)} · recalculado pelo servidor ao salvar`} size="lg" live />
-            <div className="grid gap-1.5 md:justify-items-end">
-              <Button type="submit" disabled={busy || !canSave} loading={busy} aura={canSave} className="w-full md:w-auto md:min-w-56">Salvar / Gerar Rateio</Button>
-              {hint && <p className="text-caption text-foreground-muted">{hint}</p>}
-            </div>
-            {error && <FeedbackAlert status="error" className="md:col-span-2">{error}</FeedbackAlert>}
-          </Card>
-        </form>
-      </TabPanel>
-
-      <TabPanel value="rateio" className="mt-4">
-        <BreakfastAllocationView maps={maps} monthLabel={monthLabel} baseOf={(map) => mapBase(map) ?? { workingDays: ctx?.workingDays ?? null, unitPrice: ctx?.unitPrice ?? null }} onCorrect={(mapId, row) => setCorrecting({ mapId, row })} onCancel={(mapId) => setDeleteTarget({ mapId })} onFlash={downloadFlash} flashBusy={flashBusy} />
-      </TabPanel>
-
-      <TabPanel value="resumo" className="mt-4">
+      <Card className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+        <CalculatedValue label="Prévia do Total Geral" value={moneyCents(previewTotal)} helper={`${people(selectedIds.length)} · recalculado pelo servidor ao salvar`} size="lg" live />
+        <div className="grid gap-1.5 md:justify-items-end">
+          <Button type="submit" disabled={busy || !canSave} loading={busy} aura={canSave} className="w-full md:w-auto md:min-w-56">Salvar / Gerar Rateio</Button>
+          {hint && <p className="text-caption text-foreground-muted">{hint}</p>}
+        </div>
+        {error && <FeedbackAlert status="error" className="md:col-span-2">{error}</FeedbackAlert>}
+      </Card>
+    </form>
+          <section aria-labelledby="cafe-result-title" className="grid gap-3">
+            <h3 id="cafe-result-title" className="text-card-title text-foreground">Resultado da competência</h3>
         <BreakfastSummaryView summary={rateio} difference={difference} indicators={[
           { label: "Empresas", value: rateio.companies.length },
           { label: "Colaboradores", value: uniquePeople },
@@ -379,13 +403,16 @@ export function BreakfastSection() {
           { label: "Valor unitário", value: severalPrices ? "Vários" : mapBase(maps[0]) ? money(mapBase(maps[0])!.unitPrice) : ctx ? money(ctx.unitPrice) : "—" },
           { label: "Total Geral", value: moneyCents(grand), emphasis: true },
         ]} />
-      </TabPanel>
-    </Tabs>
-
+          </section>
+        </div>
+      }
+      allocation={<BreakfastAllocationView maps={maps} monthLabel={monthLabel} baseOf={(map) => mapBase(map) ?? { workingDays: ctx?.workingDays ?? null, unitPrice: ctx?.unitPrice ?? null }} onCorrect={(mapId, row) => setCorrecting({ mapId, row })} onCancel={(mapId) => setDeleteTarget({ mapId })} onFlash={downloadFlash} flashBusy={flashBusy} />}
+      history={<BenefitHistory caption={`Lançamentos de Café da Manhã · ${monthLabel}`} rows={historyRows} emptyTitle="Nenhum lançamento nesta competência" emptyDescription="Os lançamentos salvos na Operação aparecem aqui, com o rateio e as exportações." />}
+    />
     <HolidayModal date={holidayDate} holiday={holidayDate ? holidayByDate.get(holidayDate) ?? null : null} onClose={() => setHolidayDate(null)} onSave={saveHoliday} onRemove={removeHoliday} />
     <CorrectionModal target={correcting} companies={companies} onClose={() => setCorrecting(null)} onSaved={reload} />
     <CompanyModal open={companyModal} onClose={() => setCompanyModal(false)} onCreated={(company) => setCompanies((current) => [...current, company])} />
     <DeletionModal open={deleteTarget !== null} title="Cancelar todo o lançamento?" description="O lançamento e a obrigação serão cancelados." count={1} requireKeyword busy={deleting} onClose={() => { if (!deleting) setDeleteTarget(null); }} onConfirm={confirmDelete} />
     {deleteError && <FeedbackAlert status="error">{deleteError}</FeedbackAlert>}
-  </div>;
+  </>;
 }

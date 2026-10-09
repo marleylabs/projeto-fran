@@ -8,9 +8,9 @@
 // Fase 7E: apresentação no Design System (Tabs, DataTable, CurrencyInput, CalculatedValue, ImportFlow, Dialog).
 // Estado, chamadas de API, prévia de cálculo e save continuam AQUI; os componentes em ./ui só exibem.
 import { FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
-import { X } from "lucide-react";
+import { Download, FileSpreadsheet, ListTree, X } from "lucide-react";
 import { CompanyModal, companyLabel, normalizeText as normalize, type Company } from "@/components/allocation/CompanyPicker";
-import { Button, CalculatedValue, Card, CardHeader, CurrencyInput, DataTable, DeletionModal, Dialog, FeedbackAlert, Field, StatusBadge, TabPanel, Tabs, TextInput, textInputClassName, useToast, type DataTableColumn } from "@/components/ui";
+import { Button, buttonClassName, CalculatedValue, Card, CardHeader, CurrencyInput, DataTable, DeletionModal, Dialog, FeedbackAlert, Field, StatusBadge, TextInput, textInputClassName, useToast, type DataTableColumn } from "@/components/ui";
 import { type CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { formatDateOnlyBR } from "@/lib/date-only";
@@ -21,6 +21,7 @@ import { groupBasicBasketByCompanyCostCenter } from "./rateio";
 import { BasicBasketAllocationView } from "./ui/BasicBasketAllocationView";
 import { BasicBasketCalendar, BasicBasketHolidayList } from "./ui/BasicBasketCalendar";
 import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
+import { BenefitCompetenceContext, BenefitHistory, BenefitWorkspace, type BenefitTab } from "@/modules/accounts-payable/shared/ui/BenefitWorkspace";
 import { BasicBasketPointMirror, type PointMirrorPerson, type PointMirrorPreview, type PointMirrorStatus } from "./ui/BasicBasketPointMirror";
 import { BasicBasketPointMirrorReview, type PointMirrorImpact } from "./ui/BasicBasketPointMirrorReview";
 import { applyManualVacation, correctionAdjustments, historicalImportedVacationDays, isPointMirrorCandidateActionable, parseManualVacationDays, resolveReviewedBasicBasketAdjustments, type PointMirrorCandidate, type PointMirrorDecision } from "./point-mirror-review";
@@ -159,14 +160,13 @@ function CorrectionModal({ target, companies, onClose, onSaved }: { target: { ma
   );
 }
 
-const STAGES = [{ value: "preenchimento", label: "Preenchimento" }, { value: "rateio", label: "Rateio" }, { value: "resumo", label: "Resumo" }];
 
 export function BasicBasketSection() {
   const toast = useToast();
   const now = new Date();
   const [competence, setCompetence] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [year, month] = competence.split("-").map(Number);
-  const [tab, setTab] = useState<"preenchimento" | "rateio" | "resumo">("preenchimento");
+  const [tab, setTab] = useState<BenefitTab>("operacao");
   const [entities, setEntities] = useState<Entity[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([]);
@@ -437,142 +437,173 @@ export function BasicBasketSection() {
     { id: "observation", header: "Observação", width: "13rem", cell: (row) => <TextInput aria-label={`Observação de ${row.employee?.officialName}`} maxLength={500} value={values[row.id].observation} onChange={(event) => patchValue(row.id, { observation: event.target.value })} /> },
   ];
 
-  return <div className="grid gap-5">
-    <div>
-      <h2 className="text-section-title text-foreground">Cesta Básica</h2>
-      <p className="mt-0.5 text-body text-foreground-muted">Valor mensal por colaborador, proporcional à admissão, com Retroativo do mês anterior e ajustes do Espelho de Ponto.</p>
-    </div>
-    <Tabs label="Etapas da Cesta Básica" items={STAGES} value={tab} onValueChange={(value) => setTab(value as typeof tab)} variant="segmented">
-      <TabPanel value="preenchimento" className="mt-4">
-        <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-4">
-          <Card padding="none">
-            <div className="grid gap-4 p-4 sm:p-5">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <CardHeader titleAs="h3" title="Competência e pagamento" description="Pagamento na 2ª quarta-feira da competência." />
-                <Field label="Competência" required className="w-full sm:w-48">{(control) => <input {...control} type="month" className={textInputClassName} value={competence} onChange={(event) => { setCompetence(event.target.value); setPointPreview(null); setApplied(null); }} />}</Field>
-              </div>
-              <CompetenceSummary items={[
-                { label: "Competência", value: monthLabel },
-                { label: "Pagamento", value: ctx ? formatDateOnlyBR(ctx.paymentDate) : "—", helper: ctx ? `Anterior: ${formatDateOnlyBR(ctx.previousPaymentDate)}` : undefined },
-                { label: "Dias do calendário", value: String(ctx?.daysInMonth ?? "—"), helper: "Mês real (só exibição)" },
-                { label: "Base da Cesta", value: `${BASIC_BASKET_CALCULATION_DAYS} dias`, helper: "Fixa em todos os meses" },
-                { label: "Colaboradores", value: selectedIds.length, helper: "Selecionados" },
-                { label: "Prévia do total", value: moneyCents(previewTotal), helper: "Recalculado ao salvar", emphasis: true },
-              ]} />
-            </div>
-            <div className="grid grid-cols-[minmax(0,1fr)] gap-5 border-t border-border p-4 sm:p-5 lg:grid-cols-[minmax(0,21rem)_1fr]">
-              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-2">
-                {ctx ? <BasicBasketCalendar year={year} month={month} holidays={ctx.holidays} paymentDate={ctx.paymentDate} /> : <p className="text-body text-foreground-muted">Carregando calendário…</p>}
-                <p className="text-caption text-foreground-muted">Calendário somente leitura: feriados nacionais automáticos e os feriados manuais já cadastrados no Vale Transporte e no Café da Manhã (para editá-los, use o módulo de origem).</p>
-              </div>
-              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-3">
-                <div>
-                  <h4 className="mb-2 text-label text-foreground-muted">Feriados da competência{ctx ? ` (${ctx.holidays.length})` : ""}</h4>
-                  {ctx && <BasicBasketHolidayList holidays={ctx.holidays} />}
-                </div>
-                {ctx && (
-                  <Disclosure title="Como a Cesta é calculada nesta competência" level={2}>
-                    <p className="text-caption text-foreground-muted">Cesta da competência: mês completo para admitidos até {formatDateOnlyBR(ctx.currentMonthStart)}; admitidos até o pagamento ({formatDateOnlyBR(ctx.paymentDate)}) recebem valor mensal × ({BASIC_BASKET_CALCULATION_DAYS} − dia da admissão + 1) ÷ {BASIC_BASKET_CALCULATION_DAYS}; admitidos depois recebem na próxima competência. Retroativo: só para admitidos depois do pagamento anterior ({formatDateOnlyBR(ctx.previousPaymentDate)}) e ainda em {String(ctx.referenceMonth).padStart(2, "0")}/{ctx.referenceYear} — valor mensal × ({BASIC_BASKET_CALCULATION_DAYS} − dia da admissão + 1) ÷ {BASIC_BASKET_CALCULATION_DAYS}. Base financeira fixa de {BASIC_BASKET_CALCULATION_DAYS} dias em todos os meses (dia 31 conta como dia {BASIC_BASKET_CALCULATION_DAYS}); o calendário segue o mês real.</p>
-                  </Disclosure>
-                )}
-              </div>
-            </div>
-          </Card>
+  // Fase 7N: estrutura comum (Operação → Rateio → Histórico). Só reorganiza regiões; estado, cálculos e payloads iguais.
+  const launchedPeople = new Set(all.map((row) => row.employeeId ?? normalize(row.employeeName))).size;
+  const historyRows = maps.map((map) => ({
+    id: map.id,
+    title: map.administrativeEntity.tradeName,
+    detail: `Competência ${monthLabel} · pagamento ${formatDateOnlyBR(map.paymentDate)}`,
+    status: map.financialRecord ? { tone: "success" as const, label: "Obrigação gerada" } : { tone: "warning" as const, label: "Sem obrigação" },
+    version: `v${map.version}`,
+    obligation: map.financialRecord?.identifier ?? null,
+    amount: moneyCents(Math.round(Number(map.totalAmount) * 100)),
+    actions: <span className="flex flex-wrap justify-end gap-1">
+      <Button size="sm" variant="ghost" onClick={() => setTab("rateio")} aria-label={`Ver rateio de ${map.administrativeEntity.tradeName}`}><ListTree size={14} aria-hidden="true" />Rateio</Button>
+      <a href={`/api/accounts-payable/basic-basket/${map.id}/download`} className={buttonClassName({ variant: "ghost", size: "sm" })} aria-label={`Download XLSX de ${map.administrativeEntity.tradeName}`}><Download size={14} aria-hidden="true" />XLSX</a>
+      <Button size="sm" variant="ghost" loading={flashBusy === map.id} disabled={flashBusy !== null} onClick={() => downloadFlash(map.id)} aria-label={`Máscara Flash de ${map.administrativeEntity.tradeName}`}><FileSpreadsheet size={14} aria-hidden="true" />Máscara Flash</Button>
+    </span>,
+  }));
 
-          <Card className="grid gap-4">
-            <CardHeader titleAs="h3" title="Colaboradores" description="Empresa e valores começam com o padrão de cada colaborador; tudo continua editável por linha." />
-            <CollaboratorMultiCombobox value={selectedIds} options={collaborators} onChange={changeSelection} />
-            {selectedIds.length > 0 && (
-              <div className="flex flex-wrap items-end gap-3 rounded-control border border-border bg-surface-muted p-3" role="group" aria-label="Aplicar a todos os selecionados">
-                <datalist id="cesta-companies">{companies.map((company) => <option key={company.id} value={companyLabel(company)} />)}</datalist>
-                <Field label="Empresa para todos os selecionados" className="min-w-56 flex-1">{(control) => <input {...control} list="cesta-companies" className={textInputClassName} value={bulkCompany} onChange={(event) => applyCompany(event.target.value)} placeholder="Digite para buscar" />}</Field>
-                <Button variant="secondary" onClick={() => setCompanyModal(true)}>Cadastrar empresa</Button>
-                <Field label="Valor mensal da Cesta (R$)" className="w-44">{(control) => <CurrencyInput {...control} value={currencyValue(bulkBasket)} onValueChange={(value) => setBulkBasket(currencyText(value))} />}</Field>
-                <Button variant="secondary" disabled={!bulkBasket.trim()} onClick={applyBulkBasket}>Aplicar aos selecionados</Button>
-              </div>
+  return <>
+    <BenefitWorkspace
+      title="Cesta Básica"
+      description="Valor mensal por colaborador, proporcional à admissão, com Retroativo do mês anterior e ajustes do Espelho de Ponto."
+      tab={tab}
+      onTabChange={setTab}
+      context={
+        <BenefitCompetenceContext
+          id="cesta-competence"
+          competence={competence}
+          onCompetenceChange={(value) => { setCompetence(value); setPointPreview(null); setApplied(null); }}
+          loading={!ctx && !error}
+          items={[
+            { label: "Competência", value: monthLabel },
+            { label: "Pagamento", value: ctx ? formatDateOnlyBR(ctx.paymentDate) : "—", helper: ctx ? `Anterior: ${formatDateOnlyBR(ctx.previousPaymentDate)}` : undefined },
+            { label: "Base da Cesta", value: `${BASIC_BASKET_CALCULATION_DAYS} dias`, helper: "Fixa em todos os meses" },
+            { label: "Lançamentos", value: maps.length, helper: maps.length ? `${maps.filter((map) => map.financialRecord).length} com obrigação` : "Nenhum salvo" },
+            { label: "Colaboradores", value: launchedPeople, helper: "Lançados" },
+            { label: "Total lançado", value: moneyCents(mapsTotalCents), emphasis: true },
+          ]}
+        />
+      }
+      operation={
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
+    <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-4">
+      <Card padding="none">
+        <div className="grid gap-4 p-4 sm:p-5">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <CardHeader titleAs="h3" title="Configuração da competência" description="Pagamento na 2ª quarta-feira da competência; calendário e feriados somente leitura." />
+            <Field label="Fornecedor" required className="w-full sm:w-64">{(control) => <select {...control} className={textInputClassName} value={entityId} onChange={(event) => setEntityId(event.target.value)}><option value="">Selecionar cadastro</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select>}</Field>
+          </div>
+          <CompetenceSummary items={[
+            { label: "Pagamento", value: ctx ? formatDateOnlyBR(ctx.paymentDate) : "—", helper: ctx ? `Anterior: ${formatDateOnlyBR(ctx.previousPaymentDate)}` : undefined },
+            { label: "Dias do calendário", value: String(ctx?.daysInMonth ?? "—"), helper: "Mês real (só exibição)" },
+            { label: "Base da Cesta", value: `${BASIC_BASKET_CALCULATION_DAYS} dias`, helper: "Fixa em todos os meses" },
+            { label: "Colaboradores", value: selectedIds.length, helper: "Selecionados" },
+            { label: "Prévia do total", value: moneyCents(previewTotal), helper: "Recalculado ao salvar", emphasis: true },
+          ]} />
+        </div>
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-5 border-t border-border p-4 sm:p-5 lg:grid-cols-[minmax(0,21rem)_1fr]">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-2">
+            {ctx ? <BasicBasketCalendar year={year} month={month} holidays={ctx.holidays} paymentDate={ctx.paymentDate} /> : <p className="text-body text-foreground-muted">Carregando calendário…</p>}
+            <p className="text-caption text-foreground-muted">Calendário somente leitura: feriados nacionais automáticos e os feriados manuais já cadastrados no Vale Transporte e no Café da Manhã (para editá-los, use o módulo de origem).</p>
+          </div>
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-3">
+            <div>
+              <h4 className="mb-2 text-label text-foreground-muted">Feriados da competência{ctx ? ` (${ctx.holidays.length})` : ""}</h4>
+              {ctx && <BasicBasketHolidayList holidays={ctx.holidays} />}
+            </div>
+            {ctx && (
+              <Disclosure title="Como a Cesta é calculada nesta competência" level={2}>
+                <p className="text-caption text-foreground-muted">Cesta da competência: mês completo para admitidos até {formatDateOnlyBR(ctx.currentMonthStart)}; admitidos até o pagamento ({formatDateOnlyBR(ctx.paymentDate)}) recebem valor mensal × ({BASIC_BASKET_CALCULATION_DAYS} − dia da admissão + 1) ÷ {BASIC_BASKET_CALCULATION_DAYS}; admitidos depois recebem na próxima competência. Retroativo: só para admitidos depois do pagamento anterior ({formatDateOnlyBR(ctx.previousPaymentDate)}) e ainda em {String(ctx.referenceMonth).padStart(2, "0")}/{ctx.referenceYear} — valor mensal × ({BASIC_BASKET_CALCULATION_DAYS} − dia da admissão + 1) ÷ {BASIC_BASKET_CALCULATION_DAYS}. Base financeira fixa de {BASIC_BASKET_CALCULATION_DAYS} dias em todos os meses (dia 31 conta como dia {BASIC_BASKET_CALCULATION_DAYS}); o calendário segue o mês real.</p>
+              </Disclosure>
             )}
-          </Card>
+          </div>
+        </div>
+      </Card>
 
-          {selectedIds.length > 0 && (
-            <Card>
-              <BasicBasketPointMirror
-                description={<>Falta Injustificada (Jornada Considerada = “Falta” e Eventos = “FALTA INJUSTIFICADA”) no MÊS ANTERIOR à competência (mês de apuração, do dia 01 ao último dia) corta integralmente a Cesta da competência; Faltas do próprio mês contam para a próxima competência. Férias (Eventos = “Férias”) reduzem os dias de direito (base {BASIC_BASKET_CALCULATION_DAYS}): as do mês da competência na Cesta, as do mês anterior só no Retroativo. Nada muda antes de aplicar.</>}
-                file={pointFile}
-                busy={pointBusy}
-                preview={pointPreview}
-                stale={Boolean(pointPreview && pointPreview.competence !== competence)}
-                appliedCount={activeApplied ? Object.keys(activeApplied.byEmployee).length : null}
-                appliedIsCurrent={Boolean(activeApplied && pointPreview && activeApplied.importId === pointPreview.importId)}
-                applyLabel="Aplicar Faltas e Férias"
-                statusText={pointStatusText}
-                compare={comparePointMirror}
-                onSelect={(file) => { setPointFile(file); setPointPreview(null); }}
-                onClearFile={() => { setPointFile(null); setPointPreview(null); }}
-                onProcess={processPointMirror}
-                onApply={applyPointMirror}
-                onReset={() => { setPointFile(null); setPointPreview(null); setDecisions({}); setReviewing(false); }}
-                onRemoveAdjustments={() => setApplied(null)}
-                reviewing={reviewing}
-                applying={applyingReview}
-                canApply={reviewPending === 0}
-                applyHint={reviewPending ? `Decida ${reviewPending} ${reviewPending === 1 ? "ocorrência pendente" : "ocorrências pendentes"} para liberar a aplicação.` : undefined}
-                onReview={() => setReviewing(true)}
-                onBackToPreview={() => setReviewing(false)}
-                review={pointPreview && (
-                  <BasicBasketPointMirrorReview
-                    candidates={pointPreview.candidates.filter((candidate) => selectedIds.includes(candidate.employeeId))}
-                    decisions={decisions}
-                    manualByEmployee={manualByEmployee}
-                    employeeName={(id) => collaborators.find((item) => item.id === id)?.officialName ?? pointPreview.people.find((person) => person.employeeId === id)?.employeeName ?? id}
-                    reference={pointPreview.reference}
-                    impacts={reviewImpacts}
-                    onDecide={decide}
-                  />
-                )}
+      <Card className="grid gap-4">
+        <CardHeader titleAs="h3" title="Colaboradores (base)" description="Empresa e valores começam com o padrão de cada colaborador; tudo continua editável por linha." />
+        <CollaboratorMultiCombobox value={selectedIds} options={collaborators} onChange={changeSelection} />
+        {selectedIds.length > 0 && (
+          <div className="flex flex-wrap items-end gap-3 rounded-control border border-border bg-surface-muted p-3" role="group" aria-label="Aplicar a todos os selecionados">
+            <datalist id="cesta-companies">{companies.map((company) => <option key={company.id} value={companyLabel(company)} />)}</datalist>
+            <Field label="Empresa para todos os selecionados" className="min-w-56 flex-1">{(control) => <input {...control} list="cesta-companies" className={textInputClassName} value={bulkCompany} onChange={(event) => applyCompany(event.target.value)} placeholder="Digite para buscar" />}</Field>
+            <Button variant="secondary" onClick={() => setCompanyModal(true)}>Cadastrar empresa</Button>
+            <Field label="Valor mensal da Cesta (R$)" className="w-44">{(control) => <CurrencyInput {...control} value={currencyValue(bulkBasket)} onValueChange={(value) => setBulkBasket(currencyText(value))} />}</Field>
+            <Button variant="secondary" disabled={!bulkBasket.trim()} onClick={applyBulkBasket}>Aplicar aos selecionados</Button>
+          </div>
+        )}
+      </Card>
+
+      {selectedIds.length > 0 && (
+        <Card>
+          <BasicBasketPointMirror
+            description={<>Falta Injustificada (Jornada Considerada = “Falta” e Eventos = “FALTA INJUSTIFICADA”) no MÊS ANTERIOR à competência (mês de apuração, do dia 01 ao último dia) corta integralmente a Cesta da competência; Faltas do próprio mês contam para a próxima competência. Férias (Eventos = “Férias”) reduzem os dias de direito (base {BASIC_BASKET_CALCULATION_DAYS}): as do mês da competência na Cesta, as do mês anterior só no Retroativo. Nada muda antes de aplicar.</>}
+            file={pointFile}
+            busy={pointBusy}
+            preview={pointPreview}
+            stale={Boolean(pointPreview && pointPreview.competence !== competence)}
+            appliedCount={activeApplied ? Object.keys(activeApplied.byEmployee).length : null}
+            appliedIsCurrent={Boolean(activeApplied && pointPreview && activeApplied.importId === pointPreview.importId)}
+            applyLabel="Aplicar Faltas e Férias"
+            statusText={pointStatusText}
+            compare={comparePointMirror}
+            onSelect={(file) => { setPointFile(file); setPointPreview(null); }}
+            onClearFile={() => { setPointFile(null); setPointPreview(null); }}
+            onProcess={processPointMirror}
+            onApply={applyPointMirror}
+            onReset={() => { setPointFile(null); setPointPreview(null); setDecisions({}); setReviewing(false); }}
+            onRemoveAdjustments={() => setApplied(null)}
+            reviewing={reviewing}
+            applying={applyingReview}
+            canApply={reviewPending === 0}
+            applyHint={reviewPending ? `Decida ${reviewPending} ${reviewPending === 1 ? "ocorrência pendente" : "ocorrências pendentes"} para liberar a aplicação.` : undefined}
+            onReview={() => setReviewing(true)}
+            onBackToPreview={() => setReviewing(false)}
+            review={pointPreview && (
+              <BasicBasketPointMirrorReview
+                candidates={pointPreview.candidates.filter((candidate) => selectedIds.includes(candidate.employeeId))}
+                decisions={decisions}
+                manualByEmployee={manualByEmployee}
+                employeeName={(id) => collaborators.find((item) => item.id === id)?.officialName ?? pointPreview.people.find((person) => person.employeeId === id)?.employeeName ?? id}
+                reference={pointPreview.reference}
+                impacts={reviewImpacts}
+                onDecide={decide}
               />
-            </Card>
-          )}
+            )}
+          />
+        </Card>
+      )}
 
-          {missingAdmission > 0 && <FeedbackAlert status="error" title="Data de Admissão obrigatória">{MISSING_ADMISSION} {missingAdmission === 1 ? "1 colaborador selecionado está" : `${missingAdmission} colaboradores selecionados estão`} sem Data de Admissão (atualize o cadastro de colaboradores).</FeedbackAlert>}
+      {missingAdmission > 0 && <FeedbackAlert status="error" title="Data de Admissão obrigatória">{MISSING_ADMISSION} {missingAdmission === 1 ? "1 colaborador selecionado está" : `${missingAdmission} colaboradores selecionados estão`} sem Data de Admissão (atualize o cadastro de colaboradores).</FeedbackAlert>}
 
-          {fillRows.length > 0 && (
-            <p id="cesta-manual-vacation-help" className="text-caption text-foreground-muted">Férias manuais: dias financeiros de férias na competência. Deixe vazio para usar o Espelho de Ponto. Valem só para a Cesta da competência (o Retroativo segue o Espelho aprovado) e substituem — nunca somam — as Férias importadas.</p>
-          )}
-          {fillRows.length > 0 && (
-            <DataTable
-              caption="Colaboradores da competência"
-              columns={fillColumns}
-              rows={fillRows}
-              getRowId={(row) => row.id}
-              minWidth="1360px"
-              footer={<p className="text-body tabular-nums">Prévia do Total Geral: <strong className="text-primary">{moneyCents(previewTotal)}</strong> · {people(selectedIds.length)} · o servidor recalcula Cesta paga, Retroativo e Total ao salvar.</p>}
-            />
-          )}
+      {fillRows.length > 0 && (
+        <p id="cesta-manual-vacation-help" className="text-caption text-foreground-muted">Férias manuais: dias financeiros de férias na competência. Deixe vazio para usar o Espelho de Ponto. Valem só para a Cesta da competência (o Retroativo segue o Espelho aprovado) e substituem — nunca somam — as Férias importadas.</p>
+      )}
+      {fillRows.length > 0 && (
+        <DataTable
+          caption="Colaboradores da competência"
+          columns={fillColumns}
+          rows={fillRows}
+          getRowId={(row) => row.id}
+          minWidth="1360px"
+          footer={<p className="text-body tabular-nums">Prévia do Total Geral: <strong className="text-primary">{moneyCents(previewTotal)}</strong> · {people(selectedIds.length)} · o servidor recalcula Cesta paga, Retroativo e Total ao salvar.</p>}
+        />
+      )}
 
-          <Card className="grid gap-4 md:grid-cols-[minmax(0,22rem)_minmax(0,1fr)_auto] md:items-end">
-            <Field label="Fornecedor" required>{(control) => <select {...control} className={textInputClassName} value={entityId} onChange={(event) => setEntityId(event.target.value)}><option value="">Selecionar cadastro</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select>}</Field>
-            <CalculatedValue label="Prévia do Total Geral" value={moneyCents(previewTotal)} helper={`${people(selectedIds.length)} · recalculado pelo servidor ao salvar`} size="lg" live />
-            <div className="grid gap-1.5 md:justify-items-end">
-              <Button type="submit" disabled={busy || !canSave} loading={busy} aura={canSave} className="w-full md:w-auto md:min-w-56">Salvar / Gerar Rateio</Button>
-              {hint && <p className="text-caption text-foreground-muted">{hint}</p>}
-            </div>
-            {error && <FeedbackAlert status="error" className="md:col-span-3">{error}</FeedbackAlert>}
-          </Card>
-        </form>
-      </TabPanel>
-
-      <TabPanel value="rateio" className="mt-4">
-        <BasicBasketAllocationView maps={maps} monthLabel={monthLabel} onCorrect={(map, row) => setCorrecting({ map, row })} onCancel={(mapId) => setDeleteTarget({ mapId })} onFlash={downloadFlash} flashBusy={flashBusy} />
-      </TabPanel>
-
-      <TabPanel value="resumo" className="mt-4">
-        <BasicBasketSummaryView summary={summary} difference={difference} />
-      </TabPanel>
-    </Tabs>
+      <Card className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+        <CalculatedValue label="Prévia do Total Geral" value={moneyCents(previewTotal)} helper={`${people(selectedIds.length)} · recalculado pelo servidor ao salvar`} size="lg" live />
+        <div className="grid gap-1.5 md:justify-items-end">
+          <Button type="submit" disabled={busy || !canSave} loading={busy} aura={canSave} className="w-full md:w-auto md:min-w-56">Salvar / Gerar Rateio</Button>
+          {hint && <p className="text-caption text-foreground-muted">{hint}</p>}
+        </div>
+        {error && <FeedbackAlert status="error" className="md:col-span-2">{error}</FeedbackAlert>}
+      </Card>
+    </form>
+          <section aria-labelledby="cesta-result-title" className="grid gap-3">
+            <h3 id="cesta-result-title" className="text-card-title text-foreground">Resultado da competência</h3>
+            <BasicBasketSummaryView summary={summary} difference={difference} />
+          </section>
+        </div>
+      }
+      allocation={<BasicBasketAllocationView maps={maps} monthLabel={monthLabel} onCorrect={(map, row) => setCorrecting({ map, row })} onCancel={(mapId) => setDeleteTarget({ mapId })} onFlash={downloadFlash} flashBusy={flashBusy} />}
+      history={<BenefitHistory caption={`Lançamentos de Cesta Básica · ${monthLabel}`} rows={historyRows} emptyTitle="Nenhum lançamento nesta competência" emptyDescription="Os lançamentos salvos na Operação aparecem aqui, com o rateio e as exportações." />}
+    />
 
     <CorrectionModal target={correcting} companies={companies} onClose={() => setCorrecting(null)} onSaved={reload} />
     <CompanyModal open={companyModal} onClose={() => setCompanyModal(false)} onCreated={(company) => setCompanies((current) => [...current, company].sort((a, b) => comparePtBr(companyLabel(a), companyLabel(b))))} />
     <DeletionModal open={deleteTarget !== null} title="Cancelar todo o lançamento?" description="O lançamento e a obrigação serão cancelados." count={1} requireKeyword busy={deleting} onClose={() => { if (!deleting) setDeleteTarget(null); }} onConfirm={confirmDelete} />
     {deleteError && <FeedbackAlert status="error">{deleteError}</FeedbackAlert>}
-  </div>;
+  </>;
 }
