@@ -599,9 +599,8 @@ test("revisão de alimentação usa resumo compacto e workspace modal responsivo
 });
 
 test("design system mantém densidade compacta com alvos móveis acessíveis", async () => {
-  const [styles, surface, toast] = await Promise.all([
+  const [styles, toast] = await Promise.all([
     readFile(new URL("../src/app/globals.css", import.meta.url), "utf8"),
-    readFile(new URL("../src/components/ui/SurfaceCard.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/components/ui/ToastProvider.tsx", import.meta.url), "utf8"),
   ]);
   for (const token of [
@@ -614,7 +613,6 @@ test("design system mantém densidade compacta com alvos móveis acessíveis", a
   assert.match(styles, /:where\(\.btn\) \{ min-height: var\(--density-control-md\)/);
   assert.match(styles, /:where\(\.table td,\.table th\) \{[^}]*padding: \.45rem \.75rem/);
   assert.match(styles, /@media \(max-width: 639px\).*min-height: 2\.5rem/);
-  assert.match(surface, /gap-3 p-3 sm:p-4/);
   assert.match(toast, /h-5 w-5/);
   assert.doesNotMatch(styles, /transform:\s*scale\(0\.85\)/);
 });
@@ -2947,7 +2945,7 @@ test("UploadDropzone 7M: rótulo amigável dos formatos sem duplicar; accept/val
   assert.match(html, /accept="application\/pdf,\.pdf"/); assert.match(html, /Formatos: PDF · até 30 MB/); assert.doesNotMatch(html, /APPLICATION\/PDF/);
 });
 
-test("limpeza 7M: componentes legados sem glifo/daisyUI como ícone/visual", async () => {
+test("limpeza 7M: componentes legados sem glifo/daisyUI, código e dependência mortos removidos", async () => {
   const read = (path: string) => readFile(new URL(path, import.meta.url), "utf8");
   const code = (source: string) => source.replace(/^\s*\/\/.*$/gm, "");
   const files = {
@@ -2969,4 +2967,9 @@ test("limpeza 7M: componentes legados sem glifo/daisyUI como ícone/visual", asy
   assert.match(files.MultiDatePicker, /onChange\(sorted\(draft\)\)/); assert.match(files.MultiDatePicker, /timeZone: "UTC"/);
   // DeletionModal: Field/TextInput da fundação; backdrop fecha pelo onClose (exceto busy)
   assert.match(files.DeletionModal, /<Field label=/); assert.match(files.DeletionModal, /if\(event\.target===event\.currentTarget&&!busy\)onClose\(\);/);
+  for (const removed of ["../src/components/allocation/AllocationCard.tsx", "../src/components/ui/SurfaceCard.tsx", "../src/components/ui/MetricCard.tsx", "../src/components/ManualEntryLayout.tsx"]) {
+    await assert.rejects(read(removed), removed);
+  }
+  const [index, pkg] = await Promise.all([read("../src/components/ui/index.ts"), read("../package.json")]);
+  assert.doesNotMatch(index, /SurfaceCard|MetricCard/); assert.doesNotMatch(pkg, /@tanstack\/react-table/);
 });
