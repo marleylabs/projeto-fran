@@ -561,16 +561,18 @@ test("navegação do shell: grupos por permissão, item ativo e trilha sem repet
   // grupos e itens reais; Café/Cesta não entram na sidebar
   assert.deepEqual(NAVIGATION_GROUPS.map((group) => group.label), ["Visão geral", "Despesas", "Contabilidade", "Cadastros", "Administração"]);
   assert.doesNotMatch(JSON.stringify(NAVIGATION_GROUPS), /Café|Cesta/);
-  assert.equal(item("dashboard").availability, "planned"); assert.equal(item("dashboard").href, undefined);
-  // permissões só escondem navegação (sem nenhuma rota permitida = nada; o Dashboard planejado aparece desabilitado para quem tem acesso)
-  assert.deepEqual(visibleNavigationGroups([]).map((group) => group.id), []);
+  assert.equal(item("dashboard").availability, "available"); assert.equal(item("dashboard").href, "/"); // Fase 7L: Home oficial em "/"
+  // permissões só escondem navegação; a Home (Dashboard) é de todo usuário autenticado — sem outras permissões, só ela
+  assert.deepEqual(visibleNavigationGroups([]).map((group) => [group.id, group.items.map((entry) => entry.id)]), [["overview", ["dashboard"]]]);
   assert.deepEqual(visibleNavigationGroups(["financial-records.read"]).map((group) => [group.id, group.items.map((entry) => entry.id)]), [["overview", ["dashboard"]], ["expenses", ["food", "transit-voucher", "training-expenses"]]]);
   const all = visibleNavigationGroups(["financial-records.read", "accounting.read", "master-data.read", "training.read", "users.read"]);
   assert.deepEqual(all.map((group) => group.id), ["overview", "expenses", "accounting", "master-data", "administration"]);
-  // item ativo: Entidades só em /cadastros (não em /cadastros/colaboradores); Folha também na raiz "/"
+  // item ativo: Entidades só em /cadastros (não em /cadastros/colaboradores); a raiz "/" é do Dashboard, não da Folha
   assert.equal(isNavigationItemActive("/cadastros", item("entities")), true); assert.equal(isNavigationItemActive("/cadastros/colaboradores", item("entities")), false);
   assert.equal(isNavigationItemActive("/cadastros/colaboradores", item("collaborators")), true);
-  assert.equal(isNavigationItemActive("/", item("payroll")), true); assert.equal(isNavigationItemActive("/pagamentos", item("payroll")), false);
+  assert.equal(isNavigationItemActive("/", item("payroll")), false); assert.equal(isNavigationItemActive("/contabilidade/folha", item("payroll")), true); assert.equal(isNavigationItemActive("/pagamentos", item("payroll")), false);
+  assert.equal(isNavigationItemActive("/", item("dashboard")), true); assert.equal(isNavigationItemActive("/pagamentos", item("dashboard")), false);
+  assert.deepEqual(resolveRouteMeta("/"), { title: "Visão geral", trail: [] }); assert.equal(resolveRouteMeta("/contabilidade/folha").title, "Folha de pagamento");
   assert.equal(isNavigationItemActive("/pagamentos/alimentacao", item("food")), true); assert.equal(isNavigationItemActive("/pagamentos/abc/validacao", item("food")), false);
   // título da aba + trilha de ANCESTRAIS (nunca o título da própria página, que é o h1 do PageHeader)
   assert.deepEqual(resolveRouteMeta("/cadastros/colaboradores"), { title: "Colaboradores", trail: [{ label: "Cadastros" }] });
@@ -2849,4 +2851,64 @@ test("folha 7K: uploads recentes agrupados por competência (como antes) e orden
   assert.deepEqual(sortRows(rows, { key: "v", direction: "desc" }, (r, k) => (k === "n" ? r.n : r.v)).map((r) => r.v), [30, 10, 2]);
   assert.deepEqual(rows.map((r) => r.n), ["Ébano", "abel", "Carla"]); // não muta a origem
   assert.equal(situacaoTone("Trabalhando"), "success"); assert.equal(situacaoTone("Férias"), "info"); assert.equal(situacaoTone("Afastado"), "warning"); assert.equal(situacaoTone("Outro"), "neutral");
+});
+
+// ---- Fase 7L-A: Home (Visão geral) em "/" com dados de endpoints existentes, RBAC por bloco e sem KPIs.
+test("home 7L: blocos e ações rápidas respeitam permissões; sem permissão não há request nem bloco", async () => {
+  const { homeBlocksFor, HOME_PERMISSIONS } = await import("../src/modules/dashboard/ui/HomeDashboard");
+  const { quickActionsFor } = await import("../src/modules/dashboard/ui/DashboardQuickActions");
+  assert.deepEqual(HOME_PERMISSIONS, { records: "financial-records.read", payroll: "accounting.read" });
+  assert.deepEqual(homeBlocksFor([]), { records: false, payroll: false });
+  assert.deepEqual(homeBlocksFor(["financial-records.read"]), { records: true, payroll: false });
+  assert.deepEqual(homeBlocksFor(["accounting.read"]), { records: false, payroll: true });
+  const ids = (permissions: string[]) => quickActionsFor(permissions).map((action) => [action.navId, action.href]);
+  assert.deepEqual(ids([]), []);
+  assert.deepEqual(ids(["financial-records.read"]), [["food", "/pagamentos/alimentacao"], ["transit-voucher", "/pagamentos/vale-transporte"], ["training-expenses", "/pagamentos/treinamentos"]]);
+  assert.deepEqual(ids(["accounting.read"]), [["payroll", "/contabilidade/folha"]]);
+  assert.equal(ids(["financial-records.read", "accounting.read", "master-data.read", "training.read", "users.read"]).length, 5); // tarefas, não a sidebar inteira
+  const source = await readFile(new URL("../src/modules/dashboard/ui/HomeDashboard.tsx", import.meta.url), "utf8");
+  // requests só dentro do bloco permitido, com os endpoints existentes
+  assert.match(source, /if \(blocks\.records\) \{\s*getJson<[^>]+>\("\/api\/financial-records\?pageSize=5"/);
+  assert.match(source, /if \(blocks\.payroll\) \{\s*getJson<[^>]+>\("\/api\/uploads"/);
+  assert.equal(source.match(/getJson<(?!T>)/g)?.length, 3); // chamadas: me + 2 blocos, nada mais
+  assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ""), /\/api\/dashboard|setInterval|%/); // sem endpoint novo, polling ou percentual
+  for (const name of ["DashboardRecentRecords", "DashboardPayrollLatest", "DashboardQuickActions"]) {
+    const ui = await readFile(new URL(`../src/modules/dashboard/ui/${name}.tsx`, import.meta.url), "utf8");
+    assert.doesNotMatch(ui.replace(/^\s*\/\/.*$/gm, ""), /fetch\(|prisma|<[a-z][\w-]*\b[^>]*\stitle=|#[0-9a-fA-F]{6}\b|text-(red|green|amber|emerald)-/, name);
+  }
+});
+
+test("home 7L: obrigações recentes (ciclo de vida, competência UTC), última extração e estados vazios", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { DashboardRecentRecords } = await import("../src/modules/dashboard/ui/DashboardRecentRecords");
+  const { DashboardPayrollLatest } = await import("../src/modules/dashboard/ui/DashboardPayrollLatest");
+  const { DashboardQuickActions } = await import("../src/modules/dashboard/ui/DashboardQuickActions");
+  const rows = [
+    { id: "r1", identifier: "PG-2026-000074", grossAmount: "1400.0000", competenceDate: "2026-10-01T00:00:00.000Z", createdAt: "2026-10-05T18:21:12.286Z", lifecycleState: "ACTIVE", administrativeEntity: { tradeName: "FORNECEDOR", legalName: "FORNECEDOR LTDA" } },
+    { id: "r2", identifier: "PG-2026-000010", grossAmount: "10.00", competenceDate: null, createdAt: "2026-09-01T10:00:00.000Z", lifecycleState: "CANCELLED", administrativeEntity: null },
+  ];
+  const html = renderToStaticMarkup(createElement(DashboardRecentRecords, { rows, loading: false, error: null }));
+  assert.match(html, /<caption[^>]*>Últimas obrigações registradas<\/caption>/); assert.match(html, /href="\/pagamentos\/r1"/);
+  assert.match(html, /10\/2026/); // competência data-only em UTC (não desloca para 09/2026)
+  assert.match(html, /Ativa/); assert.match(html, /Cancelada/); assert.match(html, /Não informada/);
+  assert.doesNotMatch(html, /Pendente|Em atraso|Atenção/); // estados independentes não viram "pendência"
+  const empty = renderToStaticMarkup(createElement(DashboardRecentRecords, { rows: [], loading: false, error: null }));
+  assert.match(empty, /Nenhuma obrigação registrada/);
+  const upload = { id: "u1", fileName: "folha-09.pdf", formato: "extrato-mensal", createdAt: "2026-10-01T10:00:00.000Z", totalColaboradores: 37, liquidoGeral: 8715.5, periodoChave: "09/2026" };
+  const latest = renderToStaticMarkup(createElement(DashboardPayrollLatest, { upload, loading: false, error: null }));
+  assert.match(latest, /folha-09\.pdf/); assert.match(latest, /Extrato Mensal/); assert.match(latest, /09\/2026/); assert.match(latest, />37</); assert.match(latest, /R\$ 8\.715,50/);
+  assert.doesNotMatch(latest, /progressbar|Processando|%/);
+  assert.match(renderToStaticMarkup(createElement(DashboardPayrollLatest, { upload: null, loading: false, error: null })), /Nenhuma extração registrada/);
+  assert.match(renderToStaticMarkup(createElement(DashboardPayrollLatest, { upload: null, loading: false, error: "Falhou." })), /Falhou\./);
+  assert.equal(renderToStaticMarkup(createElement(DashboardQuickActions, { permissions: [] })), ""); // sem ação permitida, nada
+  const actions = renderToStaticMarkup(createElement(DashboardQuickActions, { permissions: ["accounting.read"] }));
+  assert.match(actions, /href="\/contabilidade\/folha"/); assert.doesNotMatch(actions, /alimentacao/);
+});
+
+test("home 7L: '/' é a Home, a Folha segue em /contabilidade/folha e o login continua indo para '/'", async () => {
+  const [home, payroll, login, proxy] = await Promise.all(["../src/app/page.tsx", "../src/app/contabilidade/folha/page.tsx", "../src/app/login/page.tsx", "../src/proxy.ts"].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+  assert.match(home, /<HomeDashboard \/>/); assert.doesNotMatch(home, /PayrollWorkspace/);
+  assert.match(payroll, /<PayrollWorkspace \/>/);
+  assert.match(login, /router\.push\("\/"\)/); assert.match(proxy, /NextResponse\.redirect\(new URL\("\/", req\.nextUrl\)\)/); // redirect inalterado
 });

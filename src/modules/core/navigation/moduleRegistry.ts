@@ -1,6 +1,8 @@
 // Registro ÚNICO da navegação do App Shell (sidebar, título da aba, trilha do header).
 // Regras:
-// - Só entram itens com rota real; itens planejados não são links (ex.: Dashboard enquanto a Home não existe).
+// - Só entram itens com rota real; itens planejados ("planned") não são links e aparecem como "Em breve".
+// - Fase 7L: o Dashboard é a Home em "/" (destino do login) e fica disponível a todo usuário autenticado — os blocos de
+//   dados da Home é que são condicionados às permissões. A Folha vive só em /contabilidade/folha.
 // - `permissions` apenas ESCONDE navegação para quem não tem acesso (qualquer uma basta). O backend continua sendo
 //   a autoridade (requirePermission nas APIs); nenhuma regra nova de autorização é criada aqui.
 // - Subseções contextuais (Café da Manhã / Cesta Básica dentro de Alimentação) NÃO entram na sidebar.
@@ -30,7 +32,7 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
   {
     id: "overview",
     label: "Visão geral",
-    items: [{ id: "dashboard", label: "Dashboard", icon: "dashboard", availability: "planned" }],
+    items: [{ id: "dashboard", label: "Dashboard", href: "/", icon: "dashboard", matchPaths: ["exact:/"], availability: "available" }],
   },
   {
     id: "expenses",
@@ -46,7 +48,7 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
     id: "accounting",
     label: "Contabilidade",
     items: [
-      { id: "payroll", label: "Folha", href: "/contabilidade/folha", icon: "payroll", matchPaths: ["exact:/", "/contabilidade"], permissions: ["accounting.read"], availability: "available" },
+      { id: "payroll", label: "Folha", href: "/contabilidade/folha", icon: "payroll", matchPaths: ["/contabilidade"], permissions: ["accounting.read"], availability: "available" },
     ],
   },
   {
@@ -94,7 +96,7 @@ const expenses: RouteCrumb = { label: "Despesas", href: "/pagamentos" };
 const ROUTES: Array<{ pattern: RegExp; meta: (match: RegExpMatchArray) => RouteMeta }> = [
   { pattern: /^\/login$/, meta: () => ({ title: "Entrar", trail: [] }) },
   { pattern: /^\/redefinir-senha$/, meta: () => ({ title: "Definir nova senha", trail: [] }) },
-  { pattern: /^\/$/, meta: () => ({ title: "Folha de pagamento", trail: [{ label: "Contabilidade" }] }) },
+  { pattern: /^\/$/, meta: () => ({ title: "Visão geral", trail: [] }) },
   { pattern: /^\/contabilidade\/folha$/, meta: () => ({ title: "Folha de pagamento", trail: [{ label: "Contabilidade" }] }) },
   { pattern: /^\/pagamentos$/, meta: () => ({ title: "Despesas", trail: [] }) },
   { pattern: /^\/pagamentos\/alimentacao$/, meta: () => ({ title: "Alimentação", trail: [expenses] }) },
