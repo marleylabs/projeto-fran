@@ -1,9 +1,9 @@
-import { PayrollWorkspace } from "@/modules/accounting/payroll";
+import { HomeDashboard } from "@/modules/dashboard/ui/HomeDashboard";
 
 /**
- * Adaptador de compatibilidade. A raiz continuará apontando para o módulo de
- * folha até a Home Operacional do Financeiro Global ser implementada.
+ * Home oficial (Visão geral) — destino do login. Fase 7L: a raiz deixou de ser o adaptador da Folha, que continua na
+ * rota canônica /contabilidade/folha.
  */
 export default function HomePage() {
-  return <PayrollWorkspace />;
+  return <HomeDashboard />;
 }

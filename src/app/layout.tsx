@@ -17,9 +17,9 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// O título da aba vem do App Shell (registro central de rotas) via <title>; aqui só a descrição padrão.
 export const metadata: Metadata = {
-  title: "Extrato Mensal - Extrator de Folha de Pagamento",
-  description: "Extração automática de dados de PDFs de folha de pagamento (Extrato Mensal)",
+  description: "Plataforma financeira e administrativa: despesas, rateios, cadastros e folha.",
 };
 
 export default function RootLayout({

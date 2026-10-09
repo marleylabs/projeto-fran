@@ -11,6 +11,11 @@ export type ManualFoodSuccessResponse = {
 export type ManualFoodErrorResponse = { ok: false; error: string };
 export type ManualFoodResponse = ManualFoodSuccessResponse | ManualFoodErrorResponse;
 
+// Valor por refeição do lançamento manual (MA e PA, mesma regra): o campo vem pré-preenchido com o
+// valor configurado do fornecedor e pode ser ajustado; o servidor usa o valor informado e só recorre
+// ao valor configurado do fornecedor quando nada foi informado.
+export const manualFoodUsesSupplierPrice = (amount?: string | null) => !amount?.trim();
+
 export function buildManualFoodCombinations(employeeIds: string[], dates: string[], duplicateKeys = new Set<string>()) {
   const combinations = employeeIds.flatMap((employeeId) => dates.map((date) => ({ employeeId, date })));
   return {

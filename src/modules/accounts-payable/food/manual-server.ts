@@ -5,7 +5,9 @@ import { createFinancialRecordInTransaction } from "@/modules/accounts-payable/s
 import { FoodBatchValidationError, resolveFoodUnitPrice } from "./server";
 import { isFoodMaCycle, occurrenceBelongsToMaCycle } from "./cycles";
 import { normalizeFoodName } from "./ma-processing";
-import { buildManualFoodCombinations } from "./manual-contract";
+import { buildManualFoodCombinations, manualFoodUsesSupplierPrice } from "./manual-contract";
+import { FOOD_PA_INVOICE_REQUIRED_MESSAGE, foodPaInvoiceLabel, isFoodPaInvoiceCode } from "./invoice-company";
+import { loadFoodRateioSnapshots } from "./rateio-snapshot";
 
 type ManualFoodInput = {
   year: number;
@@ -16,7 +18,7 @@ type ManualFoodInput = {
   employeeIds?: string[];
   dates?: string[];
   occurredOn?: string;
-  collaborators?: Array<{ collaboratorId: string; quantity: number }>;
+  collaborators?: Array<{ collaboratorId: string; quantity: number; invoiceEmission?: string }>;
   invoiceEmission?: string;
   amount?: string;
   userId: string;
@@ -43,6 +45,13 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
     throw new FoodBatchValidationError(
       "Informe uma quantidade inteira de refeições para cada colaborador.",
     );
+  // PA: Emissão NF individual (define a empresa do rateio). Validada aqui — antes de qualquer escrita —
+  // independentemente do select do frontend: somente NF_01/NF_02; a empresa é derivada, nunca recebida.
+  if (input.locality === "PA" && paItems.some((item) => !isFoodPaInvoiceCode(item.invoiceEmission)))
+    throw new FoodBatchValidationError(FOOD_PA_INVOICE_REQUIRED_MESSAGE);
+  const paInvoiceById = new Map(
+    paItems.map((item) => [item.collaboratorId, isFoodPaInvoiceCode(item.invoiceEmission) ? foodPaInvoiceLabel(item.invoiceEmission) : null]),
+  );
 
   const dateValues =
     input.locality === "MA"
@@ -86,7 +95,7 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
     prisma.administrativeEntity.findUnique({
       where: { id: input.administrativeEntityId },
     }),
-    input.locality === "PA" || !input.amount?.trim()
+    manualFoodUsesSupplierPrice(input.amount)
       ? resolveFoodUnitPrice(
           input.year,
           input.month,
@@ -121,7 +130,8 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
         create: { year: input.year, month: input.month },
         update: {},
       });
-      const invoice = input.invoiceEmission?.trim() || null;
+      // MA não usa Emissão NF por colaborador; no PA ela é individual (paInvoiceById).
+      const maInvoice = input.locality === "MA" ? input.invoiceEmission?.trim() || null : null;
       const duplicateRows =
         input.locality === "PA"
           ? await tx.foodMealOccurrence.findMany({
@@ -130,7 +140,6 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
                 origin: "MANUAL",
                 included: true,
                 deletedAt: null,
-                invoiceEmission: invoice,
                 batch: {
                   competenceId: competence.id,
                   locality: "PA",
@@ -143,6 +152,7 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
                 employeeId: true,
                 officialName: true,
                 occurredOn: true,
+                invoiceEmission: true,
               },
             })
           : await tx.foodMealOccurrence.findMany({
@@ -166,8 +176,13 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
                 occurredOn: true,
               },
             });
+      // PA: duplicidade = mesmo colaborador com a MESMA Emissão NF já lançada (regra de antes, agora por linha).
+      const paDuplicateRows =
+        input.locality === "PA"
+          ? duplicateRows.filter((row) => row.employeeId && "invoiceEmission" in row && row.invoiceEmission === paInvoiceById.get(row.employeeId))
+          : duplicateRows;
       const duplicateIds = new Set(
-        duplicateRows
+        paDuplicateRows
           .map((row) => row.employeeId)
           .filter((id): id is string => Boolean(id)),
       );
@@ -182,6 +197,7 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
                 employee: employeeById.get(item.collaboratorId)!,
                 date: null,
                 quantity: item.quantity,
+                invoice: paInvoiceById.get(item.collaboratorId) ?? null,
               }))
           : buildManualFoodCombinations(
               ids,
@@ -196,8 +212,9 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
               employee: employeeById.get(item.employeeId)!,
               date: new Date(`${item.date}T00:00:00.000Z`),
               quantity: 1,
+              invoice: maInvoice,
             }));
-      const duplicateDetails = duplicateRows.map((row) => ({
+      const duplicateDetails = paDuplicateRows.map((row) => ({
         employeeId: row.employeeId,
         name: row.officialName,
         date: row.occurredOn?.toISOString().slice(0, 10) ?? null,
@@ -265,8 +282,10 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
           })
         )._max.sourceRow ?? 0;
       const restaurantName = entity.tradeName?.trim() || entity.legalName;
+      // Snapshot do rateio (Centro de Custo; Empresa no MA) lido do cadastro/configuração NO SERVIDOR, neste lançamento.
+      const snapshots = await loadFoodRateioSnapshots(tx, input.locality, accepted.map(({ employee }) => employee));
       await tx.foodMealOccurrence.createMany({
-        data: accepted.map(({ employee, date, quantity }, index) => ({
+        data: accepted.map(({ employee, date, quantity, invoice }, index) => ({
           batchId: batch!.id,
           employeeId: employee.id,
           sourceRow: source + index + 1,
@@ -277,6 +296,7 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
           officialName: employee.officialName,
           receivedDepartment: employee.department,
           confirmedDepartment: employee.department,
+          ...snapshots.get(employee.id),
           invoiceEmission: invoice,
           restaurantName: input.locality === "PA" ? restaurantName : null,
           validationStatus: "CONFIRMED",

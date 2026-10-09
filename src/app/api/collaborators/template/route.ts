@@ -1,2 +1,3 @@
-import { PERMISSIONS,requirePermission } from "@/lib/auth/permissions";import { generateCollaboratorTemplate } from "@/modules/collaborators/import";
-export async function GET(){const{response}=await requirePermission(PERMISSIONS.MASTER_DATA_READ);if(response)return response;return new Response(await generateCollaboratorTemplate(),{headers:{"Content-Type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","Content-Disposition":'attachment; filename="Mascara_Colaboradores.xlsx"'}});}
+import { PERMISSIONS,requirePermission } from "@/lib/auth/permissions";import { collaboratorTemplate } from "@/modules/collaborators/server";
+// Máscara pré-preenchida com a base (inclui ID e CPF para reimportação): exige permissão de gestão do cadastro.
+export async function GET(){const{response}=await requirePermission(PERMISSIONS.MASTER_DATA_MANAGE);if(response)return response;return new Response(await collaboratorTemplate(),{headers:{"Content-Type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","Content-Disposition":'attachment; filename="Mascara_Colaboradores.xlsx"',"Cache-Control":"no-store"}});}

@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui";
+import { ChevronDown, Search } from "lucide-react";
+import { Button, FeedbackAlert, StatusBadge, type StatusTone } from "@/components/ui";
 import { compareDateThenId, comparePtBr } from "@/lib/sorting/ptBr";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
+import { FOOD_PA_INVOICE_CODES, FOOD_PA_INVOICES, foodInvoiceEmissionToCompany, parseFoodPaInvoice, type FoodPaInvoiceCode } from "../invoice-company";
 
 type Employee = { id: string; officialName: string; department: string };
 type Occurrence = {
@@ -29,6 +31,8 @@ type Value = {
   disposition: Occurrence["disposition"];
   mealQuantity: number;
   saveAlias: boolean;
+  // PA: Emissão NF da linha (NF_01/NF_02; "" = não reconhecida/manter a atual).
+  invoiceCode: FoodPaInvoiceCode | "";
 };
 type StatusFilter = "ALL" | "OK" | "FUZZY" | "ALIAS" | "PENDING" | "DUPLICATE";
 type Sort = "PRIORITY" | "NAME" | "DEPARTMENT" | "DATE";
@@ -44,43 +48,43 @@ const statusInfo = (row: Occurrence, value: Value) => {
   if (value.disposition === "DUPLICATE" || row.duplicateCandidate)
     return {
       key: "DUPLICATE",
-      label: "⚠ Possível duplicidade",
+      label: "Possível duplicidade",
       priority: 1,
-      color: "bg-amber-100 text-amber-900",
+      tone: "warning" as StatusTone,
     };
   if (row.matchMethod === "UNMATCHED" || !value.employeeId)
     return {
       key: "PENDING",
-      label: "⚠ Revisar",
+      label: "Revisar",
       priority: 0,
-      color: "bg-red-100 text-red-800",
+      tone: "danger" as StatusTone,
     };
   if (row.matchMethod === "FUZZY")
     return {
       key: "FUZZY",
-      label: "↻ Corrigido automaticamente",
+      label: "Corrigido automaticamente",
       priority: 2,
-      color: "bg-blue-100 text-blue-800",
+      tone: "info" as StatusTone,
     };
   if (row.matchMethod === "ALIAS")
     return {
       key: "ALIAS",
       label: "Alias conhecido",
       priority: 2,
-      color: "bg-violet-100 text-violet-800",
+      tone: "neutral" as StatusTone,
     };
   if (row.matchMethod === "MANUAL")
     return {
       key: "OK",
-      label: "✓ Corrigido",
+      label: "Corrigido",
       priority: 3,
-      color: "bg-emerald-100 text-emerald-800",
+      tone: "success" as StatusTone,
     };
   return {
     key: "OK",
-    label: "✓ Identificado",
+    label: "Identificado",
     priority: 3,
-    color: "bg-emerald-100 text-emerald-800",
+    tone: "success" as StatusTone,
   };
 };
 
@@ -124,15 +128,15 @@ function EmployeeCombobox({
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="flex w-full items-center justify-between rounded-md border border-border bg-white px-3 py-2 text-left"
+        className="flex w-full items-center justify-between rounded-md border border-border bg-surface px-3 py-2 text-left"
       >
         <span className={selected ? "" : "text-text-muted"}>
           {selected?.officialName ?? "Buscar colaborador…"}
         </span>
-        <span aria-hidden>⌄</span>
+        <ChevronDown size={16} aria-hidden="true" className="shrink-0 text-foreground-muted" />
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 w-full min-w-64 rounded-md border border-border bg-white p-2 shadow-xl">
+        <div className="absolute z-20 mt-1 w-full min-w-64 rounded-md border border-border bg-surface p-2 shadow-xl">
           <input
             autoFocus
             value={query}
@@ -200,12 +204,14 @@ function EmployeeCombobox({
 
 export function FoodMaEditor({
   batchId,
+  locality,
   occurrences,
   employees,
   cancel,
   reload,
 }: {
   batchId: string;
+  locality?: string;
   occurrences: Occurrence[];
   employees: Employee[];
   cancel: () => void;
@@ -223,6 +229,7 @@ export function FoodMaEditor({
             disposition: row.disposition ?? "VALID",
             mealQuantity: row.mealQuantity,
             saveAlias: false,
+            invoiceCode: parseFoodPaInvoice(row.invoiceEmission) ?? "",
           } satisfies Value,
         ]),
       ),
@@ -357,10 +364,12 @@ export function FoodMaEditor({
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            edits: occurrences.map((row) => ({
-              occurrenceId: row.id,
-              ...values[row.id],
-            })),
+            edits: occurrences.map((row) => {
+              const { invoiceCode, ...value } = values[row.id];
+              // NF só é enviada quando alterada (PA): muda apenas a empresa; valor/refeições preservados.
+              const changedInvoice = locality === "PA" && invoiceCode && invoiceCode !== parseFoodPaInvoice(row.invoiceEmission);
+              return { occurrenceId: row.id, ...value, ...(changedInvoice ? { invoiceEmission: invoiceCode } : {}) };
+            }),
           }),
         },
       );
@@ -402,7 +411,7 @@ export function FoodMaEditor({
               setStatus("ALL");
               setPendingOnly(false);
             }}
-            className="rounded-md border border-border bg-white p-3 text-left"
+            className="rounded-md border border-border bg-surface p-3 text-left"
           >
             <strong className="block text-xl">{occurrences.length}</strong>
             <span className="text-xs text-text-muted">
@@ -415,10 +424,10 @@ export function FoodMaEditor({
               setStatus("FUZZY");
               setPendingOnly(false);
             }}
-            className="rounded-md border border-blue-200 bg-blue-50 p-3 text-left"
+            className="rounded-md border border-info/30 bg-info-soft p-3 text-left"
           >
             <strong className="block text-xl">{counts.FUZZY ?? 0}</strong>
-            <span className="text-xs text-blue-800">
+            <span className="text-xs text-info-text">
               Corrigidas automaticamente
             </span>
           </button>
@@ -428,31 +437,29 @@ export function FoodMaEditor({
               setStatus("ALL");
               setPendingOnly(true);
             }}
-            className="rounded-md border border-amber-300 bg-amber-50 p-3 text-left"
+            className="rounded-md border border-warning/40 bg-warning-soft p-3 text-left"
           >
             <strong className="block text-xl">
               {(counts.PENDING ?? 0) + (counts.DUPLICATE ?? 0)}
             </strong>
-            <span className="text-xs text-amber-900">Precisam de revisão</span>
+            <span className="text-xs text-warning-text">Precisam de revisão</span>
           </button>
         </div>
         <div className="mt-4 grid gap-2 lg:grid-cols-[minmax(240px,2fr)_1fr_1fr_1fr]">
           <label className="relative">
             <span className="sr-only">Buscar</span>
-            <span className="pointer-events-none absolute left-3 top-2.5">
-              ⌕
-            </span>
+            <Search size={16} aria-hidden="true" className="pointer-events-none absolute left-3 top-2.5 text-foreground-muted" />
             <input
               value={queryInput}
               onChange={(event) => setQueryInput(event.target.value)}
               placeholder="Buscar colaborador, nome recebido ou setor..."
-              className="w-full rounded-md border border-border bg-white py-2 pl-9 pr-3"
+              className="w-full rounded-md border border-border bg-surface py-2 pl-9 pr-3"
             />
           </label>
           <select
             value={department}
             onChange={(event) => setDepartment(event.target.value)}
-            className="min-w-0 rounded-md border border-border bg-white px-3 py-2"
+            className="min-w-0 rounded-md border border-border bg-surface px-3 py-2"
           >
             <option value="ALL">Todos os setores</option>
             {departments.map((item) => (
@@ -462,7 +469,7 @@ export function FoodMaEditor({
           <select
             value={status}
             onChange={(event) => setStatus(event.target.value as StatusFilter)}
-            className="min-w-0 rounded-md border border-border bg-white px-3 py-2"
+            className="min-w-0 rounded-md border border-border bg-surface px-3 py-2"
           >
             <option value="ALL">Todas as situações</option>
             <option value="OK">OK</option>
@@ -474,7 +481,7 @@ export function FoodMaEditor({
           <select
             value={sort}
             onChange={(event) => setSort(event.target.value as Sort)}
-            className="min-w-0 rounded-md border border-border bg-white px-3 py-2"
+            className="min-w-0 rounded-md border border-border bg-surface px-3 py-2"
           >
             <option value="PRIORITY">Pendências primeiro</option>
             <option value="NAME">Ordenar por nome</option>
@@ -483,7 +490,7 @@ export function FoodMaEditor({
           </select>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <label className="flex cursor-pointer items-center gap-2 rounded-full border border-amber-300 bg-white px-3 py-2 text-sm font-semibold">
+          <label className="flex cursor-pointer items-center gap-2 rounded-full border border-warning/40 bg-surface px-3 py-2 text-sm font-semibold">
             <input
               type="checkbox"
               checked={pendingOnly}
@@ -505,7 +512,7 @@ export function FoodMaEditor({
           </span>
         </div>
       </div>
-      <div className="border-y border-border bg-white">
+      <div className="border-y border-border bg-surface">
         <div className="hidden grid-cols-[minmax(150px,1.1fr)_minmax(180px,1.5fr)_minmax(110px,1fr)_auto_auto] gap-3 border-b border-border px-5 py-3 text-xs font-semibold uppercase text-text-muted lg:grid">
           <span>Origem</span>
           <span>Colaborador identificado</span>
@@ -547,11 +554,7 @@ export function FoodMaEditor({
                     </span>
                     <span className="block truncate">{value.department}</span>
                   </div>
-                  <span
-                    className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${info.color}`}
-                  >
-                    {info.label}
-                  </span>
+                  <span className="w-fit"><StatusBadge tone={info.tone}>{info.label}</StatusBadge></span>
                   <button
                     type="button"
                     onClick={() => setEditingId(isEditing ? null : row.id)}
@@ -565,8 +568,8 @@ export function FoodMaEditor({
                   </button>
                 </div>
                 {isEditing && (
-                  <div className="mt-4 grid gap-3 rounded-md border border-border bg-slate-50 p-4 md:grid-cols-2">
-                    <div className="rounded-md bg-white p-3 text-sm">
+                  <div className="mt-4 grid gap-3 rounded-md border border-border bg-surface-muted p-4 md:grid-cols-2">
+                    <div className="rounded-md bg-surface p-3 text-sm">
                       <span className="block text-xs text-text-muted">
                         Nome recebido — somente auditoria
                       </span>
@@ -605,7 +608,7 @@ export function FoodMaEditor({
                           onChange={(event) =>
                             update(row.id, { officialName: event.target.value })
                           }
-                          className="w-full rounded-md border border-border bg-white px-3 py-2"
+                          className="w-full rounded-md border border-border bg-surface px-3 py-2"
                         />
                       </label>
                     )}
@@ -616,7 +619,7 @@ export function FoodMaEditor({
                         onChange={(event) =>
                           update(row.id, { department: normalizeOrganizationalValue(event.target.value) })
                         }
-                        className="w-full rounded-md border border-border bg-white px-3 py-2"
+                        className="w-full rounded-md border border-border bg-surface px-3 py-2"
                       />
                     </label>
                     <label className="text-sm">
@@ -629,14 +632,31 @@ export function FoodMaEditor({
                               .value as Value["disposition"],
                           })
                         }
-                        className="w-full rounded-md border border-border bg-white px-3 py-2"
+                        className="w-full rounded-md border border-border bg-surface px-3 py-2"
                       >
                         <option value="VALID">Válida</option>
                         <option value="DUPLICATE">Duplicada</option>
                         <option value="IGNORED">Ignorada</option>
                       </select>
                     </label>
-                    {!row.occurredOn && <label className="text-sm"><span className="mb-1 block">Quantidade de refeições</span><input type="number" min="1" step="1" value={value.mealQuantity} onChange={event=>update(row.id,{mealQuantity:Number(event.target.value)})} className="w-full rounded-md border border-border bg-white px-3 py-2" /></label>}
+                    {locality === "PA" && (
+                      <label className="text-sm">
+                        <span className="mb-1 block">Emissão NF</span>
+                        <select
+                          value={value.invoiceCode}
+                          onChange={(event) => update(row.id, { invoiceCode: (parseFoodPaInvoice(event.target.value) ?? "") })}
+                          aria-label={`Emissão NF de ${value.officialName || row.receivedName}`}
+                          className="w-full rounded-md border border-border bg-surface px-3 py-2"
+                        >
+                          {!value.invoiceCode && <option value="">{row.invoiceEmission ? `Atual: ${row.invoiceEmission} (manter)` : "Selecione..."}</option>}
+                          {FOOD_PA_INVOICE_CODES.map((code) => (
+                            <option key={code} value={code}>{FOOD_PA_INVOICES[code].label} — {FOOD_PA_INVOICES[code].company}</option>
+                          ))}
+                        </select>
+                        <span className="mt-1 block text-xs text-text-muted">Empresa no rateio: {foodInvoiceEmissionToCompany(value.invoiceCode || row.invoiceEmission) ?? "não identificada"}</span>
+                      </label>
+                    )}
+                    {!row.occurredOn && <label className="text-sm"><span className="mb-1 block">Quantidade de refeições</span><input type="number" min="1" step="1" value={value.mealQuantity} onChange={event=>update(row.id,{mealQuantity:Number(event.target.value)})} className="w-full rounded-md border border-border bg-surface px-3 py-2" /></label>}
                     <label className="flex items-center gap-2 text-sm">
                       <input
                         type="checkbox"
@@ -709,11 +729,9 @@ export function FoodMaEditor({
         </div>
       </div>
       {error && (
-        <p className="mx-4 mb-3 rounded bg-red-50 p-3 text-sm text-red-700">
-          {error}
-        </p>
+        <FeedbackAlert status="error" className="mx-4 mb-3">{error}</FeedbackAlert>
       )}
-      <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-white/95 p-4 shadow-[0_-4px_12px_rgba(0,0,0,0.08)] backdrop-blur">
+      <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-surface/95 p-4 shadow-elevation-sm backdrop-blur">
         <Button
           type="button"
           onClick={cancel}

@@ -56,6 +56,18 @@ model User {
   passwordResetTokens PasswordResetToken[]
   administrativeActions UserAccessAudit[] @relation("UserAccessAuditActor")
   receivedAdministrativeActions UserAccessAudit[] @relation("UserAccessAuditTarget")
+  trainingExpensesCreated TrainingExpense[] @relation("TrainingExpenseCreator")
+  trainingExpensesCancelled TrainingExpense[] @relation("TrainingExpenseCanceller")
+  trainingExpenseRevisions TrainingExpenseRevision[] @relation("TrainingExpenseRevisionEditor")
+  transitHolidays TransitVoucherHoliday[] @relation("TransitHolidayCreator")
+  breakfastMaps BreakfastMap[] @relation("BreakfastMapCreator")
+  cancelledBreakfastMaps BreakfastMap[] @relation("BreakfastMapCanceller")
+  deletedBreakfastAllocations BreakfastAllocation[] @relation("BreakfastAllocationDeleter")
+  breakfastHolidays BreakfastHoliday[] @relation("BreakfastHolidayCreator")
+  basicBasketMaps BasicBasketMap[] @relation("BasicBasketMapCreator")
+  cancelledBasicBasketMaps BasicBasketMap[] @relation("BasicBasketMapCanceller")
+  deletedBasicBasketAllocations BasicBasketAllocation[] @relation("BasicBasketAllocationDeleter")
+  basicBasketPointMirrorImports BasicBasketPointMirrorImport[] @relation("BasicBasketPointMirrorImportCreator")
 }
 
 model PasswordResetToken {
@@ -156,6 +168,13 @@ model Company {
   departments      Department[]
   financialRecords FinancialRecord[]
   approvalPolicies ApprovalPolicy[]
+  transitVoucherAllocations TransitVoucherAllocation[]
+  transitVoucherEmployeeConfigs TransitVoucherEmployeeConfig[]
+  breakfastAllocations BreakfastAllocation[]
+  breakfastEmployeeConfigs BreakfastEmployeeConfig[]
+  basicBasketAllocations BasicBasketAllocation[]
+  basicBasketEmployeeConfigs BasicBasketEmployeeConfig[]
+  foodMealOccurrences FoodMealOccurrence[]
 }
 
 model Branch {
@@ -209,6 +228,13 @@ model AdministrativeEntity {
   foodAllocations  FoodAllocation[]
   transitVoucherMaps TransitVoucherMap[]
   transitVoucherAllocations TransitVoucherAllocation[]
+  breakfastMaps    BreakfastMap[]
+  breakfastAllocations BreakfastAllocation[]
+  basicBasketMaps  BasicBasketMap[]
+  basicBasketAllocations BasicBasketAllocation[]
+  trainingProposals TrainingProposal[]
+  trainings        Training[]
+  trainingExpenses TrainingExpense[]
 
   @@index([cnpj])
   @@index([activityArea])
@@ -493,6 +519,9 @@ model FinancialRecord {
   approvalRequests       ApprovalRequest[]
   foodBatch              FoodBatch?
   transitVoucherMap      TransitVoucherMap?
+  breakfastMap           BreakfastMap?
+  basicBasketMap         BasicBasketMap?
+  trainingExpense        TrainingExpense?
 
   @@unique([sequenceYear, sequenceNumber])
   @@index([companyId, dueDate])
@@ -614,6 +643,12 @@ model FoodEmployee {
   department     String
   jobTitle       String               @default("")
   costCenter     String               @default("")
+  // CPF: só os 11 dígitos (sem pontuação); null = ainda não informado. Dado pessoal — omitido por
+  // padrão no PrismaClient (ver src/lib/db/prisma.ts); só é lido onde for explicitamente selecionado.
+  cpf            String?              @unique
+  // Data de Admissão: só dia/mês/ano (DATE, sem hora/timezone); null = ainda não informada.
+  // Dado cadastral pessoal — também omitido por padrão no PrismaClient. Não é chave de match.
+  admissionDate  DateTime?            @db.Date
   active         Boolean              @default(true)
   mergedIntoId   String?
   createdAt      DateTime             @default(now())
@@ -621,6 +656,12 @@ model FoodEmployee {
   aliases        FoodEmployeeAlias[]
   occurrences    FoodMealOccurrence[]
   transitAllocations TransitVoucherAllocation[]
+  breakfastAllocations BreakfastAllocation[]
+  trainingExpenseParticipations TrainingExpenseParticipant[]
+  transitConfig  TransitVoucherEmployeeConfig?
+  breakfastConfig BreakfastEmployeeConfig?
+  basicBasketAllocations BasicBasketAllocation[]
+  basicBasketConfig BasicBasketEmployeeConfig?
   mergedInto     FoodEmployee?        @relation("FoodEmployeeMerges", fields: [mergedIntoId], references: [id], onDelete: Restrict)
   mergedEmployees FoodEmployee[]      @relation("FoodEmployeeMerges")
 
@@ -679,6 +720,15 @@ model FoodMealOccurrence {
   confirmedDepartment    String?
   invoiceEmission        String?
   restaurantName         String?
+  // Snapshot histórico SÓ para agrupar o rateio (Fase 7E.2), capturado no servidor no lançamento/finalização (ou ao
+  // trocar o colaborador numa edição). Não participa de nenhum cálculo. null = lançamento anterior à captura
+  // ("Sem centro de custo" / "Sem empresa" no rateio) — sem backfill pelo cadastro atual.
+  //   costCenter: FoodEmployee.costCenter no momento (MA e PA).
+  //   companyId/company: MA = empresa padrão do colaborador no Café da Manhã (BreakfastEmployeeConfig) no momento;
+  //   PA = não gravado (a Empresa continua DERIVADA da Emissão NF salva, invoiceEmission).
+  costCenter             String?
+  companyId              String?
+  company                String?
   duplicateCandidate     Boolean                        @default(false)
   duplicateConfirmed     Boolean                        @default(false)
   included               Boolean                        @default(true)
@@ -696,6 +746,7 @@ model FoodMealOccurrence {
   deletionReason         String?
   batch                  FoodBatch                      @relation(fields: [batchId], references: [id], onDelete: Cascade)
   employee               FoodEmployee?                  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  companyRef             Company?                       @relation(fields: [companyId], references: [id], onDelete: Restrict)
   deletedBy              User?                          @relation("FoodOccurrenceDeleter", fields: [deletedByUserId], references: [id], onDelete: Restrict)
 
   @@index([batchId, normalizedReceivedName])
@@ -723,6 +774,8 @@ model TransitVoucherCompetence {
   id          String                    @id @default(cuid())
   year        Int
   month       Int
+  fareUnitPrice Decimal?                @db.Decimal(19, 4)
+  holidays    TransitVoucherHoliday[]
   createdAt   DateTime                  @default(now())
   updatedAt   DateTime                  @updatedAt
   maps        TransitVoucherMap[]
@@ -753,6 +806,7 @@ model TransitVoucherMap {
   processedAt            DateTime                 @default(now())
   createdAt              DateTime                 @default(now())
   updatedAt              DateTime                 @updatedAt
+  holidaysSnapshot       Json?
   cancelledAt            DateTime?
   cancelledByUserId      String?
   cancellationReason     String?
@@ -795,6 +849,16 @@ model TransitVoucherAllocation {
   deletedAt              DateTime?
   deletedByUserId        String?
   deletionReason         String?
+  companyId              String?
+  dailyPassageQuantity   Int?
+  previousPassageDifference Int?
+  passageDiscount        Int?
+  workingDays            Int?
+  passagesToReceive      Int?
+  fareUnitPrice          Decimal?                 @db.Decimal(19, 4)
+  observationType        TransitObservationType?
+  observationDetails     String?
+  companyRef             Company?                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
   map                    TransitVoucherMap        @relation(fields: [mapId], references: [id], onDelete: Cascade)
   competence             TransitVoucherCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
   administrativeEntity   AdministrativeEntity     @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
@@ -806,6 +870,42 @@ model TransitVoucherAllocation {
   @@index([employeeId])
   @@index([competenceId, administrativeEntityId])
   @@index([mapId, deletedAt])
+}
+
+enum TransitObservationType {
+  VACATION
+  OTHER
+}
+
+// Feriados marcados manualmente por competência (sem API externa) — só
+// reduzem dias úteis quando caem de segunda a sexta.
+model TransitVoucherHoliday {
+  id              String                   @id @default(cuid())
+  competenceId    String
+  date            DateTime                 @db.Date
+  name            String
+  createdByUserId String
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  competence      TransitVoucherCompetence @relation(fields: [competenceId], references: [id], onDelete: Cascade)
+  createdBy       User                     @relation("TransitHolidayCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([competenceId, date])
+}
+
+// Padrão atual do colaborador para novos lançamentos — NUNCA é lido para
+// recalcular lançamentos antigos (cada linha guarda seu próprio snapshot).
+model TransitVoucherEmployeeConfig {
+  id                   String       @id @default(cuid())
+  employeeId           String       @unique
+  dailyPassageQuantity Int
+  defaultCompanyId     String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  employee             FoodEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  defaultCompany       Company?     @relation(fields: [defaultCompanyId], references: [id], onDelete: SetNull)
+
+  @@index([defaultCompanyId])
 }
 
 model TransitVoucherIssue {
@@ -828,6 +928,286 @@ model TransitVoucherIssue {
   @@index([mapId, resolvedAt])
 }
 
+// ===== Café da Manhã (subseção de Despesas → Alimentação) =====
+// Domínio próprio, sem relação com TransitVoucher* — só reaproveita as funções puras de
+// calendário/feriados nacionais (@/modules/shared) e o kernel financeiro (FinancialRecord),
+// no mesmo espírito do Vale Transporte: Competência (tarifa/feriados) → Map (lançamento por
+// cadastro da obrigação, com holidaysSnapshot) → Allocation (linha por colaborador, com
+// snapshot completo). Café da Manhã tem sua PRÓPRIA lista de feriados manuais (BreakfastHoliday)
+// — não compartilha a tabela do Vale Transporte, decisão registrada no relatório de análise.
+model BreakfastCompetence {
+  id          String               @id @default(cuid())
+  year        Int
+  month       Int
+  unitPrice   Decimal?             @db.Decimal(19, 4)
+  holidays    BreakfastHoliday[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  maps        BreakfastMap[]
+  allocations BreakfastAllocation[]
+
+  @@unique([year, month])
+}
+
+model BreakfastMap {
+  id                     String              @id @default(cuid())
+  competenceId           String
+  administrativeEntityId String
+  createdByUserId        String
+  financialRecordId      String?             @unique
+  version                Int
+  current                Boolean             @default(true)
+  status                 FoodBatchStatus
+  totalRows              Int
+  validRows              Int
+  invalidRows            Int
+  totalAmount            Decimal             @db.Decimal(19, 4)
+  holidaysSnapshot       Json?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  cancelledAt            DateTime?
+  cancelledByUserId      String?
+  cancellationReason     String?
+  competence             BreakfastCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  createdBy              User                @relation("BreakfastMapCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  cancelledBy            User?               @relation("BreakfastMapCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  financialRecord        FinancialRecord?    @relation(fields: [financialRecordId], references: [id], onDelete: Restrict)
+  allocations            BreakfastAllocation[]
+
+  @@unique([competenceId, administrativeEntityId, version])
+  @@index([competenceId, administrativeEntityId, current])
+}
+
+model BreakfastAllocation {
+  id                     String              @id @default(cuid())
+  mapId                  String
+  competenceId           String
+  administrativeEntityId String
+  sourceRow              Int
+  employeeId             String?
+  employeeName           String
+  company                String
+  companyId              String?
+  department             String?
+  costCenter             String?
+  workingDays            Int?
+  baseQuantity           Int?
+  extraQuantity          Int?
+  discountQuantity       Int                 @default(0)
+  finalQuantity          Int?
+  unitPrice              Decimal?            @db.Decimal(19, 4)
+  amount                 Decimal             @db.Decimal(19, 4)
+  observationType        BreakfastObservationType?
+  observationDetails     String?
+  createdByUserId        String
+  createdAt              DateTime            @default(now())
+  deletedAt              DateTime?
+  deletedByUserId        String?
+  deletionReason         String?
+  map                    BreakfastMap        @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  competence             BreakfastCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  employee               FoodEmployee?       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  companyRef             Company?            @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  deletedBy              User?               @relation("BreakfastAllocationDeleter", fields: [deletedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([mapId, deletedAt])
+  @@index([mapId, company, department])
+  @@index([employeeId])
+  @@index([competenceId, administrativeEntityId])
+}
+
+enum BreakfastObservationType {
+  RETROACTIVE
+  OTHER
+}
+
+// Feriados manuais próprios do Café da Manhã (estaduais/municipais/internos) — mesma regra do
+// Vale Transporte (só reduz dia útil de segunda a sexta), mas tabela própria: ver nota acima.
+model BreakfastHoliday {
+  id              String              @id @default(cuid())
+  competenceId    String
+  date            DateTime            @db.Date
+  name            String
+  createdByUserId String
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  competence      BreakfastCompetence @relation(fields: [competenceId], references: [id], onDelete: Cascade)
+  createdBy       User                @relation("BreakfastHolidayCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([competenceId, date])
+}
+
+// Empresa padrão do colaborador para Café da Manhã (preferência atual; NÃO é snapshot
+// histórico) — mesmo padrão do TransitVoucherEmployeeConfig, domínio próprio.
+model BreakfastEmployeeConfig {
+  id               String       @id @default(cuid())
+  employeeId       String       @unique
+  defaultCompanyId String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  employee         FoodEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  defaultCompany   Company?     @relation(fields: [defaultCompanyId], references: [id], onDelete: SetNull)
+
+  @@index([defaultCompanyId])
+}
+
+// ===== Cesta Básica (subseção de Despesas → Alimentação) =====
+// Domínio próprio (não reutiliza tabelas do Café da Manhã/VT), mesmo desenho do Café da Manhã:
+// Competência (ano/mês) → Map (lançamento por cadastro da obrigação/fornecedor, com snapshot da data de
+// pagamento = 2ª quarta-feira) → Allocation (linha por colaborador com snapshot completo: empresa,
+// departamento, centro de custo, data de admissão usada e todos os valores) → FinancialRecord.
+// Calendário/feriados são só visuais (sem tabela própria; leitura dos feriados de VT e Café).
+model BasicBasketCompetence {
+  id          String                  @id @default(cuid())
+  year        Int
+  month       Int
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  maps        BasicBasketMap[]
+  allocations BasicBasketAllocation[]
+
+  @@unique([year, month])
+}
+
+model BasicBasketMap {
+  id                     String                @id @default(cuid())
+  competenceId           String
+  administrativeEntityId String
+  createdByUserId        String
+  financialRecordId      String?               @unique
+  version                Int
+  current                Boolean               @default(true)
+  status                 FoodBatchStatus
+  // Snapshot dos pagamentos: anterior (2ª quarta do mês anterior — corte de elegibilidade do Retroativo) e atual.
+  previousPaymentDate    DateTime              @db.Date
+  paymentDate            DateTime              @db.Date
+  daysInMonth            Int
+  totalRows              Int
+  totalAmount            Decimal               @db.Decimal(19, 4)
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+  cancelledAt            DateTime?
+  cancelledByUserId      String?
+  cancellationReason     String?
+  competence             BasicBasketCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity  @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  createdBy              User                  @relation("BasicBasketMapCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  cancelledBy            User?                 @relation("BasicBasketMapCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  financialRecord        FinancialRecord?      @relation(fields: [financialRecordId], references: [id], onDelete: Restrict)
+  allocations            BasicBasketAllocation[]
+
+  @@unique([competenceId, administrativeEntityId, version])
+  @@index([competenceId, administrativeEntityId, current])
+}
+
+model BasicBasketAllocation {
+  id                     String                @id @default(cuid())
+  mapId                  String
+  competenceId           String
+  administrativeEntityId String
+  sourceRow              Int
+  employeeId             String?
+  employeeName           String
+  company                String
+  companyId              String?
+  department             String?
+  costCenter             String?
+  admissionDate          DateTime?             @db.Date
+  // Base financeira = MÊS COMERCIAL de 30 dias (nunca os dias reais do mês; esses ficam só em BasicBasketMap.daysInMonth).
+  // Retroativo de admissão (snapshot), referência = MÊS ANTERIOR à competência: mensal × retroactiveDays ÷
+  // referenceCalculationDays (30), com retroactiveDays = 30 − dia comercial da admissão + 1 quando pagamento anterior <
+  // admissão ≤ fim do mês anterior (dia 31 conta como 30). retroactiveEligible = retroactiveDays > 0.
+  referenceCalculationDays Int
+  retroactiveDays        Int
+  // Espelho de Ponto (mês de referência): Falta Injustificada corta o Retroativo; Férias aplicáveis (dias comerciais
+  // dentro do direito) reduzem os dias. Retroativo = mensal × retroactivePayableDays ÷ 30 (0 se houver Falta).
+  retroactiveVacationDays Int                  @default(0)
+  retroactiveUnjustifiedAbsence Boolean        @default(false)
+  retroactivePayableDays Int
+  // Férias MANUAIS da Cesta da competência (Fase 7E.3): dias financeiros (0..30) informados no lançamento para Férias
+  // programadas que o Espelho ainda não tem. null = usa as Férias APROVADAS do Espelho; 0 = override explícito de zero.
+  // Quando preenchido SUBSTITUI (nunca soma) as importadas em currentVacationDays; não afeta o Retroativo nem a Falta.
+  manualVacationDays     Int?
+  // Dias de Férias da competência vindos das ocorrências APROVADAS do Espelho (antes do override manual); null = sem
+  // importação aplicada. Histórico: manual × importado × efetivo (currentVacationDays).
+  importedVacationDays   Int?
+  retroactiveEligible    Boolean               @default(false)
+  driverBonus            Decimal               @db.Decimal(19, 4)
+  agreementAmount        Decimal               @db.Decimal(19, 4)
+  // Cesta da competência (snapshot): valor MENSAL cheio (configuração, 100% do mês) e valor PAGO
+  // (basketAmount = mensal × currentBasketDays ÷ currentCalculationDays (30); é o que entra no Total/rateio/obrigação).
+  monthlyBasketAmount    Decimal               @db.Decimal(19, 4)
+  currentCalculationDays Int
+  currentBasketDays      Int
+  // Espelho de Ponto (mês da competência): Férias aplicáveis e Falta Injustificada (corta a Cesta do mês inteiro).
+  // basketAmount = mensal × currentPayableDays ÷ 30 (0 se houver Falta). Sem importação: 0 / false / = currentBasketDays.
+  currentVacationDays    Int                   @default(0)
+  currentUnjustifiedAbsence Boolean            @default(false)
+  currentPayableDays     Int
+  // Importação do Espelho de Ponto usada (ajustes processados, sem arquivo/CPF); null = lançamento sem importação.
+  pointMirrorImportId    String?
+  basketAmount           Decimal               @db.Decimal(19, 4)
+  retroactiveAmount      Decimal               @db.Decimal(19, 4)
+  amount                 Decimal               @db.Decimal(19, 4)
+  observation            String?
+  createdByUserId        String
+  createdAt              DateTime              @default(now())
+  deletedAt              DateTime?
+  deletedByUserId        String?
+  deletionReason         String?
+  map                    BasicBasketMap        @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  competence             BasicBasketCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity  @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  employee               FoodEmployee?         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  companyRef             Company?              @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  deletedBy              User?                 @relation("BasicBasketAllocationDeleter", fields: [deletedByUserId], references: [id], onDelete: Restrict)
+  pointMirrorImport      BasicBasketPointMirrorImport? @relation(fields: [pointMirrorImportId], references: [id], onDelete: Restrict)
+
+  @@index([mapId, deletedAt])
+  @@index([employeeId])
+  @@index([competenceId, administrativeEntityId])
+  @@index([pointMirrorImportId])
+}
+
+// Espelho de Ponto da Cesta Básica: SÓ os ajustes já processados (por colaborador: datas de Falta Injustificada e
+// de Férias no mês da competência e no mês anterior). O arquivo original, CPF e demais colunas NUNCA são gravados.
+// O salvamento do lançamento referencia este registro e o servidor recalcula tudo a partir dele (o cliente não
+// envia dias/valores). Registros sem lançamento vinculado são descartáveis.
+model BasicBasketPointMirrorImport {
+  id              String   @id @default(cuid())
+  year            Int
+  month           Int
+  sourceRows      Int
+  // { [employeeId]: { currentAbsenceDates: string[], currentVacationDates: string[], referenceAbsenceDates: string[], referenceVacationDates: string[] } }
+  occurrences     Json
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  createdBy       User     @relation("BasicBasketPointMirrorImportCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  allocations     BasicBasketAllocation[]
+
+  @@index([year, month])
+  @@index([createdAt])
+}
+
+// Padrão ATUAL do colaborador para a Cesta Básica (empresa e valores pré-preenchidos na próxima
+// competência). Atualizado ao salvar um lançamento; NUNCA relido para recalcular histórico.
+// Retroativo e Observação não são padrão (são da competência).
+model BasicBasketEmployeeConfig {
+  id               String       @id @default(cuid())
+  employeeId       String       @unique
+  defaultCompanyId String?
+  driverBonus      Decimal      @default(0) @db.Decimal(19, 4)
+  agreementAmount  Decimal      @default(0) @db.Decimal(19, 4)
+  basketAmount     Decimal      @default(0) @db.Decimal(19, 4)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  employee         FoodEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  defaultCompany   Company?     @relation(fields: [defaultCompanyId], references: [id], onDelete: SetNull)
+
+  @@index([defaultCompanyId])
+}
 model FinancialDocumentFile {
   id                String                  @id @default(cuid())
   financialRecordId String
@@ -983,6 +1363,166 @@ model ApprovalRequest {
 
   @@index([financialRecordId, active])
   @@index([status, createdAt])
+}
+
+// Catálogo comercial de treinamentos por fornecedor. Uma proposta agrupa os itens
+// tabelados numa negociação (ex.: nº 898 da Massariol); uma nova tabela de preços
+// gera uma nova proposta, nunca sobrescreve os itens de uma proposta anterior —
+// preserva histórico comercial.
+model TrainingProposal {
+  id             String    @id @default(cuid())
+  supplierId     String
+  proposalNumber String
+  proposalDate   DateTime?
+  validityDays   Int?
+  clientName     String?
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  supplier       AdministrativeEntity @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  trainings      Training[]
+
+  @@unique([supplierId, proposalNumber])
+  @@index([supplierId])
+}
+
+// Um item (treinamento) de uma proposta comercial. "additionalStudentPrice" e
+// "unitPrice" são conceitos distintos do documento de origem (valor para incluir
+// um aluno adicional x valor unitário do treinamento) e nunca devem ser derivados
+// um do outro — em alguns itens da fonte eles divergem de propósito.
+enum TrainingOrigin {
+  IMPORTED
+  MANUAL
+}
+
+model Training {
+  id                     String   @id @default(cuid())
+  supplierId             String
+  proposalId             String?
+  sourceItemId           Int?
+  origin                 TrainingOrigin @default(IMPORTED)
+  description            String
+  trainingType           String?
+  duration               String?
+  modality               String
+  attendanceType         String
+  additionalStudentPrice Decimal  @db.Decimal(19, 4)
+  quantity               Int
+  unitPrice              Decimal  @db.Decimal(19, 4)
+  totalPrice             Decimal  @db.Decimal(19, 4)
+  active                 Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  supplier               AdministrativeEntity @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  proposal               TrainingProposal?    @relation(fields: [proposalId], references: [id], onDelete: Restrict)
+  expenses               TrainingExpense[]
+
+  // supplierId+proposalId+sourceItemId continua protegendo duplicidade de
+  // importação — NULLs em proposalId/sourceItemId (cadastro manual) nunca
+  // colidem entre si nem com os itens importados, por semântica padrão do
+  // Postgres (NULL é sempre distinto de NULL numa constraint única).
+  @@unique([supplierId, proposalId, sourceItemId])
+  @@index([supplierId])
+  @@index([proposalId])
+  @@index([modality, attendanceType])
+}
+
+enum TrainingExpenseStatus {
+  DRAFT
+  COMPLETED
+  CANCELLED
+}
+
+// Competência do lançamento operacional de treinamento — mesmo padrão de
+// FoodCompetence/TransitVoucherCompetence (um model por domínio, não
+// compartilhado), para não acoplar despesas de domínios diferentes.
+model TrainingExpenseCompetence {
+  id        String            @id @default(cuid())
+  year      Int
+  month     Int
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  expenses  TrainingExpense[]
+
+  @@unique([year, month])
+}
+
+// Um treinamento efetivamente realizado (despesa), distinto do catálogo
+// (Training = "o que pode ser contratado"). Preços/quantidade-base são
+// congelados em *Snapshot no momento da criação — nunca relidos do catálogo
+// depois, mesmo que o preço do Training mude no futuro.
+model TrainingExpense {
+  id                            String                @id @default(cuid())
+  competenceId                  String
+  trainingId                    String
+  supplierId                    String
+  financialRecordId             String?               @unique
+  trainingDate                  DateTime
+  participantCount              Int                   @default(0)
+  baseQuantitySnapshot          Int
+  unitPriceSnapshot             Decimal               @db.Decimal(19, 4)
+  additionalStudentPriceSnapshot Decimal              @db.Decimal(19, 4)
+  calculatedAmount              Decimal               @db.Decimal(19, 4)
+  finalAmount                   Decimal               @db.Decimal(19, 4)
+  adjustmentReason              String?
+  status                        TrainingExpenseStatus @default(DRAFT)
+  createdByUserId               String
+  cancelledAt                   DateTime?
+  cancelledByUserId             String?
+  cancellationReason            String?
+  createdAt                     DateTime              @default(now())
+  updatedAt                     DateTime              @updatedAt
+  competence                    TrainingExpenseCompetence   @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  training                      Training                    @relation(fields: [trainingId], references: [id], onDelete: Restrict)
+  supplier                      AdministrativeEntity        @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  financialRecord                FinancialRecord?           @relation(fields: [financialRecordId], references: [id], onDelete: Restrict)
+  createdBy                     User                        @relation("TrainingExpenseCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  cancelledBy                   User?                       @relation("TrainingExpenseCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  participants                  TrainingExpenseParticipant[]
+  revisions                     TrainingExpenseRevision[]
+
+  @@index([competenceId])
+  @@index([supplierId])
+  @@index([trainingId])
+  @@index([status])
+}
+
+// Participante de um lançamento — referencia sempre o Cadastro Mestre
+// (FoodEmployee), nunca duplica colaborador. department/costCenter são
+// snapshot do momento do lançamento (mesmo padrão de FoodAllocation.department),
+// para a linha de rateio não mudar retroativamente se o colaborador for
+// transferido de setor depois.
+model TrainingExpenseParticipant {
+  id                String          @id @default(cuid())
+  trainingExpenseId String
+  employeeId        String
+  department        String
+  costCenter        String
+  allocatedAmount   Decimal         @db.Decimal(19, 4)
+  createdAt         DateTime        @default(now())
+  trainingExpense   TrainingExpense @relation(fields: [trainingExpenseId], references: [id], onDelete: Cascade)
+  employee          FoodEmployee    @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([trainingExpenseId, employeeId])
+  @@index([employeeId])
+  @@index([department])
+}
+
+// Auditoria de edição pós-conclusão — mesmo padrão de FoodBatchRevision.
+model TrainingExpenseRevision {
+  id                String          @id @default(cuid())
+  trainingExpenseId String
+  editedByUserId    String
+  revision          Int
+  previousTotal     Decimal         @db.Decimal(19, 4)
+  newTotal          Decimal         @db.Decimal(19, 4)
+  changes           Json
+  createdAt         DateTime        @default(now())
+  trainingExpense   TrainingExpense @relation(fields: [trainingExpenseId], references: [id], onDelete: Cascade)
+  editedBy          User            @relation("TrainingExpenseRevisionEditor", fields: [editedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([trainingExpenseId, revision])
+  @@index([trainingExpenseId, createdAt])
 }
 
 model ApprovalStepInstance {

@@ -1,22 +1,74 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
-import clsx from "clsx";
-import { NAVIGATION_MODULES } from "@/modules/core/navigation/moduleRegistry";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { Drawer } from "@/components/ui/Drawer";
+import { AppHeader } from "@/components/shell/AppHeader";
+import { ShellActionsProvider } from "@/components/shell/ShellActions";
+import { SidebarNav } from "@/components/shell/SidebarNav";
+import { resolveRouteMeta, roleLabel, visibleNavigationGroups } from "@/modules/core/navigation/moduleRegistry";
 
-type SessionUser = { email: string; name: string; roles: string[] };
-const glyphs: Record<string,string>={"accounts-payable":"▤",accounting:"▥","master-data":"◇",administration:"⚙",dashboard:"⌂"};
-const isActive=(pathname:string,paths:string[]=[])=>paths.some(path=>pathname===path||(path!=="/"&&pathname.startsWith(`${path}/`)));
-const initials=(value:string)=>value.split(/\s+/).filter(Boolean).slice(0,2).map(part=>part[0]?.toLocaleUpperCase("pt-BR")).join("")||"U";
+// App Shell (Fase 7C): sidebar clara + header superior + conteúdo.
+// - >= 1280px: sidebar expandida (240px) · 1024–1279px: trilho de ícones (72px) · < 1024px: drawer (botão no header).
+// - Navegação filtrada pelas permissões de /api/auth/me (apenas esconde; o backend continua autoridade).
+// - Telas públicas (/login, /redefinir-senha) não usam o shell.
+// - O conteúdo NÃO é envolvido em um elemento main: cada página já renderiza o próprio (evita landmark duplicado).
+// Registro central da navegação: NAVIGATION_GROUPS (e NAVIGATION_MODULES) em moduleRegistry.
+type SessionUser = { email: string; name: string | null; roles: string[]; permissions: string[] };
 
-export function AppShell({children}:{children:ReactNode}){
-  const pathname=usePathname(),router=useRouter(),[open,setOpen]=useState(false),[user,setUser]=useState<SessionUser|null>(null);
-  const publicAuthPage=pathname==="/login"||pathname==="/redefinir-senha";
-  useEffect(()=>{if(publicAuthPage)return;fetch("/api/auth/me").then(async response=>response.ok?setUser(await response.json()):null).catch(()=>undefined)},[pathname,publicAuthPage]);
-  async function logout(){await fetch("/api/auth/logout",{method:"POST"});router.push("/login");router.refresh()}
-  if(publicAuthPage)return <>{children}</>;
-  const navigation=<><div className="app-brand"><span className="app-brand-mark">GA</span><div><strong>Gestão Administrativa</strong><span>Plataforma corporativa</span></div></div><nav className="app-nav" aria-label="Módulos da plataforma"><p className="app-nav-label">Navegação</p>{NAVIGATION_MODULES.map(module=>{const active=isActive(pathname,module.matchPaths);return module.href?<Link key={module.id} href={module.href} onClick={()=>setOpen(false)} className={clsx("app-nav-item",active&&"is-active")} aria-current={active?"page":undefined}><span aria-hidden="true">{glyphs[module.id]??"·"}</span>{module.label}</Link>:<span key={module.id} className="app-nav-item is-disabled" title="Módulo planejado"><span aria-hidden="true">{glyphs[module.id]??"·"}</span>{module.label}<small>Em breve</small></span>})}</nav><footer className="app-user"><div className="app-avatar">{initials(user?.name||user?.email||"")}</div><div className="min-w-0 flex-1"><strong className="block truncate">{user?.name||"Usuário"}</strong><span className="block truncate">{user?.roles?.[0]||user?.email||"Sessão ativa"}</span></div><button type="button" onClick={logout} aria-label="Sair da aplicação" title="Sair">↪</button></footer></>;
-  return <div className="app-shell"><aside className="app-sidebar">{navigation}</aside><header className="app-mobile-header"><button type="button" onClick={()=>setOpen(true)} aria-label="Abrir navegação">☰</button><strong>Gestão Administrativa</strong></header>{open&&<div className="app-drawer" role="dialog" aria-modal="true" aria-label="Navegação"><button className="app-drawer-backdrop" onClick={()=>setOpen(false)} aria-label="Fechar navegação"/><aside>{navigation}</aside></div>}<div className="app-content">{children}</div></div>;
+export function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const drawerId = `${useId()}-navigation`;
+  const publicAuthPage = pathname === "/login" || pathname === "/redefinir-senha";
+  const meta = resolveRouteMeta(pathname);
+
+  useEffect(() => {
+    if (publicAuthPage) return;
+    fetch("/api/auth/me")
+      .then(async (response) => (response.ok ? setUser(await response.json()) : null))
+      .catch(() => undefined);
+  }, [publicAuthPage]);
+
+
+  const groups = useMemo(() => visibleNavigationGroups(user?.permissions ?? []), [user]);
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  }
+
+  // Título da aba por rota, a partir do registro central (<title> do React 19 é levado ao <head>).
+  const documentTitle = <title>{`${meta.title} · Projeta`}</title>;
+
+  if (publicAuthPage) return <>{documentTitle}{children}</>;
+
+  const shellUser = user ? { email: user.email, name: user.name, roleLabel: roleLabel(user.roles?.[0]) } : null;
+  const loading = !user;
+
+  return (
+    <ShellActionsProvider>
+      {documentTitle}
+      <div className="min-h-dvh bg-background">
+        <a href="#conteudo" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-3 focus:z-50 focus:rounded-control focus:bg-surface focus:px-3 focus:py-2 focus:text-body focus:font-semibold focus:shadow-elevation-md">
+          Pular para o conteúdo
+        </a>
+        <aside className="fixed inset-y-0 left-0 z-30 hidden w-[4.5rem] border-r border-border bg-surface lg:block xl:w-60">
+          <SidebarNav groups={groups} pathname={pathname} loading={loading} />
+        </aside>
+        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Navegação" hideTitle closeLabel="Fechar navegação" className="lg:hidden">
+          <div id={drawerId} className="h-full">
+            <SidebarNav groups={groups} pathname={pathname} loading={loading} variant="drawer" onNavigate={() => setDrawerOpen(false)} />
+          </div>
+        </Drawer>
+        <div className="lg:pl-[4.5rem] xl:pl-60">
+          <AppHeader trail={meta.trail} user={shellUser} onLogout={logout} onOpenMenu={() => setDrawerOpen(true)} menuOpen={drawerOpen} drawerId={drawerId} />
+          <div id="conteudo" tabIndex={-1} className="app-content outline-none">{children}</div>
+        </div>
+      </div>
+    </ShellActionsProvider>
+  );
 }
