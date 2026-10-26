@@ -4,7 +4,7 @@ import { exportFoodRateio } from "./rateio-export";
 
 type ExportBatch = Prisma.FoodBatchGetPayload<{ include: { competence: true; administrativeEntity: true; allocations: true; mealOccurrences: true; issues: true } }>;
 
-export async function exportFoodBatch(batch: ExportBatch) {
+export async function exportFoodBatch(batch: ExportBatch & { cycles?: number[] }) {
   return exportFoodRateio(batch);
 }
 

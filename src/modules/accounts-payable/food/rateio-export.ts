@@ -20,6 +20,8 @@ export type FoodRateioBatch = {
   locality?: string;
   // Contexto do lote para a base "Detalhado - Colaborador" (já carregado pela rota de download; opcional nos testes).
   cycle?: number;
+  // MA: ciclos somados no mesmo arquivo (download único por fornecedor/competência); prevalece sobre `cycle`.
+  cycles?: number[];
   competence?: { year: number; month: number };
   administrativeEntity?: { tradeName: string };
   mealOccurrences: Array<{
@@ -162,7 +164,7 @@ function addFoodAllocationViewSheets(workbook: ExcelJS.Workbook, batch: FoodRate
     competence: batch.competence ? `${String(batch.competence.month).padStart(2, "0")}/${batch.competence.year}` : "",
     columns: [
       { header: "Localidade", width: 11, value: () => locality },
-      ...(locality === "MA" ? [{ header: "Ciclo", width: 30, value: () => (batch.cycle === undefined ? null : foodMaCycleLabel(batch.cycle)) }] : []),
+      ...(locality === "MA" ? [{ header: "Ciclo", width: 30, value: () => (batch.cycles?.length ? batch.cycles.map(foodMaCycleLabel).join(" + ") : batch.cycle === undefined ? null : foodMaCycleLabel(batch.cycle)) }] : []),
       { header: "Fornecedor", width: 24, wrap: true, value: () => batch.administrativeEntity?.tradeName ?? null },
       { header: "Restaurante", width: 26, wrap: true, value: (row) => [...(extras.get(row.source.id)?.restaurants ?? [])].join(", ") },
       { header: "Refeições", width: 11, value: (row) => row.source.meals },

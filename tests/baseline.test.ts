@@ -2244,6 +2244,9 @@ test("rateio XLSX 7I.1: quatro perspectivas hierárquicas (indent/outline, subto
   assert.deepEqual(cells(maDetail, 1), ["Colaborador", "Empresa", "Centro de Custo", "Departamento", "Competência", "Localidade", "Ciclo", "Fornecedor", "Restaurante", "Refeições", "Valor Unitário", "Valor"]);
   assert.deepEqual(cells(maDetail, 3), ["BIA", "Sem empresa", "Sem centro de custo", "ADMINISTRATIVO", "10/2026", "MA", "1º Ciclo (dias 1 a 15)", "FORNECEDOR PA", null, 1, 12.5, 12.5]);
   assert.equal(detailSum(maDetail), 3750);
+  // download único do MA: ciclos somados no mesmo arquivo, Ciclo lista os dois
+  const maBoth = buildFoodRateioWorkbook({ locality: "MA", cycle: 1, cycles: [1, 2], ...context, mealOccurrences: meals.map((meal) => ({ ...meal, invoiceEmission: null })) });
+  assert.equal(cells(maBoth.getWorksheet("Detalhado - Colaborador")!, 3)[6], "1º Ciclo (dias 1 a 15) + 2º Ciclo (dia 16 ao fim do mês)");
   // preço salvo diferente na mesma linha: Valor Unitário vazio (não inventa média); Valor = soma salva
   const mixed = buildFoodRateioWorkbook({ locality: "MA", mealOccurrences: [occurrence("1", "ana", "ANA", "ENGENHARIA", null, 12.5), { ...occurrence("2", "ana", "ANA", "ENGENHARIA", null, 15), unitPrice: 15 }] });
   assert.deepEqual(cells(mixed.getWorksheet("Detalhado - Colaborador")!, 2).slice(-3), [2, null, 27.5]);

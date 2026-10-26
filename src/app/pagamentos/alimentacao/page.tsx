@@ -455,23 +455,21 @@ function MaRateio({
           <FoodDeletionControls batch={batch} reload={reload} />
         )}
       </div>
-      <div className="grid gap-2 border-t border-border bg-surface-muted px-4 py-3 sm:px-5">
+      <div className="flex flex-wrap gap-2 border-t border-border bg-surface-muted px-4 py-3 sm:px-5">
         {batches.map((item) => (
-          <div key={item.id} className="flex flex-wrap items-center gap-2">
-            {multiple && <span className="min-w-24 text-caption text-foreground-muted">{cycleLabel(item)}</span>}
-            <Button type="button" onClick={() => beginEditing(item)} loading={loadingEditor === item.id} variant="secondary" size="sm">
-              <PencilLine size={14} aria-hidden="true" />
-              Editar rateio
-            </Button>
-            <a
-              href={`/api/accounts-payable/food/${item.id}/download`}
-              className={buttonClassName({ variant: "secondary", size: "sm" })}
-            >
-              <Download size={14} aria-hidden="true" />
-              Download do rateio XLSX
-            </a>
-          </div>
+          <Button key={item.id} type="button" onClick={() => beginEditing(item)} loading={loadingEditor === item.id} variant="secondary" size="sm">
+            <PencilLine size={14} aria-hidden="true" />
+            {multiple ? `Editar rateio · ${cycleLabel(item)}` : "Editar rateio"}
+          </Button>
         ))}
+        {/* o servidor junta no mesmo XLSX os lotes prontos do fornecedor na competência (ciclos do MA) */}
+        <a
+          href={`/api/accounts-payable/food/${batch.id}/download`}
+          className={buttonClassName({ variant: "secondary", size: "sm" })}
+        >
+          <Download size={14} aria-hidden="true" />
+          Download do rateio XLSX
+        </a>
       </div>
     </Card>
   );
