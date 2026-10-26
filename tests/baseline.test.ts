@@ -2601,7 +2601,9 @@ test("vale transporte 7G: apresentação no Design System, regras na página e c
   // Rateio: perspectivas compartilhadas sobre os snapshots do lançamento (empresa, CC, departamento), padrão Empresa/Departamento
   assert.match(view, /<AllocationViews/); assert.match(view, /useState<AllocationViewId>\("companyDepartment"\)/);
   assert.match(view, /costCenter: row\.costCenter, department: row\.department/); assert.doesNotMatch(view, /collaborators|foodEmployee|\/api\/collaborators/);
-  assert.match(view, /row\.passagesToReceive !== null && <Button/); assert.match(view, /onDeleteRecord\(map\.id, row\.id\)/);
+  assert.match(view, /row\.passagesToReceive !== null && <Button/); assert.match(view, /onDeleteRecord\(mapOf\.get\(row\.id\)!, row\.id\)/);
+  // um card por fornecedor: mapas do upload e manuais da mesma competência somados no mesmo rateio
+  assert.match(view, /suppliers\.set\(map\.administrativeEntity\.id/);
   // Resumo segue Empresa → Departamento (não é perspectiva do Rateio)
   assert.match(summary, /caption="Resumo por Empresa e Departamento"/); assert.doesNotMatch(summary, /AllocationViews/);
 });

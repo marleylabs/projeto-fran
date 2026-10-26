@@ -22,20 +22,30 @@ const leafPath = (view: AllocationViewId, row: { company: string; costCenter: st
 
 type ViewProps = { monthLabel: string; baseOf: (map: TransitMapData) => TransitBase; onCorrect: (mapId: string, row: TransitAllocationRow) => void; onDeleteRecord: (mapId: string, rowId: string) => void; onCancel: (mapId: string) => void };
 
+// Um card por fornecedor na competência: o mapa do upload e o de lançamentos manuais são somados no mesmo rateio.
+// Obrigação, XLSX e cancelamento continuam por mapa; Corrigir/Excluir usam o mapa de origem de cada registro.
 export function TransitAllocationView({ maps, ...props }: ViewProps & { maps: TransitMapData[] }) {
   if (!maps.length) return <Card><EmptyState title="Nenhum lançamento nesta competência." description="Preencha o Preenchimento para gerar o rateio." /></Card>;
-  return <div className="grid gap-4">{maps.map((map) => <MapAllocation key={map.id} map={map} {...props} />)}</div>;
+  const suppliers = new Map<string, TransitMapData[]>();
+  for (const map of maps) suppliers.set(map.administrativeEntity.id, [...(suppliers.get(map.administrativeEntity.id) ?? []), map]);
+  return <div className="grid gap-4">{[...suppliers.values()].map((group) => <MapAllocation key={group.map((map) => map.id).join("-")} maps={group} {...props} />)}</div>;
 }
 
-function MapAllocation({ map, monthLabel, baseOf, onCorrect, onDeleteRecord, onCancel }: ViewProps & { map: TransitMapData }) {
+function MapAllocation({ maps, monthLabel, baseOf, onCorrect, onDeleteRecord, onCancel }: ViewProps & { maps: TransitMapData[] }) {
   const [view, setView] = useState<AllocationViewId>("companyDepartment");
-  const rows = map.allocations;
+  const [map] = maps;
+  const multiple = maps.length > 1;
+  const mapOf = new Map(maps.flatMap((item) => item.allocations.map((row) => [row.id, item.id] as const)));
+  const rows = maps.flatMap((item) => item.allocations);
   const viewRows = rows.map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: amountToCents(row.amount), source: row }));
   const rateadoCents = viewRows.reduce((sum, row) => sum + row.cents, 0);
-  const diff = rateadoCents - amountToCents(map.totalAmount);
+  const totalCents = maps.reduce((sum, item) => sum + amountToCents(item.totalAmount), 0);
+  const obligationCents = maps.reduce((sum, item) => sum + (item.financialRecord?.grossAmount ? amountToCents(item.financialRecord.grossAmount) : 0), 0);
+  const diff = rateadoCents - totalCents;
   const companies = new Set(rows.map((row) => row.company)).size;
   const departments = new Set(rows.map((row) => `${row.company}|${row.department ?? "Não informado"}`)).size;
-  const base = baseOf(map);
+  const bases = [...new Set(maps.map((item) => { const base = baseOf(item); return `${base.workingDays ?? "—"} · ${base.fareUnitPrice ? money(base.fareUnitPrice) : "—"}`; }))];
+  const obligations = maps.map((item) => item.financialRecord?.identifier).filter(Boolean).join(" · ");
   const columns: DataTableColumn<TransitAllocationRow>[] = [
     { id: "name", header: "Colaborador", rowHeader: true, width: "14rem", cell: (row) => <span className="block truncate">{row.employeeName}</span> },
     { id: "daily", header: "Passagens/dia", numeric: true, cell: (row) => row.dailyPassageQuantity ?? "—" },
@@ -46,21 +56,21 @@ function MapAllocation({ map, monthLabel, baseOf, onCorrect, onDeleteRecord, onC
   return (
     <Card padding="none" as="article" className="overflow-hidden">
       <div className="grid gap-4 p-4 sm:p-5">
-        <CardHeader title={map.administrativeEntity.tradeName} description={`Competência ${monthLabel} · versão ${map.version}`} actions={<StatusBadge tone="success">Concluído</StatusBadge>} />
+        <CardHeader title={map.administrativeEntity.tradeName} description={`Competência ${monthLabel} · ${multiple ? `${maps.length} lançamentos (versões ${maps.map((item) => item.version).join(" + ")})` : `versão ${map.version}`}`} actions={<StatusBadge tone="success">Concluído</StatusBadge>} />
         <CompetenceSummary
           className="xl:grid-cols-4"
           items={[
             { label: "Empresas / departamentos", value: `${companies} / ${departments}` },
             { label: "Colaboradores", value: new Set(rows.map((row) => row.employeeId ?? row.employeeName)).size },
-            { label: "Dias úteis · passagem", value: `${base.workingDays ?? "—"} · ${base.fareUnitPrice ? money(base.fareUnitPrice) : "—"}` },
-            { label: "Valor total · obrigação", value: money(map.totalAmount), helper: map.financialRecord?.identifier, emphasis: true },
+            { label: "Dias úteis · passagem", value: bases.join(" / ") },
+            { label: `Valor total · ${multiple ? "obrigações" : "obrigação"}`, value: moneyCents(totalCents), helper: obligations || undefined, emphasis: true },
           ]}
         />
         <AllocationViews
           rows={viewRows}
           value={view}
           onValueChange={setView}
-          expectedCents={amountToCents(map.totalAmount)}
+          expectedCents={totalCents}
           renderLeaf={(leafRows, node) => (
             <DataTable
               caption={`${map.administrativeEntity.tradeName} — ${leafPath(view, leafRows[0]) || node.label}`}
@@ -71,8 +81,8 @@ function MapAllocation({ map, monthLabel, baseOf, onCorrect, onDeleteRecord, onC
               minWidth="720px"
               rowActions={(row) => (
                 <span className="inline-flex gap-1">
-                  {row.passagesToReceive !== null && <Button size="sm" variant="ghost" onClick={() => onCorrect(map.id, row)} aria-label={`Corrigir lançamento de ${row.employeeName}`}><PencilLine size={14} aria-hidden="true" />Corrigir</Button>}
-                  <Button size="sm" variant="ghost" className="text-danger-text" onClick={() => onDeleteRecord(map.id, row.id)} aria-label={`Excluir registro de ${row.employeeName}`}><Trash2 size={14} aria-hidden="true" />Excluir</Button>
+                  {row.passagesToReceive !== null && <Button size="sm" variant="ghost" onClick={() => onCorrect(mapOf.get(row.id)!, row)} aria-label={`Corrigir lançamento de ${row.employeeName}`}><PencilLine size={14} aria-hidden="true" />Corrigir</Button>}
+                  <Button size="sm" variant="ghost" className="text-danger-text" onClick={() => onDeleteRecord(mapOf.get(row.id)!, row.id)} aria-label={`Excluir registro de ${row.employeeName}`}><Trash2 size={14} aria-hidden="true" />Excluir</Button>
                 </span>
               )}
             />
@@ -80,14 +90,19 @@ function MapAllocation({ map, monthLabel, baseOf, onCorrect, onDeleteRecord, onC
         />
         <dl role={diff !== 0 ? "alert" : undefined} className={clsx("flex flex-wrap gap-x-6 gap-y-1 rounded-control border px-3 py-2 text-body tabular-nums", diff !== 0 ? "border-danger/40 bg-danger-soft text-danger-text" : "border-border bg-surface-muted")}>
           {diff !== 0 && <XCircle size={16} aria-hidden="true" className="self-center" />}
-          {([["Valor total", money(map.totalAmount)], ["Rateado", moneyCents(rateadoCents)], ["Obrigação", map.financialRecord?.grossAmount ? money(map.financialRecord.grossAmount) : "—"], ["Diferença", moneyCents(diff)]] as const).map(([label, value]) => (
+          {([["Valor total", moneyCents(totalCents)], ["Rateado", moneyCents(rateadoCents)], ["Obrigação", maps.some((item) => item.financialRecord?.grossAmount) ? moneyCents(obligationCents) : "—"], ["Diferença", moneyCents(diff)]] as const).map(([label, value]) => (
             <div key={label} className="flex gap-1.5"><dt className="text-foreground-muted">{label}</dt><dd className="font-semibold">{value}</dd></div>
           ))}
         </dl>
       </div>
-      <div className="flex flex-wrap gap-2 border-t border-border bg-surface-muted px-4 py-3 sm:px-5">
-        <a href={`/api/accounts-payable/transit-voucher/${map.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}><Download size={14} aria-hidden="true" />Download do rateio XLSX</a>
-        <Button size="sm" variant="error" className="ml-auto" onClick={() => onCancel(map.id)}>Cancelar lançamento</Button>
+      <div className="grid gap-2 border-t border-border bg-surface-muted px-4 py-3 sm:px-5">
+        {maps.map((item) => (
+          <div key={item.id} className="flex flex-wrap items-center gap-2">
+            {multiple && <span className="min-w-24 text-caption text-foreground-muted">Versão {item.version} · {money(item.totalAmount)}{item.financialRecord?.identifier ? ` · ${item.financialRecord.identifier}` : ""}</span>}
+            <a href={`/api/accounts-payable/transit-voucher/${item.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}><Download size={14} aria-hidden="true" />Download do rateio XLSX</a>
+            <Button size="sm" variant="error" className="ml-auto" onClick={() => onCancel(item.id)}>Cancelar lançamento</Button>
+          </div>
+        ))}
       </div>
     </Card>
   );
