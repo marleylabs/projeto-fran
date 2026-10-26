@@ -645,7 +645,7 @@ test("ocorrências só são carregadas e gerenciadas enquanto o lote é editáve
   assert.match(server, /mealOccurrenceCount: _count\.mealOccurrences/);
   assert.match(page, /batch\.mealOccurrenceCount > 0 && batch\.status === "READY"/);
   assert.match(page, /`\/api\/accounts-payable\/food\/\$\{batch\.id\}\/records`/);
-  assert.match(page, /occurrences=\{editorOccurrences\}/);
+  assert.match(page, /occurrences=\{editor\.occurrences\}/);
   assert.match(page, /Editar rateio/);
   assert.match(page, /Download do rateio XLSX/);
   assert.match(page, /Excluir lote/);
@@ -3011,8 +3011,8 @@ test("alimentação 7N: MA/PA subordinados à Operação, Rateio por estado sem 
   // hierarquia Alimentação › Operação › MA|PA (estado e ciclos dentro da Operação, ainda mantidos montados)
   const operation = food.slice(food.indexOf("operation={"), food.indexOf("allocation={<FoodAllocationTab"));
   assert.match(operation, /<LocalityTabs\s/); assert.match(food, /<TabPanel value="MA" keepMounted/); assert.match(food, /<TabPanel value="PA" keepMounted/);
-  // Rateio: escolha MA/PA, MA agrupado por ciclo; cada lote pronto no MaRateio (perspectivas, edição e exclusão)
-  assert.match(food, /<Tabs label="Rateio por estado"/); assert.match(food, /RATEIO_GROUPS: Record<Locality/);
+  // Rateio: escolha MA/PA; um MaRateio por fornecedor somando os ciclos da competência (edição/exclusão/XLSX por lote)
+  assert.match(food, /<Tabs label="Rateio por estado"/); assert.match(food, /<MaRateio key=\{supplierBatches\.map/);
   assert.match(food, /onOpenRateio \? <FoodBatchReadyCard batch=\{batch\} onOpenRateio=\{onOpenRateio\} \/> : <MaRateio /);
   // os mesmos dados da página (nenhuma chamada nova): colaboradores do editor vêm da resposta já carregada
   assert.match(food, /setEmployees\(body\.employees \?\? \[\]\)/);

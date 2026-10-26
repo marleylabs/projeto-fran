@@ -318,29 +318,31 @@ const accepts = (value: string, locality: Locality) =>
 // Legenda da tabela final com o caminho completo do grupo (evita legendas repetidas, ex.: o mesmo setor em duas empresas).
 const leafPath = (view: AllocationViewId, row: { company: string; costCenter: string; department: string } | undefined) => !row ? "" : (view === "department" ? [row.department] : view === "costCenter" ? [row.costCenter] : view === "companyDepartment" ? [row.company, row.department] : [row.company, row.costCenter, row.department]).join(" / ");
 
+// Um card de rateio por fornecedor: no MA, os lotes dos ciclos da mesma competência são somados num único rateio
+// (perspectivas, setores e totais). Obrigação, edição, exclusão e XLSX continuam por lote/ciclo, dentro do card.
 function MaRateio({
-  batch,
+  batches,
   employees,
   reload,
 }: {
-  batch: Batch;
+  batches: Batch[];
   employees: FoodEmployee[];
   reload: () => Promise<void>;
 }) {
-  const [editorOccurrences, setEditorOccurrences] = useState<
-    MealOccurrence[] | null
-  >(null);
-  const [loadingEditor, setLoadingEditor] = useState(false);
+  const [batch] = batches;
+  const multiple = batches.length > 1;
+  const [editor, setEditor] = useState<{ batch: Batch; occurrences: MealOccurrence[] } | null>(null);
+  const [loadingEditor, setLoadingEditor] = useState<string | null>(null);
   const toast = useToast();
-  async function beginEditing() {
-    setLoadingEditor(true);
+  async function beginEditing(target: Batch) {
+    setLoadingEditor(target.id);
     try {
       const response = await fetch(
-        `/api/accounts-payable/food/${batch.id}/records`,
+        `/api/accounts-payable/food/${target.id}/records`,
       );
       const body = await response.json();
       if (!response.ok) throw new Error(body.error);
-      setEditorOccurrences(body.occurrences);
+      setEditor({ batch: target, occurrences: body.occurrences });
     } catch (cause) {
       toast.error(
         cause instanceof Error
@@ -348,51 +350,75 @@ function MaRateio({
           : "Não foi possível carregar o rateio para edição.",
       );
     } finally {
-      setLoadingEditor(false);
+      setLoadingEditor(null);
     }
   }
+  const allocations = batches.flatMap((item) => item.allocations);
+  const personKey = (row: Allocation) => row.sourceIdentifier ?? row.employeeName;
   const sectors = new Map<string, Allocation[]>();
-  for (const row of batch.allocations) {
+  for (const row of allocations) {
     const sector = normalizeOrganizationalValue(row.department);
     sectors.set(sector, [...(sectors.get(sector) ?? []), row]);
   }
   // Perspectivas de rateio (só agrupam valores já salvos), todas sobre a base do servidor (rateioViews): Departamento
   // (lista de setores de sempre), Centro de Custo (snapshot), Empresa/Departamento e Empresa/CC/Departamento (Empresa:
   // snapshot no MA; Emissão NF no PA). Refeições anteriores à captura aparecem em "Sem centro de custo"/"Sem empresa".
+  // Linhas de lotes diferentes com a mesma chave (colaborador + dimensões) são somadas.
   const [view, setView] = useState<AllocationViewId>("department");
-  const viewRows = (batch.rateioViews?.rows ?? []).map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: row.cents, source: row }));
+  const mergedViewRows = new Map<string, FoodRateioViewRow>();
+  for (const row of batches.flatMap((item) => item.rateioViews?.rows ?? [])) {
+    const current = mergedViewRows.get(row.id);
+    mergedViewRows.set(row.id, current ? { ...current, meals: current.meals + row.meals, cents: current.cents + row.cents } : row);
+  }
+  const viewRows = [...mergedViewRows.values()].map((row) => normalizeAllocationRow({ id: row.id, companyId: row.companyId, company: row.company, costCenter: row.costCenter, department: row.department, employeeId: row.employeeId, employeeName: row.employeeName, cents: row.cents, source: row }));
   const legacyNotice = [
-    batch.rateioViews?.legacyCostCenter ? "Centro de Custo" : "",
-    batch.locality === "MA" && batch.rateioViews?.legacyCompany ? "Empresa" : "",
+    batches.some((item) => item.rateioViews?.legacyCostCenter) ? "Centro de Custo" : "",
+    batch.locality === "MA" && batches.some((item) => item.rateioViews?.legacyCompany) ? "Empresa" : "",
   ].filter(Boolean);
-  // Perspectiva Departamento: setores das alocações salvas (refeições = valor ÷ unitário salvos, como sempre foi exibido).
+  // Perspectiva Departamento: setores das alocações salvas (refeições = valor ÷ unitário salvos, como sempre foi exibido);
+  // o mesmo colaborador em ciclos diferentes vira uma linha só no setor.
   const sectorGroups = [...sectors.entries()]
     .sort(([a], [b]) => comparePtBr(a, b))
-    .map(([sector, rows]) => ({
-      sector,
-      collaborators: new Set(rows.map((row) => row.sourceIdentifier ?? row.employeeName)).size,
-      meals: rows.reduce((sum, row) => sum + Number(row.amount) / Number(row.unitPrice), 0),
-      amount: rows.reduce((sum, row) => sum + Number(row.amount), 0),
-      people: sortedPtBr(rows, (row) => row.employeeName, (a, b) => comparePtBr(a.id, b.id)).map((row) => ({ id: row.id, name: row.employeeName, meals: Number(row.amount) / Number(row.unitPrice), amount: row.amount })),
-    }));
+    .map(([sector, rows]) => {
+      const people = new Map<string, { id: string; name: string; meals: number; amount: number }>();
+      for (const row of rows) {
+        const current = people.get(personKey(row)) ?? { id: row.id, name: row.employeeName, meals: 0, amount: 0 };
+        people.set(personKey(row), { ...current, meals: current.meals + Number(row.amount) / Number(row.unitPrice), amount: current.amount + Number(row.amount) });
+      }
+      return {
+        sector,
+        collaborators: people.size,
+        meals: rows.reduce((sum, row) => sum + Number(row.amount) / Number(row.unitPrice), 0),
+        amount: rows.reduce((sum, row) => sum + Number(row.amount), 0),
+        people: sortedPtBr([...people.values()], (person) => person.name, (a, b) => comparePtBr(a.id, b.id)).map((person) => ({ ...person, amount: String(person.amount) })),
+      };
+    });
+  const totalAmount = batches.reduce((sum, item) => sum + Number(item.totalAmount), 0);
+  const unitPrices = [...new Set(batches.map((item) => Number(item.unitPrice)))];
+  const obligations = batches.map((item) => item.financialRecord?.identifier).filter(Boolean).join(" · ");
+  const batchLabel = (item: Batch) => `${cycleLabel(item)} · v${item.version}`;
   return (
     <Card padding="none" as="article" className="overflow-hidden">
       <div className="grid gap-4 p-4 sm:p-5">
         <CardHeader
           title={batch.administrativeEntity.tradeName}
-          description={`cadastro_id: ${batch.administrativeEntity.id} · v${batch.version}${batch.revisions?.length ? ` · ${batch.revisions.length} revisão(ões)` : ""}`}
+          description={
+            multiple
+              ? `cadastro_id: ${batch.administrativeEntity.id} · ${batches.map(batchLabel).join(" + ")}`
+              : `cadastro_id: ${batch.administrativeEntity.id} · v${batch.version}${batch.revisions?.length ? ` · ${batch.revisions.length} revisão(ões)` : ""}`
+          }
           actions={<StatusBadge tone="success">Pronto · Aguardando Financeiro</StatusBadge>}
         />
         <CompetenceSummary
           className="xl:grid-cols-4"
           items={[
-            { label: "Registros importados / válidos", value: `${batch.totalRows} / ${batch.validRows}` },
-            { label: "Colaboradores únicos / setores", value: `${batch.allocations.length} / ${sectors.size}` },
-            { label: "Refeições · valor unitário", value: `${batch.validRows} · ${money(batch.unitPrice)}` },
-            { label: `Total ${batch.locality} · obrigação`, value: money(batch.totalAmount), helper: batch.financialRecord?.identifier, emphasis: true },
+            { label: "Registros importados / válidos", value: `${batches.reduce((sum, item) => sum + item.totalRows, 0)} / ${batches.reduce((sum, item) => sum + item.validRows, 0)}` },
+            { label: "Colaboradores únicos / setores", value: `${new Set(allocations.map(personKey)).size} / ${sectors.size}` },
+            { label: "Refeições · valor unitário", value: `${batches.reduce((sum, item) => sum + item.validRows, 0)} · ${unitPrices.map((value) => money(value)).join(" / ")}` },
+            { label: `Total ${batch.locality} · ${multiple ? "obrigações" : "obrigação"}`, value: money(totalAmount), helper: obligations || undefined, emphasis: true },
           ]}
         />
-        {batch.locality === "PA" && batch.companyRateio && (
+        {batch.locality === "PA" && batch.companyRateio && !multiple && (
           <FoodPaCompanyRateio companies={batch.companyRateio.companies} companiesCents={batch.companyRateio.companiesCents} expectedCents={Math.round(Number(batch.totalAmount) * 100)} consistent={batch.companyRateio.consistent} />
         )}
         <AllocationViews
@@ -400,34 +426,52 @@ function MaRateio({
           value={view}
           onValueChange={setView}
           notice={legacyNotice.length && view !== "department" ? `Alguns lançamentos anteriores à captura histórica de ${legacyNotice.join(" e ")} aparecem como ${legacyNotice.map((label) => (label === "Empresa" ? "“Sem empresa”" : "“Sem centro de custo”")).join(" / ")}.` : undefined}
-          expectedCents={amountToCents(batch.totalAmount)}
+          expectedCents={batches.reduce((sum, item) => sum + amountToCents(item.totalAmount), 0)}
           custom={{ department: <FoodSectorRateio sectors={sectorGroups} /> }}
           renderLeaf={(rows, node) => <FoodViewLeaf rows={rows} caption={`${batch.administrativeEntity.tradeName} — ${leafPath(view, rows[0]) || node.label}`} />}
         />
-        {editorOccurrences && (
+        {editor && (
           <FoodMaEditor
-            batchId={batch.id}
-            locality={batch.locality}
-            occurrences={editorOccurrences}
+            key={editor.batch.id}
+            batchId={editor.batch.id}
+            locality={editor.batch.locality}
+            occurrences={editor.occurrences}
             employees={employees}
-            cancel={() => setEditorOccurrences(null)}
+            cancel={() => setEditor(null)}
             reload={reload}
           />
         )}
-        <FoodDeletionControls batch={batch} reload={reload} />
+        {multiple ? (
+          batches.map((item) => (
+            <section key={item.id} aria-label={`Lote ${batchLabel(item)}`} className="grid gap-2">
+              <h4 className="text-label text-foreground">
+                {cycleLabel(item)} · {money(item.totalAmount)}
+                {item.financialRecord?.identifier ? ` · ${item.financialRecord.identifier}` : ""}
+              </h4>
+              <FoodDeletionControls batch={item} reload={reload} />
+            </section>
+          ))
+        ) : (
+          <FoodDeletionControls batch={batch} reload={reload} />
+        )}
       </div>
-      <div className="flex flex-wrap gap-2 border-t border-border bg-surface-muted px-4 py-3 sm:px-5">
-        <Button type="button" onClick={beginEditing} loading={loadingEditor} variant="secondary" size="sm">
-          <PencilLine size={14} aria-hidden="true" />
-          Editar rateio
-        </Button>
-        <a
-          href={`/api/accounts-payable/food/${batch.id}/download`}
-          className={buttonClassName({ variant: "secondary", size: "sm" })}
-        >
-          <Download size={14} aria-hidden="true" />
-          Download do rateio XLSX
-        </a>
+      <div className="grid gap-2 border-t border-border bg-surface-muted px-4 py-3 sm:px-5">
+        {batches.map((item) => (
+          <div key={item.id} className="flex flex-wrap items-center gap-2">
+            {multiple && <span className="min-w-24 text-caption text-foreground-muted">{cycleLabel(item)}</span>}
+            <Button type="button" onClick={() => beginEditing(item)} loading={loadingEditor === item.id} variant="secondary" size="sm">
+              <PencilLine size={14} aria-hidden="true" />
+              Editar rateio
+            </Button>
+            <a
+              href={`/api/accounts-payable/food/${item.id}/download`}
+              className={buttonClassName({ variant: "secondary", size: "sm" })}
+            >
+              <Download size={14} aria-hidden="true" />
+              Download do rateio XLSX
+            </a>
+          </div>
+        ))}
       </div>
     </Card>
   );
@@ -514,7 +558,7 @@ function BatchCard({
       />
     );
   if (batch.mealOccurrenceCount > 0 && batch.status === "READY")
-    return onOpenRateio ? <FoodBatchReadyCard batch={batch} onOpenRateio={onOpenRateio} /> : <MaRateio batch={batch} employees={employees} reload={reload} />;
+    return onOpenRateio ? <FoodBatchReadyCard batch={batch} onOpenRateio={onOpenRateio} /> : <MaRateio batches={[batch]} employees={employees} reload={reload} />;
   const allocationColumns: DataTableColumn<Allocation>[] = [
     { id: "name", header: "Colaborador", rowHeader: true, width: "16rem", cell: (row) => <span className="block truncate">{row.employeeName}</span> },
     { id: "sector", header: "Setor", cell: (row) => row.department },
@@ -1241,10 +1285,6 @@ function LocalityTabs({
   );
 }
 
-const RATEIO_GROUPS: Record<Locality, { cycle: number; title: string }[]> = {
-  MA: [{ cycle: 1, title: "1º Ciclo · dias 1 a 15" }, { cycle: 2, title: "2º Ciclo · dia 16 ao fim do mês" }, { cycle: 0, title: "Mensal · anterior aos ciclos" }],
-  PA: [{ cycle: 0, title: "Competência" }],
-};
 const cycleLabel = (batch: Batch) => batch.locality === "PA" ? "competência" : batch.cycle === 1 ? "1º ciclo" : batch.cycle === 2 ? "2º ciclo" : "mensal (anterior aos ciclos)";
 
 function FoodAllocationTab({ batches, employees, reload, locality, onLocalityChange }: {
@@ -1268,18 +1308,20 @@ function FoodAllocationTab({ batches, employees, reload, locality, onLocalityCha
   return (
     <Tabs label="Rateio por estado" items={items} value={locality} onValueChange={(value) => onLocalityChange(value as Locality)} variant="segmented">
       {(["MA", "PA"] as Locality[]).map((value) => {
-        const stateReady = ready.filter((batch) => batch.locality === value);
-        const groups = RATEIO_GROUPS[value]
-          .map((group) => ({ ...group, batches: sortedPtBr(stateReady.filter((batch) => value === "PA" || batch.cycle === group.cycle), (batch) => batch.administrativeEntity.tradeName || batch.administrativeEntity.legalName, (a, b) => comparePtBr(a.id, b.id)) }))
-          .filter((group) => group.batches.length);
+        const stateReady = sortedPtBr(ready.filter((batch) => batch.locality === value), (batch) => batch.administrativeEntity.tradeName || batch.administrativeEntity.legalName, (a, b) => a.cycle - b.cycle || comparePtBr(a.id, b.id));
+        // Rateio da competência por fornecedor: os ciclos do MA (e o mensal anterior a eles) são somados num card só.
+        const suppliers = new Map<string, Batch[]>();
+        for (const batch of stateReady.filter((item) => item.mealOccurrenceCount > 0)) suppliers.set(batch.administrativeEntity.id, [...(suppliers.get(batch.administrativeEntity.id) ?? []), batch]);
+        const withoutMeals = stateReady.filter((batch) => batch.mealOccurrenceCount === 0);
         return (
           <TabPanel key={value} value={value} className="mt-4 grid min-w-0 gap-5">
-            {groups.length ? groups.map((group) => (
-              <section key={group.cycle} aria-label={`Rateio ${value} · ${group.title}`} className="grid gap-3">
-                <h3 className="text-card-title text-foreground">{value === "MA" ? "Maranhão" : "Pará"} · {group.title} · {money(group.batches.reduce((sum, batch) => sum + Number(batch.totalAmount), 0))}</h3>
-                {group.batches.map((batch) => <BatchCard key={batch.id} batch={batch} employees={employees} reload={reload} resetImport={() => undefined} />)}
+            {stateReady.length ? (
+              <section aria-label={`Rateio ${value} · Competência`} className="grid gap-3">
+                <h3 className="text-card-title text-foreground">{value === "MA" ? "Maranhão" : "Pará"} · Competência · {money(stateReady.reduce((sum, batch) => sum + Number(batch.totalAmount), 0))}</h3>
+                {[...suppliers.values()].map((supplierBatches) => <MaRateio key={supplierBatches.map((batch) => batch.id).join("-")} batches={supplierBatches} employees={employees} reload={reload} />)}
+                {withoutMeals.map((batch) => <BatchCard key={batch.id} batch={batch} employees={employees} reload={reload} resetImport={() => undefined} />)}
               </section>
-            )) : (
+            ) : (
               <Card><EmptyState title={`Nenhum rateio pronto em ${value === "MA" ? "Maranhão" : "Pará"}`} description="Lotes prontos na Operação aparecem aqui com as perspectivas de rateio, a edição e a exclusão de registros." /></Card>
             )}
           </TabPanel>
