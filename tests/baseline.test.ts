@@ -2607,6 +2607,9 @@ test("vale transporte 7G: apresentação no Design System, regras na página e c
   assert.match(view, /row\.passagesToReceive !== null && <Button/); assert.match(view, /onDeleteRecord\(mapOf\.get\(row\.id\)!, row\.id\)/);
   // um card por fornecedor: mapas do upload e manuais da mesma competência somados no mesmo rateio
   assert.match(view, /suppliers\.set\(map\.administrativeEntity\.id/);
+  // download único por fornecedor: a rota junta os mapas prontos da competência; o card tem um só botão
+  const download = await readFile(new URL("../src/app/api/accounts-payable/transit-voucher/[mapId]/download/route.ts", import.meta.url), "utf8");
+  assert.match(download, /allocations: maps\.flatMap\(\(item\) => item\.allocations\)/); assert.equal((view.match(/Download do rateio XLSX/g) ?? []).length, 1);
   // Resumo segue Empresa → Departamento (não é perspectiva do Rateio)
   assert.match(summary, /caption="Resumo por Empresa e Departamento"/); assert.doesNotMatch(summary, /AllocationViews/);
 });

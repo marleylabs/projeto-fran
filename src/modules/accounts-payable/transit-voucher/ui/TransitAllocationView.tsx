@@ -95,14 +95,16 @@ function MapAllocation({ maps, monthLabel, baseOf, onCorrect, onDeleteRecord, on
           ))}
         </dl>
       </div>
-      <div className="grid gap-2 border-t border-border bg-surface-muted px-4 py-3 sm:px-5">
-        {maps.map((item) => (
-          <div key={item.id} className="flex flex-wrap items-center gap-2">
-            {multiple && <span className="min-w-24 text-caption text-foreground-muted">Versão {item.version} · {money(item.totalAmount)}{item.financialRecord?.identifier ? ` · ${item.financialRecord.identifier}` : ""}</span>}
-            <a href={`/api/accounts-payable/transit-voucher/${item.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}><Download size={14} aria-hidden="true" />Download do rateio XLSX</a>
-            <Button size="sm" variant="error" className="ml-auto" onClick={() => onCancel(item.id)}>Cancelar lançamento</Button>
-          </div>
-        ))}
+      <div className="flex flex-wrap items-center gap-2 border-t border-border bg-surface-muted px-4 py-3 sm:px-5">
+        {/* o servidor junta no mesmo XLSX os mapas prontos do fornecedor na competência */}
+        <a href={`/api/accounts-payable/transit-voucher/${map.id}/download`} className={buttonClassName({ variant: "secondary", size: "sm" })}><Download size={14} aria-hidden="true" />Download do rateio XLSX</a>
+        <span className="ml-auto flex flex-wrap gap-2">
+          {maps.map((item) => (
+            <Button key={item.id} size="sm" variant="error" onClick={() => onCancel(item.id)} aria-label={multiple ? `Cancelar lançamento versão ${item.version} (${money(item.totalAmount)})` : undefined}>
+              {multiple ? `Cancelar v${item.version} · ${money(item.totalAmount)}` : "Cancelar lançamento"}
+            </Button>
+          ))}
+        </span>
       </div>
     </Card>
   );
