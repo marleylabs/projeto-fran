@@ -7,11 +7,6 @@ export class BreakfastCalculationError extends Error {}
 
 export const DEFAULT_UNIT_PRICE = "12.50";
 
-// Regra operacional: só o departamento TOPOGEO recebe Café da Manhã. Fonte única (frontend e
-// backend) — o backend é quem de fato garante isso (ver addBreakfastEntries), o frontend só
-// evita mostrar uma escolha que o servidor recusaria.
-export const BREAKFAST_ALLOWED_DEPARTMENT = "TOPOGEO";
-
 const pad = (value: number) => String(value).padStart(2, "0");
 
 const assertInteger = (value: number, label: string) => {

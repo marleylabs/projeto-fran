@@ -2,11 +2,10 @@ import "server-only";
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { createFinancialRecordInTransaction } from "@/modules/accounts-payable/server/financialRecords";
-import { organizationalComparisonKey } from "@/lib/organizational-label";
 import { summarizeCompetenceDays } from "@/modules/shared/calendar";
 import { getBrazilianNationalHolidays, getEffectiveHolidays, toHolidaySnapshot } from "@/modules/shared/holidays";
 import {
-  BREAKFAST_ALLOWED_DEPARTMENT, DEFAULT_UNIT_PRICE, BreakfastCalculationError, calculateBreakfastEmployeeTotal, calculateFinalQuantity,
+  DEFAULT_UNIT_PRICE, BreakfastCalculationError, calculateBreakfastEmployeeTotal, calculateFinalQuantity,
   centsToDecimalString, parseUnitPriceToCents, type BreakfastObservationKind,
 } from "./calculations";
 import { BreakfastValidationError } from "./server";
@@ -141,10 +140,6 @@ export async function addBreakfastEntries(input: { year: number; month: number; 
     ]);
     if (!entity) throw new BreakfastValidationError("Cadastro da obrigação não encontrado.");
     if (employees.length !== ids.length) throw new BreakfastValidationError("Um ou mais colaboradores não estão ativos ou não foram encontrados.");
-    // Regra operacional: só o departamento TOPOGEO recebe Café da Manhã — validado no servidor,
-    // independente do que o frontend enviar (proteção contra payload manipulado).
-    const outsideDepartment = employees.find((employee) => organizationalComparisonKey(employee.department) !== organizationalComparisonKey(BREAKFAST_ALLOWED_DEPARTMENT));
-    if (outsideDepartment) throw new BreakfastValidationError(`Apenas colaboradores do departamento ${BREAKFAST_ALLOWED_DEPARTMENT} podem ser incluídos no Café da Manhã.`);
     const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
     const companyById = new Map(companies.map((company) => [company.id, company]));
     if (input.entries.some((entry) => !companyById.has(entry.companyId))) throw new BreakfastValidationError("Selecione uma empresa cadastrada para cada colaborador.");

@@ -1,10 +1,9 @@
 "use client";
-/* eslint-disable react-hooks/preserve-manual-memoization -- filtering a bounded local option list */
 // Seleção múltipla de colaboradores (Alimentação, Café da Manhã, Cesta Básica, Vale Transporte, Treinamentos).
 // Fase 7G: só o visual mudou (tokens, ícones lucide, caixa de seleção visível, ids únicos por instância); busca,
 // filtro por departamento, ordenação, limite de 50 resultados, "selecionar todos" e o estado controlado
 // (value/onChange) continuam os mesmos.
-import { useId, useMemo, useState } from "react";
+import { useId, useState } from "react";
 import { Check, ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import clsx from "clsx";
 import { comparePtBr } from "@/lib/sorting/ptBr";
@@ -13,14 +12,16 @@ import type { CollaboratorOption } from "./CollaboratorCombobox";
 const normalize = (value: string) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("pt-BR").replace(/\s+/g, " ").trim();
 const compareCollaborator = (a: CollaboratorOption, b: CollaboratorOption) => comparePtBr(a.officialName, b.officialName) || comparePtBr(a.department, b.department) || comparePtBr(a.id, b.id);
 
-export function CollaboratorMultiCombobox({ value, onChange, options, fixedDepartment }: { value: string[]; onChange: (ids: string[]) => void; options: CollaboratorOption[]; fixedDepartment?: string }) {
+// filterBy: campo do filtro acima da busca — Departamento (padrão) ou Centro de Custo (Café da Manhã).
+const NO_COST_CENTER = "Sem centro de custo";
+export function CollaboratorMultiCombobox({ value, onChange, options, filterBy = "department" }: { value: string[]; onChange: (ids: string[]) => void; options: CollaboratorOption[]; filterBy?: "department" | "costCenter" }) {
   const baseId = useId();
   const listId = `${baseId}-options`; const departmentId = `${baseId}-department`; const searchId = `${baseId}-search`; const selectedId = `${baseId}-selected`;
   const [query, setQuery] = useState(""); const [department, setDepartment] = useState(""); const [open, setOpen] = useState(false); const [expanded, setExpanded] = useState(false);
   const active = options.filter((item) => item.active);
-  const departments = [...new Set(active.map((item) => item.department))].sort(comparePtBr);
-  const effectiveDepartment = fixedDepartment ?? department;
-  const results = useMemo(() => active.filter((item) => (!effectiveDepartment || item.department === effectiveDepartment) && (!query || normalize(`${item.officialName} ${item.department} ${item.costCenter}`).includes(normalize(query)))).sort(compareCollaborator).slice(0, 50), [active, effectiveDepartment, query]);
+  const filterValue = (item: CollaboratorOption) => (filterBy === "costCenter" ? item.costCenter || NO_COST_CENTER : item.department);
+  const departments = [...new Set(active.map(filterValue))].sort(comparePtBr);
+  const results = active.filter((item) => (!department || filterValue(item) === department) && (!query || normalize(`${item.officialName} ${item.department} ${item.costCenter}`).includes(normalize(query)))).sort(compareCollaborator).slice(0, 50);
   const selected = options.filter((item) => value.includes(item.id)).sort(compareCollaborator);
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((current) => current !== id) : [...value, id]);
   const selectAll = () => onChange([...new Set([...value, ...results.map((item) => item.id)])]);
@@ -30,10 +31,8 @@ export function CollaboratorMultiCombobox({ value, onChange, options, fixedDepar
   return (
     <div className="grid gap-3">
       <div>
-        <label htmlFor={departmentId} className={label}>Departamento</label>
-        {fixedDepartment
-          ? <input id={departmentId} className={clsx(textInputClassName, "bg-surface-muted text-foreground-muted")} value={fixedDepartment} readOnly disabled />
-          : <select id={departmentId} className={textInputClassName} value={department} onChange={(event) => { setDepartment(event.target.value); setOpen(true); }}><option value="">Todos os departamentos</option>{departments.map((item) => <option key={item}>{item}</option>)}</select>}
+        <label htmlFor={departmentId} className={label}>{filterBy === "costCenter" ? "Centro de Custo" : "Departamento"}</label>
+        <select id={departmentId} className={textInputClassName} value={department} onChange={(event) => { setDepartment(event.target.value); setOpen(true); }}><option value="">{filterBy === "costCenter" ? "Todos os centros de custo" : "Todos os departamentos"}</option>{departments.map((item) => <option key={item}>{item}</option>)}</select>
       </div>
       <div className="relative">
         <label htmlFor={searchId} className={label}>Colaboradores <span aria-hidden="true" className="text-primary">*</span><span className="sr-only">(obrigatório)</span></label>

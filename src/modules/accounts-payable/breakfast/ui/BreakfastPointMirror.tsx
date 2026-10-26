@@ -19,7 +19,7 @@ export type BreakfastPointMirrorPreview = {
   people: BreakfastPointMirrorPerson[];
 };
 
-const STATUS_LABEL = (status: BreakfastPointMirrorStatus, extra: number) => ({ APPLY: extra ? "Será aplicado" : "Presente no arquivo com 0 extras", NOT_SELECTED: "Encontrado no arquivo, mas não selecionado", NOT_ELIGIBLE: "Fora do TOPOGEO ou inativo", NOT_FOUND: "Não localizado (CPF)", INVALID_CPF: "CPF inválido", NOT_IN_FILE: "Selecionado, não está no arquivo — mantém o valor atual" })[status];
+const STATUS_LABEL = (status: BreakfastPointMirrorStatus, extra: number) => ({ APPLY: extra ? "Será aplicado" : "Presente no arquivo com 0 extras", NOT_SELECTED: "Encontrado no arquivo, mas não selecionado", NOT_ELIGIBLE: "Colaborador inativo", NOT_FOUND: "Não localizado (CPF)", INVALID_CPF: "CPF inválido", NOT_IN_FILE: "Selecionado, não está no arquivo — mantém o valor atual" })[status];
 // Tom só reforça o texto (nunca só cor).
 const STATUS_TONE: Partial<Record<BreakfastPointMirrorStatus, StatusTone>> = { NOT_FOUND: "warning", INVALID_CPF: "warning", NOT_ELIGIBLE: "warning" };
 

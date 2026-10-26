@@ -929,19 +929,12 @@ test("café da manhã: domínio próprio (sem TransitVoucher) e feriados/calend�
   assert.match(page, /Café da Manhã/); assert.match(page, /BreakfastSection/);
 });
 
-test("café da manhã: somente colaboradores de TOPOGEO (regra validada no backend)", async () => {
-  const { organizationalComparisonKey } = await import("../src/lib/organizational-label");
-  const { BREAKFAST_ALLOWED_DEPARTMENT } = await import("../src/modules/accounts-payable/breakfast/calculations");
-  assert.equal(BREAKFAST_ALLOWED_DEPARTMENT, "TOPOGEO");
-  // A comparação é robusta a caixa/acentos/espaços, mas não é um "includes" amplo.
-  assert.equal(organizationalComparisonKey("topogeo"), organizationalComparisonKey(BREAKFAST_ALLOWED_DEPARTMENT));
-  assert.equal(organizationalComparisonKey("  Topogeo  "), organizationalComparisonKey(BREAKFAST_ALLOWED_DEPARTMENT));
-  assert.notEqual(organizationalComparisonKey("ADMINISTRATIVO"), organizationalComparisonKey(BREAKFAST_ALLOWED_DEPARTMENT));
-  assert.notEqual(organizationalComparisonKey("TOPOGEOGRAFIA"), organizationalComparisonKey(BREAKFAST_ALLOWED_DEPARTMENT));
-  const manualServer = await readFile(new URL("../src/modules/accounts-payable/breakfast/manual-server.ts", import.meta.url), "utf8");
-  assert.match(manualServer, /BREAKFAST_ALLOWED_DEPARTMENT/);
-  assert.match(manualServer, /organizationalComparisonKey/);
-  assert.match(manualServer, /Apenas colaboradores do departamento \$\{BREAKFAST_ALLOWED_DEPARTMENT\}/);
+test("café da manhã: qualquer colaborador ativo (sem departamento fixo), seleção filtrada por Centro de Custo", async () => {
+  const [manualServer, mirrorServer, section] = await Promise.all(["breakfast/manual-server.ts", "breakfast/point-mirror-server.ts", "breakfast/BreakfastSection.tsx"].map((path) => readFile(new URL(`../src/modules/accounts-payable/${path}`, import.meta.url), "utf8")));
+  // backend continua exigindo colaborador ativo, mas não recusa mais por departamento
+  assert.match(manualServer, /active: true/); assert.doesNotMatch(manualServer, /TOPOGEO|Apenas colaboradores do departamento/);
+  assert.match(mirrorServer, /!employee\.active \? "NOT_ELIGIBLE"/); assert.doesNotMatch(mirrorServer, /TOPOGEO|department/);
+  assert.match(section, /<CollaboratorMultiCombobox value=\{selectedIds\} options=\{collaborators\} onChange=\{changeSelection\} filterBy="costCenter" \/>/);
 });
 
 test("café da manhã: rateio consolidado Empresa → Centro de Custo (snapshot do lançamento)", async () => {
@@ -2569,7 +2562,7 @@ test("café da manhã 7F: apresentação no Design System, regras na seção e c
   // regras e payloads continuam na seção (Quantidade Final = base + extras − desconto; Total = final × valor unitário)
   assert.match(section, /calculateFinalQuantity\(baseDays, Number\(value\.extra\), Number\(value\.discount\)\)/); assert.match(section, /calculateBreakfastEmployeeTotal\(priceCents, finalQuantity\)/);
   assert.match(section, /entries = selectedIds\.map\(\(id\) => \{ const value = values\[id\]; return \{ employeeId: id, companyId: value\.companyId, extraQuantity: Number\(value\.extra\), discountQuantity: Number\(value\.discount\)/);
-  assert.match(section, /method: "PATCH"/); assert.match(section, /fixedDepartment=\{BREAKFAST_ALLOWED_DEPARTMENT\}/);
+  assert.match(section, /method: "PATCH"/); assert.match(section, /filterBy="costCenter"/);
   // componentes visuais: sem cálculo, sem fetch, sem tokens crus de cor/hex nem title=
   for (const [name, source] of Object.entries({ fill, mirror, view, summary })) {
     assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ""), /calculateFinalQuantity|calculateBreakfastEmployeeTotal|parseUnitPriceToCents|fetch\(/, name);

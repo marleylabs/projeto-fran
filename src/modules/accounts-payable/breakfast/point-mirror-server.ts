@@ -1,13 +1,11 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
-import { organizationalComparisonKey } from "@/lib/organizational-label";
 import { readCsvMatrix, readXlsxMatrix } from "@/modules/accounts-payable/shared/spreadsheet";
-import { BREAKFAST_ALLOWED_DEPARTMENT } from "./calculations";
 import { buildBreakfastExtraSuggestions, normalizePointMirrorMatrix, PointMirrorError } from "./point-mirror";
 
 // Espelho de Ponto: processado só em memória — o arquivo (CPF, PIS, CNPJ, jornada) não é salvo em
 // banco/disco/storage e nada dele vai para log. Match EXCLUSIVAMENTE por CPF normalizado (nome nunca é
-// usado como fallback); depois valida a regra TOPOGEO e a seleção atual do formulário.
+// usado como fallback); depois valida se o colaborador está ativo e a seleção atual do formulário.
 export type PointMirrorStatus = "APPLY" | "NOT_SELECTED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "INVALID_CPF" | "NOT_IN_FILE";
 
 function decodeCsv(buffer: Buffer) {
@@ -31,15 +29,14 @@ export async function previewBreakfastPointMirror(input: { buffer: Buffer; fileN
   if (!parsed.totals.rows) throw new PointMirrorError("O Espelho de Ponto não possui linhas de colaboradores.");
   const cpfs = [...new Set(parsed.people.map((person) => person.cpf).filter((cpf): cpf is string => Boolean(cpf)))];
   const selected = new Set(input.selectedIds);
-  const employees = cpfs.length ? await prisma.foodEmployee.findMany({ where: { cpf: { in: cpfs } }, select: { id: true, officialName: true, department: true, active: true, cpf: true } }) : [];
+  const employees = cpfs.length ? await prisma.foodEmployee.findMany({ where: { cpf: { in: cpfs } }, select: { id: true, officialName: true, active: true, cpf: true } }) : [];
   const byCpf = new Map(employees.map((employee) => [employee.cpf!, employee]));
-  const allowed = organizationalComparisonKey(BREAKFAST_ALLOWED_DEPARTMENT);
 
   type PreviewPerson = { employeeId: string | null; employeeName: string; cpfMasked: string; saturdays: number; sundays: number; holidays: number; extraQuantity: number; status: PointMirrorStatus };
   const people: PreviewPerson[] = parsed.people.map((person) => {
     const employee = person.cpf ? byCpf.get(person.cpf) : undefined;
     const status: PointMirrorStatus = !person.cpf ? "INVALID_CPF" : !employee ? "NOT_FOUND"
-      : !employee.active || organizationalComparisonKey(employee.department) !== allowed ? "NOT_ELIGIBLE"
+      : !employee.active ? "NOT_ELIGIBLE"
       : !selected.has(employee.id) ? "NOT_SELECTED" : "APPLY";
     // Resposta sem CPF completo: só a forma mascarada. Nome do arquivo apenas para quem não foi localizado.
     return { employeeId: employee?.id ?? null, employeeName: employee?.officialName ?? person.name, cpfMasked: person.cpfMasked, saturdays: person.saturdays, sundays: person.sundays, holidays: person.holidays, extraQuantity: person.extraQuantity, status };
