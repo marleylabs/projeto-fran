@@ -16,7 +16,8 @@ import { type CollaboratorOption } from "@/components/CollaboratorCombobox";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
 import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
 import { BenefitCompetenceContext, BenefitHistory, BenefitWorkspace, type BenefitTab } from "@/modules/accounts-payable/shared/ui/BenefitWorkspace";
-import { calculateBreakfastEmployeeTotal, calculateFinalQuantity, parseUnitPriceToCents, type BreakfastObservationKind } from "./calculations";
+import { organizationalComparisonKey } from "@/lib/organizational-label";
+import { BREAKFAST_COST_CENTERS, calculateBreakfastEmployeeTotal, calculateFinalQuantity, parseUnitPriceToCents, type BreakfastObservationKind } from "./calculations";
 import { groupBreakfastByCompanyCostCenter } from "./rateio";
 import { applyBreakfastExtraSuggestions } from "./point-mirror";
 import { triggerDownload } from "@/lib/export/download";
@@ -100,6 +101,7 @@ export function BreakfastSection() {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([]);
+  const breakfastCollaborators = useMemo(() => collaborators.filter((item) => BREAKFAST_COST_CENTERS.some((costCenter) => organizationalComparisonKey(costCenter) === organizationalComparisonKey(item.costCenter))), [collaborators]);
   const [configs, setConfigs] = useState<Record<string, { companyId: string | null }>>({});
   const [ctx, setCtx] = useState<Context | null>(null);
   const [maps, setMaps] = useState<MapData[]>([]);
@@ -340,9 +342,9 @@ export function BreakfastSection() {
       </Card>
 
       <Card className="grid gap-4">
-        <CardHeader titleAs="h3" title="Colaboradores (base)" description="Filtre por Centro de Custo para selecionar. A empresa começa com o padrão de cada colaborador e continua editável por linha." />
+        <CardHeader titleAs="h3" title="Colaboradores (base)" description={`Somente os centros de custo ${BREAKFAST_COST_CENTERS.join(", ")}. A empresa começa com o padrão de cada colaborador e continua editável por linha.`} />
         {entityBase && <FeedbackAlert status="info">Este lançamento já possui mapa: novos colaboradores usarão a base histórica do mapa ({entityBase.workingDays} dias úteis · {money(entityBase.unitPrice)} por café), mesmo que a competência tenha sido alterada depois.</FeedbackAlert>}
-        <CollaboratorMultiCombobox value={selectedIds} options={collaborators} onChange={changeSelection} filterBy="costCenter" />
+        <CollaboratorMultiCombobox value={selectedIds} options={breakfastCollaborators} onChange={changeSelection} filterBy="costCenter" />
         {selectedIds.length > 0 && (
           <div className="flex flex-wrap items-end gap-3 rounded-control border border-border bg-surface-muted p-3" role="group" aria-label="Aplicar a todos os selecionados">
             <datalist id="cafe-companies">{companies.map((company) => <option key={company.id} value={companyLabel(company)} />)}</datalist>

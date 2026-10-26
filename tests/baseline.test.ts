@@ -934,7 +934,11 @@ test("café da manhã: qualquer colaborador ativo (sem departamento fixo), sele�
   // backend continua exigindo colaborador ativo, mas não recusa mais por departamento
   assert.match(manualServer, /active: true/); assert.doesNotMatch(manualServer, /TOPOGEO|Apenas colaboradores do departamento/);
   assert.match(mirrorServer, /!employee\.active \? "NOT_ELIGIBLE"/); assert.doesNotMatch(mirrorServer, /TOPOGEO|department/);
-  assert.match(section, /<CollaboratorMultiCombobox value=\{selectedIds\} options=\{collaborators\} onChange=\{changeSelection\} filterBy="costCenter" \/>/);
+  assert.match(section, /<CollaboratorMultiCombobox value=\{selectedIds\} options=\{breakfastCollaborators\} onChange=\{changeSelection\} filterBy="costCenter" \/>/);
+  // a tela só oferece colaboradores dos 4 centros de custo do Café (comparação sem caixa/acentos/espaços)
+  const { BREAKFAST_COST_CENTERS } = await import("../src/modules/accounts-payable/breakfast/calculations");
+  assert.deepEqual(BREAKFAST_COST_CENTERS, ["VALE TOPOGRAFIA SALOBO", "VALE TOPOGRAFIA BMSA", "VALE TOPOGRAFIA RADAR", "VALE INTEGRIDADE SALOBO"]);
+  assert.match(section, /BREAKFAST_COST_CENTERS\.some\(\(costCenter\) => organizationalComparisonKey\(costCenter\) === organizationalComparisonKey\(item\.costCenter\)\)/);
 });
 
 test("café da manhã: rateio consolidado Empresa → Centro de Custo (snapshot do lançamento)", async () => {

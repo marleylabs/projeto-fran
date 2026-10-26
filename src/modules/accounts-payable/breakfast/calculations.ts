@@ -7,6 +7,9 @@ export class BreakfastCalculationError extends Error {}
 
 export const DEFAULT_UNIT_PRICE = "12.50";
 
+// Centros de custo oferecidos no preenchimento do Café da Manhã (só a tela filtra; o servidor aceita qualquer ativo).
+export const BREAKFAST_COST_CENTERS = ["VALE TOPOGRAFIA SALOBO", "VALE TOPOGRAFIA BMSA", "VALE TOPOGRAFIA RADAR", "VALE INTEGRIDADE SALOBO"];
+
 const pad = (value: number) => String(value).padStart(2, "0");
 
 const assertInteger = (value: number, label: string) => {
