@@ -68,6 +68,8 @@ model User {
   cancelledBasicBasketMaps BasicBasketMap[] @relation("BasicBasketMapCanceller")
   deletedBasicBasketAllocations BasicBasketAllocation[] @relation("BasicBasketAllocationDeleter")
   basicBasketPointMirrorImports BasicBasketPointMirrorImport[] @relation("BasicBasketPointMirrorImportCreator")
+  healthPlanInvoices HealthPlanInvoice[] @relation("HealthPlanInvoiceCreator")
+  cancelledHealthPlanInvoices HealthPlanInvoice[] @relation("HealthPlanInvoiceCanceller")
 }
 
 model PasswordResetToken {
@@ -174,6 +176,7 @@ model Company {
   breakfastEmployeeConfigs BreakfastEmployeeConfig[]
   basicBasketAllocations BasicBasketAllocation[]
   basicBasketEmployeeConfigs BasicBasketEmployeeConfig[]
+  healthPlanAllocations HealthPlanAllocation[]
   foodMealOccurrences FoodMealOccurrence[]
 }
 
@@ -232,6 +235,8 @@ model AdministrativeEntity {
   breakfastAllocations BreakfastAllocation[]
   basicBasketMaps  BasicBasketMap[]
   basicBasketAllocations BasicBasketAllocation[]
+  healthPlanInvoices HealthPlanInvoice[]
+  healthPlanAllocations HealthPlanAllocation[]
   trainingProposals TrainingProposal[]
   trainings        Training[]
   trainingExpenses TrainingExpense[]
@@ -521,6 +526,7 @@ model FinancialRecord {
   transitVoucherMap      TransitVoucherMap?
   breakfastMap           BreakfastMap?
   basicBasketMap         BasicBasketMap?
+  healthPlanInvoice      HealthPlanInvoice?
   trainingExpense        TrainingExpense?
 
   @@unique([sequenceYear, sequenceNumber])
@@ -662,6 +668,7 @@ model FoodEmployee {
   breakfastConfig BreakfastEmployeeConfig?
   basicBasketAllocations BasicBasketAllocation[]
   basicBasketConfig BasicBasketEmployeeConfig?
+  healthPlanAllocations HealthPlanAllocation[]
   mergedInto     FoodEmployee?        @relation("FoodEmployeeMerges", fields: [mergedIntoId], references: [id], onDelete: Restrict)
   mergedEmployees FoodEmployee[]      @relation("FoodEmployeeMerges")
 
@@ -1541,4 +1548,86 @@ model ApprovalStepInstance {
 
   @@unique([requestId, sequence])
   @@index([roleId, status])
+}
+
+// ===== Plano de Saúde (Despesas) =====
+// Competência (ano/mês, padrão = mês do vencimento) → Invoice (um PDF "Analítico Fatura Mensal" da operadora = uma
+// obrigação financeira com o Valor Bruto da fatura) → Allocation (uma linha por TITULAR, valor = soma de Cobrado do
+// titular e dependentes). Titular associado ao colaborador por CPF; empresa/CC/departamento são snapshot do cadastro
+// no momento do upload. Titular não localizado fica com employeeId null (Sem empresa/CC/departamento) para o total fechar.
+model HealthPlanCompetence {
+  id          String                 @id @default(cuid())
+  year        Int
+  month       Int
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  invoices    HealthPlanInvoice[]
+  allocations HealthPlanAllocation[]
+
+  @@unique([year, month])
+}
+
+model HealthPlanInvoice {
+  id                     String               @id @default(cuid())
+  competenceId           String
+  administrativeEntityId String
+  createdByUserId        String
+  financialRecordId      String?              @unique
+  fileName               String
+  provider               String
+  obligation             String
+  control                String
+  dueDate                DateTime?            @db.Date
+  // Contratos ("Empresa" do PDF: código + nome) — só auditoria; a empresa do rateio vem do cadastro do colaborador.
+  contracts              Json
+  // Planos do resumo do PDF (código + nome), para exibir o nome no rateio.
+  plans                  Json                 @default("[]")
+  grossAmount            Decimal              @db.Decimal(19, 4)
+  totalAmount            Decimal              @db.Decimal(19, 4)
+  holderCount            Int
+  beneficiaryCount       Int
+  createdAt              DateTime             @default(now())
+  cancelledAt            DateTime?
+  cancelledByUserId      String?
+  cancellationReason     String?
+  competence             HealthPlanCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  createdBy              User                 @relation("HealthPlanInvoiceCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  cancelledBy            User?                @relation("HealthPlanInvoiceCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  financialRecord        FinancialRecord?     @relation(fields: [financialRecordId], references: [id], onDelete: Restrict)
+  allocations            HealthPlanAllocation[]
+
+  @@index([competenceId, administrativeEntityId])
+  @@index([obligation])
+}
+
+model HealthPlanAllocation {
+  id                     String               @id @default(cuid())
+  invoiceId              String
+  competenceId           String
+  administrativeEntityId String
+  sourceRow              Int
+  // CPF do titular (11 dígitos) e beneficiários (linhas do PDF, com CPF/nome da mãe): dados pessoais, omitidos por
+  // padrão no PrismaClient (src/lib/db/prisma.ts).
+  holderCpf              String
+  holderName             String
+  employeeId             String?
+  employeeName           String
+  company                String
+  companyId              String?
+  department             String?
+  costCenter             String?
+  amount                 Decimal              @db.Decimal(19, 4)
+  beneficiaryCount       Int
+  beneficiaries          Json
+  createdAt              DateTime             @default(now())
+  invoice                HealthPlanInvoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  competence             HealthPlanCompetence @relation(fields: [competenceId], references: [id], onDelete: Restrict)
+  administrativeEntity   AdministrativeEntity @relation(fields: [administrativeEntityId], references: [id], onDelete: Restrict)
+  employee               FoodEmployee?        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  companyRef             Company?             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@index([invoiceId])
+  @@index([employeeId])
+  @@index([competenceId, administrativeEntityId])
 }

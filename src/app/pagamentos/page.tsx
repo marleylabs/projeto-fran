@@ -1,12 +1,13 @@
 "use client";
 
-import { BusFront, GraduationCap, UtensilsCrossed } from "lucide-react";
+import { BusFront, GraduationCap, HeartPulse, UtensilsCrossed } from "lucide-react";
 import { ExpenseSectionCard } from "@/components/ExpenseSectionCard";
 import { PageHeader } from "@/components/ui";
 
 const expenseSections = [
   { title: "Alimentação", description: "Lotes mensais de MA e PA, cálculo por colaborador e rateio por setor.", icon: UtensilsCrossed, href: "/pagamentos/alimentacao" },
   { title: "Vale Transporte", description: "Mapa de pagamento do MA com valores individuais por colaborador e rateio por departamento.", icon: BusFront, href: "/pagamentos/vale-transporte" },
+  { title: "Plano de Saúde", description: "Faturas da operadora em PDF, valor cobrado por titular (com dependentes) e rateio por empresa, centro de custo e departamento.", icon: HeartPulse, href: "/pagamentos/plano-de-saude" },
   { title: "Treinamentos", description: "Controle dos treinamentos realizados, participantes, custos e rateio por setor.", icon: GraduationCap, href: "/pagamentos/treinamentos" },
 ] as const;
 

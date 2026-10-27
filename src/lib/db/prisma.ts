@@ -8,8 +8,9 @@ function createPrismaClient() {
   const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
   // CPF e Data de Admissão são dados pessoais: omitidos de toda consulta por padrão para não vazar
   // em APIs que devolvem a linha inteira do colaborador (listas, Alimentação, Treinamentos...). Quem
-  // precisa seleciona explicitamente (`select: { cpf: true }` / `omit: { cpf: false }`).
-  return new PrismaClient({ adapter, omit: { foodEmployee: { cpf: true, admissionDate: true } } });
+  // precisa seleciona explicitamente (`select: { cpf: true }` / `omit: { cpf: false }`). Plano de Saúde: CPF do titular e
+  // linhas dos beneficiários (CPF, nome da mãe, nascimento) seguem a mesma regra.
+  return new PrismaClient({ adapter, omit: { foodEmployee: { cpf: true, admissionDate: true }, healthPlanAllocation: { holderCpf: true, beneficiaries: true } } });
 }
 
 export const prisma = globalForPrisma.prisma ?? createPrismaClient();

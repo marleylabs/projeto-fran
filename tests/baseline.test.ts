@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import ExcelJS from "exceljs";
 import { parseBRNumber, extractCpf, extractDate } from "../src/lib/normalize/money";
 import { computeTotaisGerais } from "../src/lib/parser/computeTotals";
@@ -564,7 +565,7 @@ test("navegação do shell: grupos por permissão, item ativo e trilha sem repet
   assert.equal(item("dashboard").availability, "available"); assert.equal(item("dashboard").href, "/"); // Fase 7L: Home oficial em "/"
   // permissões só escondem navegação; a Home (Dashboard) é de todo usuário autenticado — sem outras permissões, só ela
   assert.deepEqual(visibleNavigationGroups([]).map((group) => [group.id, group.items.map((entry) => entry.id)]), [["overview", ["dashboard"]]]);
-  assert.deepEqual(visibleNavigationGroups(["financial-records.read"]).map((group) => [group.id, group.items.map((entry) => entry.id)]), [["overview", ["dashboard"]], ["expenses", ["food", "transit-voucher", "training-expenses"]]]);
+  assert.deepEqual(visibleNavigationGroups(["financial-records.read"]).map((group) => [group.id, group.items.map((entry) => entry.id)]), [["overview", ["dashboard"]], ["expenses", ["food", "transit-voucher", "health-plan", "training-expenses"]]]);
   const all = visibleNavigationGroups(["financial-records.read", "accounting.read", "master-data.read", "training.read", "users.read"]);
   assert.deepEqual(all.map((group) => group.id), ["overview", "expenses", "accounting", "master-data", "administration"]);
   // item ativo: Entidades só em /cadastros (não em /cadastros/colaboradores); a raiz "/" é do Dashboard, não da Folha
@@ -1381,7 +1382,7 @@ test("data de admissão: cadastro manual opcional (null válido) e validada no b
     readFile(new URL("../prisma/migrations/20261005120000_add_employee_admission_date/migration.sql", import.meta.url), "utf8"),
   ]);
   assert.match(patch, /"admissionDate" in body \? \{ admissionDate \} : \{\}/); // ausente = mantém; enviado vazio = limpa
-  assert.match(list, /admissionDate: !withAdmission/); assert.match(prismaClient, /omit: \{ foodEmployee: \{ cpf: true, admissionDate: true \} \}/);
+  assert.match(list, /admissionDate: !withAdmission/); assert.match(prismaClient, /omit: \{ foodEmployee: \{ cpf: true, admissionDate: true \}/);
   const sql = migration.split(/\r?\n/).filter((line) => !line.trim().startsWith("--")).join("\n");
   assert.match(sql, /ADD COLUMN "admissionDate" DATE;/); assert.doesNotMatch(sql, /UNIQUE|NOT NULL|DROP|UPDATE/);
 });
@@ -3026,4 +3027,106 @@ test("alimentação 7N: MA/PA subordinados à Operação, Rateio por estado sem 
   assert.match(food, /actions=\{ready\.length > 0 && \([\s\S]*?consolidated\/download/);
   // Histórico identifica estado e ciclo
   assert.match(food, /<StatusBadge tone="neutral">\{batch\.locality\}<\/StatusBadge>/); assert.match(food, /cycleLabel\(batch\)/);
+});
+
+// Plano de Saúde: linhas sintéticas no layout real do "Analítico Fatura Mensal" (nomes/CPFs fictícios).
+function healthPlanPage(pageNumber: number, rows: [string, number][][]) {
+  const header: [string, number][][] = [[["OPERADORA TESTE LTDA", 41]], [[String(pageNumber), 799]], [["Analítico Fatura Mensal", 41]],
+    [["Obrigação", 36], ["111", 91], ["Controle", 153], ["222", 201], ["Vencimento", 275], ["15/10/26", 333], ["Valor", 535], ["1,276.83", 571], ["Bruto", 664], ["1,276.83", 705]]];
+  return { pageNumber, rows: [...header, ...rows].map((items, index) => row(600 - index * 10, items)) };
+}
+const hpMoney = (values: string[]): [string, number][] => values.map((value, index) => [value, [584, 652, 689, 729, 765][index]]);
+const hpBeneficiary = (credential: string, cpf: string, name: string, relationship: string, plan: string, values: string[]): [string, number][] =>
+  [[credential, 36], ["1", 103], [cpf, 148], [name, 199], [relationship, 279], ["MAE TESTE", 310], ["01/01/90", 380], ["36", 420], ["01/01/25", 451], [plan, 489], ["0.00", 528], ["2", 551], ...hpMoney(values)];
+const hpTitular = (name: string, cpf: string): [string, number][] => [["Titular", 36], [name, 94], ["CPF", 456], [cpf, 480]];
+
+test("plano de saúde: parser agrupa dependentes pela credencial, junta nomes quebrados e confere Cobrado com o bruto", async () => {
+  const { parseHealthPlanRows, HealthPlanParseError } = await import("../src/modules/accounts-payable/health-plan/parser");
+  const pages = [
+    healthPlanPage(1, [
+      [["Empresa", 36], ["AAAAA", 94], ["EMPRESA TESTE LTDA", 130]], [["Unidade", 36], ["1", 94], ["EMPRESA E", 128]],
+      hpTitular("FULANO DE TAL", "5298224725"), // PDF omite o zero à esquerda
+      hpBeneficiary("AAAAA.000001-00", "052982247-25", "FULANO DE", "TITULAR", "100", ["425.61", "0.00", "0.00", "0.00", "425.61"]),
+      [["TAL", 199], ["DA SILVA", 310]],
+      hpBeneficiary("AAAAA.000001-01", "111444777-35", "CICLANA", "CONJUGE", "100", ["425.61", "100.00", "0.00", "0.00", "525.61"]),
+    ]),
+    healthPlanPage(2, [
+      [["Empresa", 36], ["AAAAA", 94], ["EMPRESA TESTE LTDA", 130]], hpTitular("FULANO DE TAL", "5298224725"),
+      [["DE TAL", 199]], // continuação do dependente na página seguinte
+      [["851.22", 576], ["100.00", 643], ["0.00", 690], ["0.00", 731], ["951.22", 760]],
+      hpTitular("BELTRANO", "11144477735"),
+      hpBeneficiary("AAAAA.000002-00", "111444777-35", "BELTRANO", "TITULAR", "100", ["325.61", "0.00", "0.00", "0.00", "325.61"]),
+      hpMoney(["325.61", "0.00", "0.00", "0.00", "325.61"]),
+      [["Empresa", 36], ["BBBBB", 94], ["EMPRESA TESTE LTDA ODONTO", 130]], hpTitular("FULANO DE TAL", "5298224725"),
+      hpBeneficiary("BBBBB.000009-00", "052982247-25", "FULANO DE TAL", "TITULAR", "200", ["0.00", "0.00", "0.00", "0.00", "0.00"]),
+      hpBeneficiary("BBBBB.000009-01", "111444777-35", "CICLANA DE TAL", "DEPENDENT", "200", ["0.00", "0.00", "0.00", "0.00", "0.00"]),
+      hpMoney(["0.00", "0.00", "0.00", "0.00", "0.00"]),
+      [["Plano", 36], ["AC", 91], ["Qtd", 429], ["Cobrado", 745]], [["100", 36], ["2", 91], ["3", 429], ["1,276.83", 741]],
+    ]),
+  ];
+  const invoice = parseHealthPlanRows(pages);
+  assert.equal(invoice.grossCents, 127683);
+  assert.equal(invoice.totalCents, 127683);
+  assert.equal(invoice.obligation, "111");
+  assert.deepEqual(invoice.contracts.map((contract) => contract.code), ["AAAAA", "BBBBB"]);
+  assert.deepEqual(invoice.holders.map((holder) => [holder.cpf, holder.chargedCents, holder.beneficiaries.length]), [["05298224725", 95122, 4], ["11144477735", 32561, 1]]);
+  const [titular, dependente] = invoice.holders[0].beneficiaries;
+  assert.equal(titular.name, "FULANO DE TAL");
+  assert.equal(titular.motherName, "MAE TESTE DA SILVA");
+  assert.equal(dependente.name, "CICLANA DE TAL");
+  assert.deepEqual([dependente.additionalCents, dependente.chargedCents], [10000, 52561]);
+
+  const wrongTotal = structuredClone(pages);
+  wrongTotal[1].rows[7].items[4].text = "425.61"; // subtotal não confere
+  assert.throws(() => parseHealthPlanRows(wrongTotal), HealthPlanParseError);
+  const wrongGross = structuredClone(pages);
+  for (const page of wrongGross) page.rows[3].items[9].text = "1,000.00";
+  assert.throws(() => parseHealthPlanRows(wrongGross), /difere do valor bruto/);
+});
+
+// Referência real: os 3 PDFs ficam fora do repositório (dados pessoais); o teste só roda onde eles existirem.
+const HEALTH_PLAN_PDF_DIR = process.env.HEALTH_PLAN_PDF_DIR ?? "C:/Users/anderson.marley/Downloads/Plano De Saude";
+test("plano de saúde: os 3 PDFs de referência fecham Cobrado com o valor bruto", { skip: !existsSync(HEALTH_PLAN_PDF_DIR) }, async () => {
+  const { extractPdfRows } = await import("../src/lib/pdf/extractRows");
+  const { parseHealthPlanRows } = await import("../src/modules/accounts-payable/health-plan/parser");
+  const expected: Record<string, [number, number, number]> = { "0H9BS": [2075558, 39, 94], "0F6CA": [159040, 5, 10], "0F6C6": [636160, 19, 40] };
+  for (const [code, [cents, holders, beneficiaries]] of Object.entries(expected)) {
+    const { pages } = await extractPdfRows(await readFile(`${HEALTH_PLAN_PDF_DIR}/EMPRESA_${code}_REMESSA_6383205.pdf`));
+    const invoice = parseHealthPlanRows(pages);
+    assert.deepEqual([invoice.grossCents, invoice.totalCents, invoice.holders.length, invoice.holders.reduce((sum, holder) => sum + holder.beneficiaries.length, 0)], [cents, cents, holders, beneficiaries]);
+  }
+});
+
+test("plano de saúde: XLSX junta as faturas do fornecedor, rateia Cobrado por titular e fecha com o valor bruto", async () => {
+  const { buildHealthPlanWorkbook } = await import("../src/modules/accounts-payable/health-plan/workbook");
+  const beneficiary = (credential: string, chargedCents: number) => ({ credential, name: "PESSOA TESTE", relationship: "TITULAR", plan: "100", contractCode: "AAAAA", monthlyCents: chargedCents, additionalCents: 0, discountCents: 0, fineCents: 0, chargedCents });
+  const allocation = (id: string, employeeId: string | null, company: string, amount: string, beneficiaries: ReturnType<typeof beneficiary>[]) => ({ id, holderName: id, employeeId, employeeName: id, company, companyId: null, department: employeeId ? "OBRAS" : null, costCenter: employeeId ? "CC 1" : null, amount, beneficiaryCount: beneficiaries.length, beneficiaries });
+  const invoice = (id: string, total: string, allocations: ReturnType<typeof allocation>[]) => ({ id, fileName: `${id}.pdf`, provider: "OPERADORA", obligation: id, control: "1", dueDate: new Date("2026-10-15"), contracts: [{ code: "AAAAA", name: "EMPRESA" }], plans: [{ code: "100", name: "PLENO IX" }], grossAmount: total, totalAmount: total, createdAt: new Date(), competence: { year: 2026, month: 10 }, administrativeEntity: { tradeName: "OPERADORA" }, financialRecord: { identifier: `PG-${id}` }, allocations });
+  const workbook = buildHealthPlanWorkbook([
+    invoice("F1", "851.22", [allocation("Titular A", "e1", "PROJETA", "851.22", [beneficiary("AAAAA.000001-00", 42561), beneficiary("AAAAA.000001-01", 42561)])]),
+    invoice("F2", "318.08", [allocation("Titular B", null, "", "318.08", [beneficiary("BBBBB.000002-00", 31808)])]),
+  ]);
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["Rateio Plano de Saúde", "Faturas", "Rateio - Departamento", "Rateio - Centro de Custo", "Rateio - Empresa Departamento", "Rateio - Empresa CC Depto", "Detalhado - Colaborador", "Beneficiários"]);
+  // Modelo do usuário: uma linha por titular, Valor Titular/Dependente separados e Total Individual = Cobrado.
+  const individual = workbook.getWorksheet("Rateio Plano de Saúde")!;
+  assert.deepEqual((individual.getRow(1).values as unknown[]).slice(1), ["EMPRESA", "NOME", "CENTRO DE CUSTO", "PLANO", "VALOR TITULAR", "QNT DEPENDENTES", "VALOR DO DEPENDENTE", "TAXA", "ADICIONAL", "TOTAL INDIVIDUAL"]);
+  assert.deepEqual((individual.getRow(2).values as unknown[]).slice(1), ["PROJETA", "Titular A", "CC 1", "PLENO IX", 425.61, 1, 425.61, 0, 0, 851.22]);
+  assert.deepEqual((individual.getRow(3).values as unknown[]).slice(1), ["Sem empresa", "Titular B", "Sem centro de custo", "PLENO IX", 318.08, 0, 0, 0, 0, 318.08]);
+  assert.equal(individual.getRow(4).getCell(10).value, 1169.3);
+  const lastValue = (name: string, column: number) => workbook.getWorksheet(name)!.lastRow!.getCell(column).value;
+  assert.equal(lastValue("Rateio - Empresa CC Depto", 2), 1169.3);
+  assert.equal(lastValue("Beneficiários", 11), 1169.3);
+  const companies = workbook.getWorksheet("Rateio - Empresa CC Depto")!.getColumn(1).values.filter(Boolean);
+  assert.ok(companies.includes("Sem empresa") && companies.includes("PROJETA"));
+  // Beneficiários não fecham com o Cobrado do titular → falha a geração.
+  assert.throws(() => buildHealthPlanWorkbook([invoice("F1", "851.22", [allocation("Titular A", "e1", "PROJETA", "851.22", [beneficiary("AAAAA.000001-00", 42561)])])]), /não fecham com o Cobrado/);
+});
+
+test("plano de saúde: empresa do contrato do PDF casa com a Company ativa pelo nome fantasia, só com candidato único", async () => {
+  const { matchContractCompany } = await import("../src/modules/accounts-payable/health-plan/parser");
+  const companies = [{ id: "p", tradeName: "PROJETA", active: true }, { id: "b", tradeName: "BOINGA", active: true }, { id: "q", tradeName: "PROJETA (QA)", active: false }];
+  assert.equal(matchContractCompany("PROJETA CONSULTORIA E SERV LTDA CTO PETRO Nº. 550009", companies)?.id, "p");
+  assert.equal(matchContractCompany("BOINGA INTEGRIDADE ESTRUTURAL COM E SERV LTDA ODONTO PROTECAO", companies)?.id, "b");
+  assert.equal(matchContractCompany("PROJETAX LTDA", companies), null);
+  assert.equal(matchContractCompany("PROJETA LTDA", [...companies, { id: "p2", tradeName: "Projeta", active: true }]), null); // ambíguo
 });

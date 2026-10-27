@@ -7,7 +7,7 @@
 //   a autoridade (requirePermission nas APIs); nenhuma regra nova de autorização é criada aqui.
 // - Subseções contextuais (Café da Manhã / Cesta Básica dentro de Alimentação) NÃO entram na sidebar.
 
-export type NavigationIconKey = "dashboard" | "food" | "transit" | "training" | "payroll" | "entities" | "collaborators" | "catalog" | "users";
+export type NavigationIconKey = "dashboard" | "food" | "transit" | "health" | "training" | "payroll" | "entities" | "collaborators" | "catalog" | "users";
 
 export interface NavigationItem {
   id: string;
@@ -41,6 +41,7 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
     items: [
       { id: "food", label: "Alimentação", href: "/pagamentos/alimentacao", icon: "food", matchPaths: ["/pagamentos/alimentacao"], permissions: ["financial-records.read"], availability: "available" },
       { id: "transit-voucher", label: "Vale Transporte", href: "/pagamentos/vale-transporte", icon: "transit", matchPaths: ["/pagamentos/vale-transporte"], permissions: ["financial-records.read"], availability: "available" },
+      { id: "health-plan", label: "Plano de Saúde", href: "/pagamentos/plano-de-saude", icon: "health", matchPaths: ["/pagamentos/plano-de-saude"], permissions: ["financial-records.read"], availability: "available" },
       { id: "training-expenses", label: "Treinamentos", href: "/pagamentos/treinamentos", icon: "training", matchPaths: ["/pagamentos/treinamentos"], permissions: ["financial-records.read"], availability: "available" },
     ],
   },
@@ -101,6 +102,7 @@ const ROUTES: Array<{ pattern: RegExp; meta: (match: RegExpMatchArray) => RouteM
   { pattern: /^\/pagamentos$/, meta: () => ({ title: "Despesas", trail: [] }) },
   { pattern: /^\/pagamentos\/alimentacao$/, meta: () => ({ title: "Alimentação", trail: [expenses] }) },
   { pattern: /^\/pagamentos\/vale-transporte$/, meta: () => ({ title: "Vale Transporte", trail: [expenses] }) },
+  { pattern: /^\/pagamentos\/plano-de-saude$/, meta: () => ({ title: "Plano de Saúde", trail: [expenses] }) },
   { pattern: /^\/pagamentos\/treinamentos$/, meta: () => ({ title: "Treinamentos", trail: [expenses] }) },
   { pattern: /^\/pagamentos\/([^/]+)\/validacao$/, meta: (match) => ({ title: "Validação documental", trail: [expenses, { label: "Obrigação", href: `/pagamentos/${match[1]}` }] }) },
   { pattern: /^\/pagamentos\/([^/]+)$/, meta: () => ({ title: "Obrigação", trail: [expenses] }) },

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, Building2, Bus, Calculator, GraduationCap, LayoutDashboard, ShieldCheck, Users, UtensilsCrossed, type LucideIcon } from "lucide-react";
+import { BookOpen, Building2, Bus, Calculator, GraduationCap, HeartPulse, LayoutDashboard, ShieldCheck, Users, UtensilsCrossed, type LucideIcon } from "lucide-react";
 import clsx from "clsx";
 import { ProjetaWordmark } from "@/components/brand/ProjetaWordmark";
 import { isNavigationItemActive, type NavigationGroup, type NavigationIconKey } from "@/modules/core/navigation/moduleRegistry";
@@ -10,6 +10,7 @@ const ICONS: Record<NavigationIconKey, LucideIcon> = {
   dashboard: LayoutDashboard,
   food: UtensilsCrossed,
   transit: Bus,
+  health: HeartPulse,
   training: GraduationCap,
   payroll: Calculator,
   entities: Building2,
