@@ -8,6 +8,7 @@ import { ArrowRight, Bus, Calculator, GraduationCap, Users, UtensilsCrossed, typ
 import { Card, CardHeader } from "@/components/ui";
 import { visibleNavigationGroups } from "@/modules/core/navigation/moduleRegistry";
 
+// Atalhos candidatos; navId referencia o id do item em NAVIGATION_GROUPS (o href sai de lá, nunca daqui).
 const QUICK_ACTIONS: { navId: string; label: string; description: string; icon: LucideIcon }[] = [
   { navId: "food", label: "Alimentação", description: "Lotes MA/PA, Café da Manhã e Cesta Básica", icon: UtensilsCrossed },
   { navId: "transit-voucher", label: "Vale Transporte", description: "Mapa mensal de passagens", icon: Bus },
@@ -22,6 +23,7 @@ export function quickActionsFor(permissions: readonly string[]) {
   return QUICK_ACTIONS.filter((action) => items.has(action.navId)).map((action) => ({ ...action, href: items.get(action.navId)! }));
 }
 
+// Lista de atalhos permitidos; não renderiza nada se o usuário não tiver nenhum.
 export function DashboardQuickActions({ permissions }: { permissions: readonly string[] }) {
   const actions = quickActionsFor(permissions);
   if (!actions.length) return null;

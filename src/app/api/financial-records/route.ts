@@ -1,9 +1,16 @@
+// /api/financial-records — listagem paginada e criação de registros financeiros (Contas a Pagar).
+// Consumido pelo dashboard, por src/app/pagamentos/[id] e pela seção de Treinamentos.
 import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/db/prisma";
 import { createFinancialRecord, InvalidAdministrativeEntityError } from "@/modules/accounts-payable/server/financialRecords";
 
+/**
+ * GET: query page (padrão 1), pageSize (1–100, padrão 25), search (identificador, descrição, nº do documento,
+ * razão social/fantasia; dígitos também buscam no CNPJ). Permissão: FINANCIAL_RECORDS_READ — 401 sem sessão, 403 sem permissão.
+ * Retorna { items, pagination: { page, pageSize, total } }.
+ */
 export async function GET(request: Request) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);
   if (response) return response;
@@ -29,6 +36,11 @@ export async function GET(request: Request) {
   return NextResponse.json({ items, pagination: { page, pageSize, total } });
 }
 
+/**
+ * POST: corpo JSON { administrativeEntityId, grossAmount (string decimal > 0) }. Permissão: FINANCIAL_RECORDS_CREATE.
+ * Cria via createFinancialRecord (modules/accounts-payable/server/financialRecords). Retorna 201 { item }.
+ * Erros: 400 campos ausentes, valor inválido/não positivo ou cadastro administrativo inválido.
+ */
 export async function POST(request: Request) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_CREATE);
   if (response || !user) return response;

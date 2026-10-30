@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle2, ChevronRight, Info, XCircle, type LucideIc
 import clsx from "clsx";
 import { Tooltip } from "@/components/ui";
 
+/** Tons da Note; cada tom relevante tem ícone próprio (acessibilidade: não depende só de cor). */
 export type NoteTone = "muted" | "success" | "warning" | "danger" | "info";
 const NOTE: Record<NoteTone, { className: string; icon: LucideIcon | null }> = {
   muted: { className: "text-foreground-muted", icon: null },

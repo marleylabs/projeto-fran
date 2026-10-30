@@ -1,6 +1,7 @@
 // CPF: helper único (frontend e backend) para normalizar, validar, formatar e mascarar.
 // Persistência: apenas os 11 dígitos. Exibição: 000.000.000-00. Mensagens/logs: só a forma mascarada.
 
+// Lançado por parseOptionalCpf; as rotas convertem em 400 com a mensagem "CPF inválido.".
 export class CpfValidationError extends Error {}
 
 // Só dígitos. Número vindo de planilha (Excel descarta zeros à esquerda) volta a ter 11 dígitos.
@@ -29,6 +30,7 @@ export function parseOptionalCpf(value: unknown): string | null {
   return digits;
 }
 
+// Exibição 000.000.000-00; se não tiver 11 dígitos devolve só os dígitos (sem inventar formato).
 export function formatCpf(value: unknown): string {
   const digits = normalizeCpf(value);
   return digits.length === 11 ? `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}` : digits;

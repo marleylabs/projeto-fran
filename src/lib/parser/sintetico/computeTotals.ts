@@ -1,9 +1,13 @@
+// Totais do Relatório Sintético. Usado por parseSintetico.ts.
+
 import type { LinhaSintetico, SinteticoTotais } from "@/lib/types/sintetico";
 
+// Soma arredondada a centavos.
 function sum(values: number[]): number {
   return Math.round(values.reduce((a, b) => a + b, 0) * 100) / 100;
 }
 
+/** Soma as colunas das linhas: totalProventos = Σ total, totalDescontos = Σ totalDesc. */
 export function computeSinteticoTotais(linhas: LinhaSintetico[]): SinteticoTotais {
   return {
     totalColaboradores: linhas.length,

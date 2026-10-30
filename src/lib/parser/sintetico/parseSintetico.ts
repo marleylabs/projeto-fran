@@ -1,9 +1,12 @@
+// Orquestra o parser do Relatório Sintético: linhas -> empresa -> dedupe -> totais. Chamado por router.ts.
+
 import type { PdfPageRows } from "@/lib/pdf/extractRows";
 import type { LinhaSintetico, SinteticoResult } from "@/lib/types/sintetico";
 import { parseSinteticoRows } from "./rowParser";
 import { parseSinteticoCompanyInfo } from "./companyParser";
 import { computeSinteticoTotais } from "./computeTotals";
 
+// Remove matrículas repetidas (mantém a 1ª) e registra aviso; linhas sem matrícula não são deduplicadas.
 function dedupeByMat(linhas: LinhaSintetico[], avisos: string[]): LinhaSintetico[] {
   const seen = new Map<string, LinhaSintetico>();
   const result: LinhaSintetico[] = [];

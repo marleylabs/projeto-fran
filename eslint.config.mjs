@@ -1,3 +1,5 @@
+// Configuração do ESLint (flat config): regras do Next.js (core-web-vitals + TypeScript).
+// src/generated/** é o client gerado pelo Prisma e não deve ser lintado.
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";

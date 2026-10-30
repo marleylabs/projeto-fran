@@ -10,6 +10,8 @@ import { useShellActions } from "./ShellActions";
 // Header do shell (64px): contexto da rota + ações contextuais + perfil. Sem busca global e sem notificações
 // (não existem no backend). A trilha mostra só os ANCESTRAIS da página — o título (h1) é do PageHeader da página,
 // para não duplicar "Colaboradores" no header e logo abaixo.
+/** Header do App Shell. trail: ancestrais da rota (resolveRouteMeta); user: null enquanto /api/auth/me carrega
+ * (ProfileMenu mostra placeholder); onOpenMenu/menuOpen/drawerId: botão que abre o drawer de navegação (< 1024px). */
 export function AppHeader({ trail, user, onLogout, onOpenMenu, menuOpen, drawerId }: { trail: RouteCrumb[]; user: ShellUser | null; onLogout: () => void; onOpenMenu: () => void; menuOpen: boolean; drawerId: string }) {
   const actions = useShellActions();
   return (

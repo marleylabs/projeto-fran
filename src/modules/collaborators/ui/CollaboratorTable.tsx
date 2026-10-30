@@ -10,6 +10,8 @@ import type { CollaboratorItem } from "./types";
 
 const muted = (text: string) => <span className="text-foreground-muted">{text}</span>;
 
+// Tabela com seleção múltipla para ações em lote. Cadastros mesclados não são selecionáveis; durante uma operação
+// (busy) nenhuma linha é. renderActions/bulkActions vêm da página. Exibe dado pessoal (CPF formatado).
 export function CollaboratorTable({ rows, selected, onSelectedChange, busy, renderActions, bulkActions }: { rows: CollaboratorItem[]; selected: string[]; onSelectedChange: (ids: string[]) => void; busy: boolean; renderActions: (item: CollaboratorItem) => ReactNode; bulkActions?: ReactNode }) {
   const columns: DataTableColumn<CollaboratorItem>[] = [
     { id: "name", header: "Colaborador", rowHeader: true, sticky: "start", width: "16rem", cell: (item) => (

@@ -4,8 +4,10 @@ import { useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, LogOut } from "lucide-react";
 import clsx from "clsx";
 
+/** Dados do usuário exibidos no shell (montados pelo AppShell a partir da sessão). */
 export type ShellUser = { email: string; name: string | null; roleLabel: string };
 
+// Iniciais para o avatar (até 2 letras); "U" quando não há nome.
 const initials = (value: string) => value.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toLocaleUpperCase("pt-BR")).join("") || "U";
 
 // Menu do usuário (padrão "menu button"): nome, papel e Sair. Esc fecha e devolve o foco ao botão; clique fora fecha.
@@ -19,6 +21,7 @@ export function ProfileMenu({ user, onLogout }: { user: ShellUser | null; onLogo
   const firstItemRef = useRef<HTMLButtonElement>(null);
   const display = user?.name?.trim() || user?.email || "";
 
+  // Ao abrir: foca o primeiro item e escuta clique fora / Esc.
   useEffect(() => {
     if (!open) return;
     firstItemRef.current?.focus();
@@ -29,6 +32,7 @@ export function ProfileMenu({ user, onLogout }: { user: ShellUser | null; onLogo
     return () => { document.removeEventListener("pointerdown", onPointer); document.removeEventListener("keydown", onKey); };
   }, [open]);
 
+  // Sessão ainda carregando: avatar em skeleton.
   if (!user) return <span aria-hidden="true" className="size-9 animate-pulse rounded-full bg-surface-muted motion-reduce:animate-none" />;
 
   return (

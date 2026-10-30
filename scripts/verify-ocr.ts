@@ -1,8 +1,12 @@
+// Verificação manual do OCR (Tesseract) usado pelo document-worker: desenha os dígitos 1–5 em blocos numa imagem,
+// embute num PDF sem camada de texto e chama ocrScannedPdf. Falha se não vier texto ou se o número de páginas ≠ 1.
+// Na primeira execução o Tesseract pode baixar os dados de idioma para OCR_CACHE_PATH (padrão .cache/tesseract).
 import { createCanvas } from "@napi-rs/canvas";
 import { PDFDocument } from "pdf-lib";
 import { ocrScannedPdf, terminateOcrWorker } from "../src/modules/documents/server/ocr";
 
 async function main() {
+  // Matriz 3×7 de "pixels" de cada dígito (1 = quadrado preenchido).
   const patterns: Record<string, string[]> = { "1": ["010", "110", "010", "010", "010", "010", "111"], "2": ["111", "001", "001", "111", "100", "100", "111"], "3": ["111", "001", "001", "111", "001", "001", "111"], "4": ["101", "101", "101", "111", "001", "001", "001"], "5": ["111", "100", "100", "111", "001", "001", "111"] };
   const canvas = createCanvas(900, 360); const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, 900, 360); context.fillStyle = "black";
   [..."12345"].forEach((digit, index) => patterns[digit].forEach((row, y) => [...row].forEach((pixel, x) => { if (pixel === "1") context.fillRect(70 + index * 150 + x * 35, 50 + y * 35, 35, 35); })));

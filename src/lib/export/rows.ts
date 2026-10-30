@@ -1,5 +1,9 @@
 import type { Colaborador } from "@/lib/types/payroll";
 
+// Layout "detalhado" de exportação do Extrato Mensal (usado por ./csv). A ordem dos cabeçalhos precisa
+// bater com a ordem do array devolvido por `colaboradorToRow`.
+
+/** Cabeçalhos das colunas da exportação detalhada. */
 export const COLABORADOR_HEADERS = [
   "Empresa",
   "Código",
@@ -30,6 +34,7 @@ export const COLABORADOR_HEADERS = [
   "Campos com baixa confiança",
 ] as const;
 
+/** Converte um colaborador numa linha alinhada a COLABORADOR_HEADERS (listas unidas em texto). */
 export function colaboradorToRow(c: Colaborador): (string | number)[] {
   return [
     c.empresaNome || "",

@@ -1,3 +1,7 @@
+// DELETE /api/accounts-payable/transit-voucher/[mapId]/records — exclusão lógica das alocações selecionadas do
+// mapa de Vale Transporte (deleteTransitAllocations, deletion-server), com recálculo do total; sem linhas, a
+// obrigação é cancelada. Permissão: FINANCIAL_RECORDS_DELETE; 401 sem sessão / 403 sem permissão (requirePermission).
+// Entrada (JSON): { ids: string[], reason? }. Erros: 409 AccountsPayableDeletionError.
 import { NextResponse } from "next/server";
 import { PERMISSIONS,requirePermission } from "@/lib/auth/permissions";
 import { AccountsPayableDeletionError,deleteTransitAllocations } from "@/modules/accounts-payable/deletion-server";

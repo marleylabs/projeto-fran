@@ -1,6 +1,10 @@
 import type { ButtonHTMLAttributes } from "react";
 import clsx from "clsx";
 
+// Botão do Design System, construído sobre as classes .btn do daisyUI (intencional) com ajustes de cor/estado.
+// Use `buttonClassName` quando precisar do visual de botão em outro elemento (ex.: <Link>, gatilho de menu).
+
+/** Variantes de cor; `error` é a ação destrutiva, `secondary` o botão contornado neutro. */
 export type ButtonVariant =
   | "neutral"
   | "primary"
@@ -11,8 +15,10 @@ export type ButtonVariant =
   | "warning"
   | "error"
   | "ghost";
+/** Tamanhos; `icon` gera botão quadrado para ícone sozinho (lembre do aria-label). */
 export type ButtonSize = "sm" | "md" | "lg" | "icon";
 
+/** loading: desabilita e mostra spinner (aria-busy); aura: destaque animado (classe btn-aura em globals.css). */
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
@@ -41,6 +47,7 @@ const sizes: Record<ButtonSize, string> = {
   icon: "btn-square",
 };
 
+/** Monta as classes do botão (variante, tamanho, aura) + className extra. Função pura, usável em server components. */
 export function buttonClassName({
   aura = false,
   className,
@@ -61,6 +68,7 @@ export function buttonClassName({
   );
 }
 
+/** Botão padrão. type="button" por padrão (evita submit acidental em formulários); loading também desabilita. */
 export function Button({
   children,
   className,

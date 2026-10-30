@@ -64,6 +64,8 @@ export function isAcceptableCurrencyDraft(text: string, { fractionDigits = 2, al
   return true;
 }
 
+/** value/onValueChange controlados pelo consumidor (onValueChange recebe o número e o texto digitado).
+ * fractionDigits: casas aceitas (padrão 2); allowNegative: aceita "-"; align: alinhamento do texto (padrão direita). */
 export type CurrencyInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "defaultValue" | "onChange" | "inputMode"> & {
   value: number | null;
   onValueChange: (value: number | null, text: string) => void;
@@ -75,6 +77,8 @@ export type CurrencyInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "ty
   ref?: Ref<HTMLInputElement>;
 };
 
+/** Campo monetário: ao focar mostra o valor formatado para edição, durante a digitação mantém o rascunho e ao sair
+ * volta a exibir o `value` do consumidor. Digitação inválida é ignorada (o texto não muda). */
 export function CurrencyInput({ value, onValueChange, fractionDigits = 2, allowNegative = false, prefix = "R$", align = "right", className, onFocus, onBlur, placeholder, ref, ...props }: CurrencyInputProps) {
   // null = não está editando (mostra o valor do módulo formatado). Durante a edição mostra exatamente o que foi digitado.
   const [draft, setDraft] = useState<string | null>(null);

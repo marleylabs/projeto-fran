@@ -6,12 +6,14 @@
 import { CheckCircle2, LoaderCircle } from "lucide-react";
 import { Card, FeedbackAlert, UploadDropzone, type UploadFileLike } from "@/components/ui";
 
+// Etapas: idle (aguardando arquivo), uploading (envio com %), processing (servidor lendo, sem %), error.
 export type PayrollUploadStage = "idle" | "uploading" | "processing" | "error";
 
 // Mesmo limite e formatos aceitos pelo servidor (/api/extract: PDF até 30 MB).
 const ACCEPT = "application/pdf,.pdf";
 const MAX_SIZE = 30 * 1024 * 1024;
 
+// Dropzone + indicador de etapas. O seletor fica desabilitado durante envio/processamento.
 export function PayrollUploadPanel({ stage, file, uploadPercent, errorMessage, onFileSelect }: { stage: PayrollUploadStage; file: UploadFileLike | null; uploadPercent: number; errorMessage: string | null; onFileSelect: (file: File) => void }) {
   const busy = stage === "uploading" || stage === "processing";
   return (

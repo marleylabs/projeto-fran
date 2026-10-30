@@ -15,9 +15,12 @@
 // que dependem de dias úteis (Vale Transporte, Café da Manhã).
 import { isoDate } from "./calendar";
 
+/** Origem do feriado: NATIONAL (calculado aqui) ou MANUAL (cadastrado no banco do módulo). */
 export type HolidaySource = "NATIONAL" | "MANUAL";
 export type HolidayEntry = { date: string; name: string };
+/** Feriado efetivo da competência; manualName/manualId existem quando há cadastro manual na mesma data. */
 export type EffectiveHoliday = { date: string; name: string; source: HolidaySource; manualName?: string; manualId?: string };
+/** Forma de snapshot (sem ids) usada pelos módulos ao registrar os feriados considerados no cálculo. */
 export type HolidaySnapshotEntry = { date: string; name: string; source: HolidaySource; manualName?: string };
 
 // Páscoa (algoritmo gregoriano anônimo / Meeus-Jones-Butcher), determinístico para qualquer ano.
@@ -30,6 +33,7 @@ export function easterSunday(year: number) {
   return { month, day };
 }
 
+/** Feriados nacionais do ano, ordenados por data (Consciência Negra só a partir de 2024). */
 export function getBrazilianNationalHolidays(year: number): HolidayEntry[] {
   const easter = easterSunday(year);
   const goodFriday = new Date(Date.UTC(year, easter.month - 1, easter.day - 2));
@@ -63,5 +67,6 @@ export function getEffectiveHolidays(year: number, month: number, manual: { id?:
   return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
 }
 
+/** Converte os feriados efetivos para o formato de snapshot (remove manualId). */
 export const toHolidaySnapshot = (holidays: EffectiveHoliday[]): HolidaySnapshotEntry[] =>
   holidays.map((holiday) => ({ date: holiday.date, name: holiday.name, source: holiday.source, ...(holiday.manualName ? { manualName: holiday.manualName } : {}) }));

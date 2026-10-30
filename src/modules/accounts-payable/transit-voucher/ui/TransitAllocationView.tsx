@@ -20,7 +20,8 @@ import type { TransitAllocationRow, TransitBase, TransitMapData } from "./types"
 // Legenda da tabela final com o caminho completo do grupo (evita legendas repetidas entre empresas).
 const leafPath = (view: AllocationViewId, row: { company: string; costCenter: string; department: string } | undefined) => !row ? "" : (view === "department" ? [row.department] : view === "costCenter" ? [row.costCenter] : view === "companyDepartment" ? [row.company, row.department] : [row.company, row.costCenter, row.department]).join(" / ");
 
-type ViewProps = { monthLabel: string; baseOf: (map: TransitMapData) => TransitBase; onCorrect: (mapId: string, row: TransitAllocationRow) => void; onDeleteRecord: (mapId: string, rowId: string) => void; onCancel: (mapId: string) => void };
+// baseOf: base histórica (dias úteis · tarifa) de cada mapa, resolvida pela página. Callbacks abrem os modais da página.
+type ViewProps ={ monthLabel: string; baseOf: (map: TransitMapData) => TransitBase; onCorrect: (mapId: string, row: TransitAllocationRow) => void; onDeleteRecord: (mapId: string, rowId: string) => void; onCancel: (mapId: string) => void };
 
 // Um card por fornecedor na competência: o mapa do upload e o de lançamentos manuais são somados no mesmo rateio.
 // Obrigação, XLSX e cancelamento continuam por mapa; Corrigir/Excluir usam o mapa de origem de cada registro.
@@ -41,6 +42,7 @@ function MapAllocation({ maps, monthLabel, baseOf, onCorrect, onDeleteRecord, on
   const rateadoCents = viewRows.reduce((sum, row) => sum + row.cents, 0);
   const totalCents = maps.reduce((sum, item) => sum + amountToCents(item.totalAmount), 0);
   const obligationCents = maps.reduce((sum, item) => sum + (item.financialRecord?.grossAmount ? amountToCents(item.financialRecord.grossAmount) : 0), 0);
+  // Conferência exibida no rodapé (centavos inteiros): rateado − total dos mapas; ≠ 0 vira alerta.
   const diff = rateadoCents - totalCents;
   const companies = new Set(rows.map((row) => row.company)).size;
   const departments = new Set(rows.map((row) => `${row.company}|${row.department ?? "Não informado"}`)).size;

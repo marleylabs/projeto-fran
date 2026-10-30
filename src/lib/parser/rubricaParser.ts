@@ -1,3 +1,5 @@
+// Leitura da tabela de rubricas de cada colaborador do Extrato Mensal. Usado por employeeParser.ts.
+
 import type { PdfRow, PdfTextItem } from "@/lib/pdf/extractRows";
 import { parseBRNumber } from "@/lib/normalize/money";
 import type { Rubrica, RubricaTipo } from "@/lib/types/payroll";
@@ -27,6 +29,7 @@ function parseCodigoDescricao(tokens: string[], startIdx: number): { codigo: str
   return { codigo: "", descricao: first, nextIdx: startIdx + 1 };
 }
 
+// Coluna de proventos: código descrição [referência] valor "P". Com marcador e código, a confiança é alta.
 function parseProvento(items: PdfTextItem[]): Rubrica | null {
   const tokens = items.map((i) => i.text.trim());
   if (tokens.length === 0) return null;
@@ -53,6 +56,7 @@ function parseProvento(items: PdfTextItem[]): Rubrica | null {
   };
 }
 
+// Coluna de descontos: código descrição [referência] "valor D" (marcador grudado no valor).
 function parseDesconto(items: PdfTextItem[]): Rubrica | null {
   const tokens = items.map((i) => i.text.trim());
   if (tokens.length === 0) return null;
@@ -85,6 +89,7 @@ export function looksLikeRubricaRow(row: PdfRow): boolean {
   return row.items.length > 1;
 }
 
+/** Lê uma linha da tabela e devolve 0, 1 ou 2 rubricas (provento e/ou desconto); valor ilegível descarta o lado. */
 export function parseRubricaRow(row: PdfRow): Rubrica[] {
   const { left, right } = splitColumns(row);
   const rubricas: Rubrica[] = [];
@@ -98,6 +103,7 @@ export function parseRubricaRow(row: PdfRow): Rubrica[] {
   return rubricas;
 }
 
+/** Mapeia marcador (P, D, I, ID) para RubricaTipo; desconhecido vira "Informativa". Sem uso atual no projeto. */
 export function classifyMarkerToTipo(marker: string): RubricaTipo {
   switch (marker) {
     case "P":

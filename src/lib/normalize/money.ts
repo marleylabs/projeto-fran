@@ -21,22 +21,27 @@ export function formatBRNumber(value: number): string {
   return value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Formatos esperados no texto dos PDFs de folha (CPF já pontuado, data dd/mm/aaaa). Só checam formato, não validade — para CPF válido use src/lib/cpf.ts.
 const CPF_REGEX = /\d{3}\.\d{3}\.\d{3}-\d{2}/;
 const DATE_REGEX = /\d{2}\/\d{2}\/\d{4}/;
 
+/** `true` se o texto contém um CPF no formato 000.000.000-00 (sem validar dígitos verificadores). */
 export function isValidCpfFormat(value: string): boolean {
   return CPF_REGEX.test(value);
 }
 
+/** `true` se o texto contém uma data dd/mm/aaaa (sem validar dia/mês). */
 export function isValidDateFormat(value: string): boolean {
   return DATE_REGEX.test(value);
 }
 
+/** Primeiro CPF pontuado encontrado no texto, ou null. */
 export function extractCpf(text: string): string | null {
   const m = text.match(CPF_REGEX);
   return m ? m[0] : null;
 }
 
+/** Primeira data dd/mm/aaaa encontrada no texto, ou null. */
 export function extractDate(text: string): string | null {
   const m = text.match(DATE_REGEX);
   return m ? m[0] : null;

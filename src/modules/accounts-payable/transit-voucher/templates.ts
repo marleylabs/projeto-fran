@@ -1,9 +1,15 @@
+// Máscara oficial (XLSX) de importação de Vale Transporte, servida pela rota .../transit-voucher/template.
+// Pertence ao fluxo legado de upload (processing.ts lê o que esta máscara gera); a tela atual não oferece o download.
 import ExcelJS from "exceljs";
 import { TRANSIT_VOUCHER_COLUMNS, TRANSIT_VOUCHER_SHEET_NAME, TRANSIT_VOUCHER_TABLE_NAME } from "./columns";
 
 const PRIMARY = "FFAF1B1B";
 const MONEY = 'R$ #,##0.00;[Red]-R$ #,##0.00';
 
+/**
+ * Gera a máscara: aba "VALE TRANSPORTE" com a tabela oficial, formatos (data, moeda, DIAS), validação de dados nas
+ * linhas 2–1000 e nota nas colunas obrigatórias, mais a aba "INSTRUÇÕES". Retorna o Buffer do XLSX. Sem efeitos colaterais.
+ */
 export async function generateTransitVoucherTemplate() {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Gestão Administrativa";

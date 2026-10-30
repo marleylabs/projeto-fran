@@ -1,3 +1,6 @@
+// Script manual de diagnóstico do parser de folha (extrato mensal): npx tsx scripts/test-parse.ts <arquivo.pdf>.
+// Imprime empresa, totais, avisos e a lista de colaboradores extraídos (nome, código e líquido — dado pessoal;
+// não cole a saída em lugares públicos). A amostra do código "41" é só um exemplo fixo usado durante o desenvolvimento.
 import { readFile } from "fs/promises";
 import { parsePayrollPdf } from "../src/lib/parser/parsePayrollPdf";
 

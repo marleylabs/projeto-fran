@@ -8,11 +8,14 @@ import { amountToCents, groupBreakfastByCompanyCostCenter } from "./rateio";
 
 // Montagem pura do XLSX do Café da Manhã (sem server-only) — o download (export.ts) só serializa.
 export type BreakfastWorkbookMap = Prisma.BreakfastMapGetPayload<{ include: { competence: true; administrativeEntity: true; allocations: true } }>;
+// Formato de moeda do Excel; as somas são feitas em centavos (rateio.ts) e só viram reais na célula.
 const MONEY = 'R$ #,##0.00';
 function header(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAF1B1B" } }; }
 function total(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF000000" } }; }
 const dept = (row: BreakfastWorkbookMap["allocations"][number]) => row.department ?? "Não informado";
 
+/** Monta o XLSX (Resumo, Rateio por Colaborador, Auditoria + perspectivas de rateio). Lança Error se o Resumo não
+ *  fechar com o total — nunca gera arquivo inconsistente. Lê só snapshots do mapa (nada recalculado). */
 export function buildBreakfastWorkbook(map: BreakfastWorkbookMap) {
   const workbook = new ExcelJS.Workbook(); workbook.creator = "Gestão Administrativa";
   const rows = [...map.allocations].sort((a, b) => comparePtBr(a.company, b.company) || comparePtBr(dept(a), dept(b)) || comparePtBr(a.employeeName, b.employeeName) || comparePtBr(a.id, b.id));
@@ -58,6 +61,7 @@ export function buildBreakfastWorkbook(map: BreakfastWorkbookMap) {
   return workbook;
 }
 
+// Feriados do holidaysSnapshot do mapa em texto (aba Auditoria); mapas antigos sem snapshot → "Não registrado".
 function holidaysText(snapshot: unknown) {
   if (!Array.isArray(snapshot)) return "Não registrado";
   if (!snapshot.length) return "Nenhum";

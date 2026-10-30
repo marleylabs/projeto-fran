@@ -2,7 +2,9 @@
 // valores chegam prontos (centavos/decimais do cálculo ou do servidor) e só são transformados em texto.
 import { BASIC_BASKET_CALCULATION_DAYS } from "../calculations";
 
+/** Moeda pt-BR a partir de reais (decimal em texto da API ou número). Só exibição. */
 export const money = (value: string | number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value));
+/** Moeda pt-BR a partir de centavos inteiros. */
 export const moneyCents = (cents: number) => money(cents / 100);
 export const people = (count: number) => `${count} ${count === 1 ? "colaborador" : "colaboradores"}`;
 // Texto curto do ajuste do Espelho de Ponto (Cesta ou Retroativo); vazio quando não há ajuste.

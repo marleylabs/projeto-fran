@@ -1,3 +1,7 @@
+// GET /api/accounts-payable/transit-voucher/[mapId]/download — XLSX do rateio de Vale Transporte.
+// Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission). Saída: arquivo .xlsx como anexo (Content-Disposition).
+// Erros: 404 mapa inexistente/não vigente/cancelado; 409 mapa ainda não READY.
+// Junta todos os mapas READY do mesmo fornecedor na competência (nome, total e alocações somados) em um arquivo.
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/db/prisma";
 import { Prisma } from "@/generated/prisma";

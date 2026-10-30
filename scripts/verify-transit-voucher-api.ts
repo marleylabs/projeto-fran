@@ -1,4 +1,8 @@
 export {};
+// Verificação manual da API de Vale Transporte contra um servidor em execução (VERIFY_BASE_URL, padrão localhost:3000).
+// Requer VERIFY_EMAIL/VERIFY_PASSWORD e os cadastros "TIA LIKA" (MA) e "REI DO ASSADO" (PA). ESCREVE dados.
+// Cenários: CSV válido (08/2026, espera 201), layout incompatível (10/2026, espera 400) e valores inválidos
+// (09/2026, espera 201 com pendências e sem obrigação financeira); por fim baixa o rateio do mapa válido.
 const base = process.env.VERIFY_BASE_URL ?? "http://localhost:3000"; const email = process.env.VERIFY_EMAIL; const password = process.env.VERIFY_PASSWORD; if (!email || !password) throw new Error("Credenciais ausentes.");
 async function body(response: Response) { const value = await response.json(); return { response, value }; }
 async function main() { const login = await body(await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) })); if (!login.response.ok) throw new Error(JSON.stringify(login.value)); const cookie = login.response.headers.get("set-cookie")?.split(";")[0]; if (!cookie) throw new Error("Sem sessão."); const headers = { Cookie: cookie }; const entityResponse = await body(await fetch(`${base}/api/administrative-entities?q=`, { headers })); const entities = entityResponse.value.items as Array<{ id: string; tradeName: string }>; const ma = entities.find((item) => item.tradeName === "TIA LIKA")!; const pa = entities.find((item) => item.tradeName === "REI DO ASSADO")!;

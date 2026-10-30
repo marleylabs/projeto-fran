@@ -7,6 +7,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Card, CardHeader, DataTable, StatusBadge, buttonClassName, type DataTableColumn, type StatusTone } from "@/components/ui";
 
+// Campos usados de cada item de GET /api/financial-records (grossAmount como texto decimal).
 export type RecentFinancialRecord = {
   id: string;
   identifier: string;
@@ -17,6 +18,7 @@ export type RecentFinancialRecord = {
   administrativeEntity: { tradeName: string | null; legalName: string } | null;
 };
 
+// Rótulo e tom só do ciclo de vida; valor desconhecido aparece como veio, em tom neutro.
 const LIFECYCLE: Record<string, { label: string; tone: StatusTone }> = {
   ACTIVE: { label: "Ativa", tone: "info" },
   CANCELLED: { label: "Cancelada", tone: "neutral" },
@@ -28,6 +30,7 @@ const money = (value: string) => new Intl.NumberFormat("pt-BR", { style: "curren
 const competence = (iso: string | null) => (iso ? `${String(new Date(iso).getUTCMonth() + 1).padStart(2, "0")}/${new Date(iso).getUTCFullYear()}` : null);
 const registered = (iso: string) => new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 
+// Tabela das últimas obrigações; o identificador leva ao detalhe em /pagamentos/[id].
 export function DashboardRecentRecords({ rows, loading, error }: { rows: RecentFinancialRecord[]; loading: boolean; error: string | null }) {
   const columns: DataTableColumn<RecentFinancialRecord>[] = [
     { id: "identifier", header: "Obrigação", rowHeader: true, cell: (r) => <Link href={`/pagamentos/${r.id}`} className="font-semibold text-primary underline-offset-2 hover:underline tabular-nums">{r.identifier}</Link> },

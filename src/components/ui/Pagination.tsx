@@ -5,6 +5,7 @@ import clsx from "clsx";
 
 // Paginação controlada (page 1-based). Não conhece os dados: o consumidor decide se pagina no cliente ou no servidor.
 // <nav aria-label> + página atual com aria-current="page"; Anterior/Próxima com nome acessível e desabilitados nas pontas.
+/** Item da janela de páginas: número da página ou marcador de reticências (início/fim). */
 export type PaginationItem = number | "ellipsis-start" | "ellipsis-end";
 
 /** Janela de páginas: primeira, última, atual ± `siblings`, com reticências quando há salto. */
@@ -23,7 +24,7 @@ export function paginationRange(page: number, pageCount: number, siblings = 1): 
   return items;
 }
 
-/** "Mostrando 11–20 de 57" (null quando não há total). */
+/** "Mostrando 11–20 de 57"; "Nenhum registro" quando o total é 0. (O componente omite o resumo sem totalItems/pageSize.) */
 export function paginationSummary(page: number, pageSize: number, totalItems: number) {
   if (totalItems <= 0) return "Nenhum registro";
   const first = (page - 1) * pageSize + 1;
@@ -32,6 +33,7 @@ export function paginationSummary(page: number, pageSize: number, totalItems: nu
   return `Mostrando ${format(first)}–${format(last)} de ${format(totalItems)}`;
 }
 
+/** page é 1-based; onPageChange recebe a nova página (o consumidor recarrega/fatia os dados). */
 export type PaginationProps = {
   page: number;
   pageCount: number;
@@ -47,6 +49,8 @@ export type PaginationProps = {
 const pageButton =
   "inline-flex h-8 min-w-8 cursor-pointer items-center justify-center gap-1 rounded-control px-2 text-button tabular-nums text-foreground transition-colors hover:bg-surface-muted disabled:cursor-not-allowed disabled:text-foreground-muted disabled:opacity-60 disabled:hover:bg-transparent motion-reduce:transition-none";
 
+/** Barra de paginação: resumo opcional + Anterior/números/Próxima. Valores de `page` fora do intervalo são presos
+ * a [1, pageCount]. No mobile os números ficam ocultos e aparece "Página X de Y". */
 export function Pagination({ page, pageCount, onPageChange, totalItems, pageSize, siblings = 1, label = "Paginação", className }: PaginationProps) {
   const current = Math.min(Math.max(1, page), Math.max(1, pageCount));
   const items = paginationRange(current, pageCount, siblings);

@@ -19,11 +19,13 @@ export type DrawerProps = {
   className?: string;
 };
 
+/** Painel lateral modal (usado pelo menu de navegação no mobile, ver AppShell). Conteúdo rola internamente. */
 export function Drawer({ open, onClose, title, hideTitle = false, side = "left", children, closeLabel = "Fechar", className }: DrawerProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const titleId = `${useId()}-drawer-title`;
 
+  // Sincroniza o <dialog> nativo com `open`; guarda o elemento focado ao abrir para devolver o foco ao fechar.
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
@@ -36,6 +38,8 @@ export function Drawer({ open, onClose, title, hideTitle = false, side = "left",
     }
   }, [open]);
 
+  // Esc (onCancel) cancela o fechamento nativo e chama onClose: o pai segue como fonte da verdade de `open`.
+  // Clique no próprio <dialog> (fora do conteúdo interno) equivale a clicar no overlay.
   return (
     <dialog
       ref={ref}

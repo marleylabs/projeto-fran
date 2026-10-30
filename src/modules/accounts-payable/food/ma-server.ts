@@ -1,4 +1,16 @@
 import "server-only";
+// Fluxo de importação por planilha de Alimentação (upload MA; a revisão/finalização/edição também atende PA,
+// cujo rascunho é criado por pa-server.ts). Chamado pelas rotas /api/accounts-payable/food/upload,
+// [batchId]/finalize, [batchId]/edit, [batchId]/review-group e [batchId]/discard.
+// Ciclo de vida do lote (FoodBatch):
+//   1. processFoodMaDraft → lote UNDER_REVIEW (rascunho/staging), sem obrigação financeira. Guarda o arquivo
+//      original em armazenamento privado e cria uma ocorrência por linha (já com tentativa de vínculo automático).
+//   2. removeFoodReviewGroup / discardFoodImportReview → ajustes ou descarte durante a revisão.
+//   3. finalizeFoodMaBatch → confirma vínculos, resolve duplicidades, gera FoodAllocation, grava o snapshot
+//      histórico do rateio, cria a obrigação (FinancialRecord) e marca o lote READY.
+//   4. editFoodMaBatch → correções posteriores no lote READY, com trilha de auditoria (FoodBatchRevision).
+// Um lote é identificado por competência + localidade + fornecedor + ciclo; nova versão desliga a anterior (current=false).
+// Valores sempre em Prisma.Decimal; toda escrita em transação Serializable.
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
@@ -24,6 +36,7 @@ import { foodPaInvoiceLabel, isFoodPaInvoiceCode } from "./invoice-company";
 import { isFoodMaCycle, occurrenceBelongsToMaCycle, type FoodMaCycle } from "./cycles";
 import { buildFoodRateioSnapshot, loadFoodSnapshotCompanies } from "./rateio-snapshot";
 
+// Competência aceita: ano 2000–2200 e mês 1–12 (inteiros).
 function validateCompetence(year: number, month: number) {
   if (
     !Number.isInteger(year) ||
@@ -35,6 +48,17 @@ function validateCompetence(year: number, month: number) {
   )
     throw new FoodBatchValidationError("Competência inválida.");
 }
+/**
+ * Upload da planilha MA de um ciclo (1º: dias 1–15; 2º: 16–fim) → cria um lote em revisão (UNDER_REVIEW).
+ * Validações: competência, ciclo, tamanho (até MAX_FOOD_FILE_SIZE), extensão CSV/XLSX, assinatura ZIP do XLSX
+ * ("PK") e fornecedor habilitado para MA. Linhas fora do ciclo viram inconsistência OUTSIDE_MA_CYCLE.
+ * Preço unitário vem da configuração do fornecedor (resolveFoodUnitPrice); cada ocorrência = 1 refeição.
+ * Vínculo automático (AUTO_MATCHED) só quando há colaborador, o setor confere e não é possível duplicidade
+ * (mesmo colaborador/nome no mesmo dia); senão a ocorrência fica PENDING para revisão.
+ * Efeitos: grava o arquivo em armazenamento privado (removido se a transação falhar), desliga a versão anterior
+ * do mesmo escopo e cria o novo lote com ocorrências e inconsistências. Não cria obrigação financeira.
+ * Lança FoodBatchValidationError nas validações e quando não sobra nenhuma ocorrência válida no ciclo.
+ */
 export async function processFoodMaDraft(input: {
   year: number;
   month: number;
@@ -103,11 +127,13 @@ export async function processFoodMaDraft(input: {
       aliases,
     ),
   }));
+  // Contagem por dia + colaborador (ou nome normalizado, se não vinculado) para marcar possíveis duplicidades.
   const counts = new Map<string, number>();
   for (const item of matches) {
     const key = `${item.occurrence.occurredOn.toISOString().slice(0, 10)}|${item.employee?.id ?? item.occurrence.normalizedReceivedName}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
+  // Arquivo salvo antes da transação; em caso de erro ele é removido no catch para não deixar órfão.
   const stored = await storePrivateFile(buffer);
   try {
     return await prisma.$transaction(
@@ -174,6 +200,7 @@ export async function processFoodMaDraft(input: {
             };
           },
         );
+        // totalAmount fica 0 no rascunho: o valor só passa a valer na finalização.
         const batch = await tx.foodBatch.create({
           data: {
             ...scope,
@@ -215,6 +242,11 @@ export async function processFoodMaDraft(input: {
   }
 }
 
+/**
+ * Decisão do usuário na revisão para um grupo (nome normalizado recebido): colaborador escolhido, setor
+ * confirmado, se deve salvar o nome como alias para próximos uploads e o tratamento de duplicidade
+ * (KEEP_ALL mantém todas as refeições do dia; KEEP_FIRST mantém só a primeira).
+ */
 export type FoodMaResolution = {
   normalizedReceivedName: string;
   employeeId?: string;
@@ -223,6 +255,17 @@ export type FoodMaResolution = {
   saveAlias?: boolean;
   duplicateAction: "KEEP_ALL" | "KEEP_FIRST";
 };
+/**
+ * Finaliza um lote em revisão (MA ou PA): aplica as resoluções, grava o snapshot do rateio, consolida por
+ * colaborador em FoodAllocation, confere totais e cria a obrigação financeira. Lote passa a READY.
+ * Regras:
+ *  - MA não finaliza com inconsistências de origem (FoodBatchIssue): exige nova versão do arquivo.
+ *  - Toda ocorrência precisa de colaborador do Cadastro Mestre e setor confirmado.
+ *  - Duplicidade (mesmo dia + colaborador + restaurante/fornecedor) exige decisão explícita (duplicateAction).
+ *  - Conferência: total das ocorrências = soma por colaborador = soma por setor (Decimal exato).
+ *  - Se uma versão anterior do mesmo escopo já tinha obrigação, ela é cancelada antes de criar a nova.
+ * Lança FoodBatchValidationError em qualquer violação (a transação inteira é desfeita).
+ */
 export async function finalizeFoodMaBatch(
   batchId: string,
   userId: string,
@@ -303,6 +346,7 @@ export async function finalizeFoodMaBatch(
           },
         });
       }
+      // Duplicidade: ocorrências manuais (sem data) nunca colidem entre si (chave inclui o id).
       const resolved = await tx.foodMealOccurrence.findMany({
         where: { batchId, deletedAt: null },
         orderBy: { sourceRow: "asc" },
@@ -333,6 +377,7 @@ export async function finalizeFoodMaBatch(
             });
           }
         }
+      // Rateio consolidado por colaborador (unitPrice = valor ÷ refeições).
       const included = await tx.foodMealOccurrence.findMany({
         where: { batchId, included: true, deletedAt: null },
         orderBy: { sourceRow: "asc" },
@@ -381,6 +426,7 @@ export async function finalizeFoodMaBatch(
           amount: row.amount,
         })),
       });
+      // Conferência de integridade antes de gerar a obrigação.
       const total = included.reduce((sum, row) => sum.add(row.amount), new Prisma.Decimal(0));
       const collaboratorSum = allocations.reduce(
         (sum, row) => sum.add(row.amount),
@@ -402,6 +448,7 @@ export async function finalizeFoodMaBatch(
         throw new FoodBatchValidationError(
           "Erro de integridade no rateio por ocorrências, colaboradores ou setores.",
         );
+      // Versão anterior do mesmo escopo com obrigação: cancela (sem zerar) para não haver duas contas a pagar.
       const previous = await tx.foodBatch.findFirst({
         where: {
           competenceId: batch.competenceId,
@@ -448,6 +495,11 @@ export async function finalizeFoodMaBatch(
   );
 }
 
+/**
+ * Remove da revisão todas as ocorrências de um nome recebido (grupo), sem tocar no Cadastro Mestre.
+ * Soft delete com motivo fixo; recalcula totais do rascunho. Só para lote vigente em UNDER_REVIEW.
+ * Lança FoodBatchValidationError se o grupo é inválido, o lote não está em revisão ou o grupo já foi removido.
+ */
 export async function removeFoodReviewGroup(
   batchId: string,
   normalizedReceivedName: string,
@@ -478,6 +530,11 @@ export async function removeFoodReviewGroup(
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+/**
+ * Cancela a importação inteira ainda em revisão: soft delete das ocorrências, lote sai de vigência e o
+ * arquivo original é apagado do armazenamento privado (após o commit). Não há obrigação a cancelar,
+ * pois o rascunho ainda não gerou conta a pagar.
+ */
 export async function discardFoodImportReview(batchId: string, userId: string) {
   const storageKey = await prisma.$transaction(async (tx) => {
     const batch = await tx.foodBatch.findUnique({ where: { id: batchId } });
@@ -498,6 +555,11 @@ export async function discardFoodImportReview(batchId: string, userId: string) {
   return { cancelled: true };
 }
 
+/**
+ * Situação desejada de uma ocorrência na edição de um lote READY. O cliente envia TODAS as ocorrências.
+ * disposition: VALID entra no rateio; DUPLICATE/IGNORED ficam fora. mealQuantity só é editável em
+ * ocorrências sem data (lançamento manual por quantidade).
+ */
 export type FoodMaEdit = {
   occurrenceId: string;
   employeeId?: string;
@@ -510,6 +572,16 @@ export type FoodMaEdit = {
   invoiceEmission?: string;
 };
 
+/**
+ * Edita um lote já finalizado (READY e vigente), MA ou PA.
+ * - Exige a situação de todas as ocorrências; colaborador do Cadastro Mestre e setor são obrigatórios.
+ * - NF só pode ser alterada no PA (NF_01/NF_02); muda apenas a empresa derivada no rateio.
+ * - amount = unitPrice da ocorrência × quantidade (o preço histórico não é recalculado).
+ * - Snapshot do rateio só é recapturado quando a ocorrência troca de colaborador.
+ * - Reconstrói FoodAllocation por colaborador + setor, confere total, atualiza grossAmount da obrigação
+ *   existente e registra FoodBatchRevision com antes/depois de cada linha alterada.
+ * Lança FoodBatchValidationError em qualquer violação.
+ */
 export async function editFoodMaBatch(
   batchId: string,
   userId: string,
@@ -542,6 +614,7 @@ export async function editFoodMaBatch(
         throw new FoodBatchValidationError(
           "Envie a situação atual de todas as ocorrências do rateio.",
         );
+      // Trilha de auditoria: guarda antes/depois apenas das linhas que mudaram.
       const audit: Record<string, unknown>[] = [];
       for (const occurrence of batch.mealOccurrences) {
         const edit = byId.get(occurrence.id);
@@ -624,6 +697,7 @@ export async function editFoodMaBatch(
           },
         });
       }
+      // Aqui o agrupamento é por colaborador + setor (na edição o mesmo colaborador pode ter setores diferentes).
       const included = await tx.foodMealOccurrence.findMany({
         where: { batchId, included: true },
         orderBy: { sourceRow: "asc" },
@@ -692,6 +766,7 @@ export async function editFoodMaBatch(
         where: { id: batch.financialRecordId },
         data: { grossAmount: total },
       });
+      // Nova revisão numerada sequencialmente por lote.
       const lastRevision = await tx.foodBatchRevision.aggregate({
         where: { batchId },
         _max: { revision: true },

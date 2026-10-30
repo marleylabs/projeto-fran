@@ -13,6 +13,7 @@ import { buildPointMirrorCandidates } from "./point-mirror-review";
 // cujo id o formulário envia ao salvar — o servidor recalcula tudo a partir dele.
 export type BasicBasketPointMirrorStatus = "ABSENCE" | "VACATION" | "NEXT_COMPETENCE" | "BEFORE_ADMISSION" | "NO_OCCURRENCE" | "OUT_OF_PERIOD" | "NOT_SELECTED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "INVALID_CPF" | "NOT_IN_FILE" | "MISSING_ADMISSION";
 
+// CSV: UTF-8 estrito; se inválido, Windows-1252 (exportação comum do Excel/sistema de ponto).
 function decodeCsv(buffer: Buffer) {
   try { return new TextDecoder("utf-8", { fatal: true }).decode(buffer); }
   catch { return new TextDecoder("windows-1252").decode(buffer); }
@@ -28,8 +29,12 @@ async function readMatrix(buffer: Buffer, fileName: string) {
   throw new BasicBasketPointMirrorError("Formato não suportado. Envie o Espelho de Ponto em .xlsx ou .csv.");
 }
 
+// Importações nunca usadas por alocação são apagadas após 7 dias (limpeza feita no próximo processamento).
 const STALE_IMPORT_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Chamado por POST /api/accounts-payable/basic-basket/point-mirror. Lê o arquivo, cruza por CPF com FoodEmployee,
+ *  grava BasicBasketPointMirrorImport (só datas dos selecionados aptos; nenhum valor financeiro) e devolve a prévia:
+ *  situação por pessoa (CPF mascarado), totais e candidatos de revisão. Lança BasicBasketPointMirrorError. */
 export async function previewBasicBasketPointMirror(input: { buffer: Buffer; fileName: string; year: number; month: number; selectedIds: string[]; userId: string }) {
   if (!Number.isInteger(input.year) || !Number.isInteger(input.month) || input.month < 1 || input.month > 12) throw new BasicBasketPointMirrorError("Competência inválida.");
   const context = buildBasicBasketContext(input.year, input.month);
@@ -53,6 +58,7 @@ export async function previewBasicBasketPointMirror(input: { buffer: Buffer; fil
     const vacationBeforeAdmission = admissionDate ? [...occurrences.currentVacationDates, ...occurrences.referenceVacationDates].filter((date) => date < admissionDate) : [];
     const eligible = Boolean(employee?.active && !employee.mergedIntoId);
     let adjustments: BasicBasketAdjustments | null = null;
+    // Precedência: CPF inválido → não encontrado → inativo/mesclado → não selecionado → sem admissão → apto (NO_OCCURRENCE).
     let status: BasicBasketPointMirrorStatus = !person.cpf ? "INVALID_CPF" : !employee ? "NOT_FOUND" : !eligible ? "NOT_ELIGIBLE" : !selected.has(employee.id) ? "NOT_SELECTED" : !admissionDate ? "MISSING_ADMISSION" : "NO_OCCURRENCE";
     if (status === "NO_OCCURRENCE" && employee) {
       stored[employee.id] = occurrences; // só selecionados aptos: é isto que o salvamento poderá aplicar

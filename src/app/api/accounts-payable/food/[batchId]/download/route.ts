@@ -1,8 +1,15 @@
+// GET /api/accounts-payable/food/[batchId]/download — XLSX do rateio de Alimentação de um lote pronto.
+// Gerado por exportFoodBatch (food/export).
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/db/prisma";
 import { exportFoodBatch } from "@/modules/accounts-payable/food/export";
 
 export const runtime = "nodejs";
+/**
+ * Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Saída: arquivo .xlsx como anexo (Content-Disposition).
+ * Erros: 404 lote inexistente/não vigente/cancelado; 409 se o lote ainda não está READY (há inconsistências).
+ */
 export async function GET(_request: Request, context: { params: Promise<{ batchId: string }> }) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ); if (response) return response;
   const { batchId } = await context.params;

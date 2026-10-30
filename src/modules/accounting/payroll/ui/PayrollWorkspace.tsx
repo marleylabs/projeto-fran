@@ -23,8 +23,11 @@ import { leituraLabel } from "./format";
 
 type Stage = PayrollUploadStage;
 
+// Chave do navegador com o id da última extração aberta (só o id; os dados da folha ficam no banco).
 const LAST_UPLOAD_KEY = "extratoMensal:currentUploadId";
 
+// Página da Folha (montada por /contabilidade/folha via index.ts). Sem props: busca tudo pelas APIs /api/uploads e
+// /api/extract. Dados pessoais da folha (nome, CPF, salário) ficam só em memória/tela; nada vai para o navegador além do id.
 export function PayrollWorkspace() {
   const [stage, setStage] = useState<Stage>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -42,6 +45,7 @@ export function PayrollWorkspace() {
   const [uploadFile, setUploadFile] = useState<UploadFileLike | null>(null);
   const [uploadPercent, setUploadPercent] = useState(0);
 
+  // Lista de uploads recentes; falha de rede vira lista vazia (a tela de upload continua utilizável).
   const loadRecentUploads = () => {
     fetch("/api/uploads")
       .then((r) => (r.ok ? r.json() : Promise.reject()))
@@ -69,6 +73,9 @@ export function PayrollWorkspace() {
   }, []);
 
 
+  // Envia o PDF (XHR com progresso real do envio). Sem duplicateAction, o servidor pode responder "duplicate":
+  // o arquivo fica pendente e o PayrollDuplicateDialog decide. Extração vazia (formato desconhecido ou sem linhas)
+  // vira estado de erro com o primeiro aviso do parser.
   const runUpload = async (file: File, duplicateAction?: "replace" | "keep_both") => {
     setStage("uploading");
     setErrorMessage(null);
@@ -117,6 +124,7 @@ export function PayrollWorkspace() {
     runUpload(file);
   };
 
+  // Decisão do diálogo de duplicidade: cancelar descarta o arquivo; substituir/manter reenviam com a ação escolhida.
   const handleDuplicateDecision = (action: "replace" | "keep_both" | "cancel") => {
     const file = pendingFile;
     setDuplicateExisting(null);
@@ -128,6 +136,7 @@ export function PayrollWorkspace() {
     runUpload(file, action);
   };
 
+  // Abre uma extração salva da lista de recentes e passa a lembrá-la como a última vista.
   const handleSelectRecent = (id: string) => {
     setRestoring(true);
     fetch(`/api/uploads/${id}`)
@@ -153,6 +162,8 @@ export function PayrollWorkspace() {
     return [...new Set(extrato.colaboradores.map((c) => c.empresaNome || extrato.empresa.nome).filter(Boolean))].sort();
   }, [extrato]);
 
+  // Filtragem do Extrato Mensal no cliente. Empresa/situação: igualdade; nome/cargo: contém (sem caixa);
+  // CPF: contém; departamento/centro de custo: igual ou contém.
   const filteredColaboradores = useMemo(() => {
     if (!extrato) return [];
     const f = filters;
@@ -169,6 +180,7 @@ export function PayrollWorkspace() {
     });
   }, [extrato, filters]);
 
+  // Busca do Relatório Sintético por nome (sem caixa) ou matrícula.
   const filteredLinhas = useMemo(() => {
     if (!sintetico) return [];
     const termo = sinteticoBusca.trim().toLowerCase();
@@ -178,12 +190,14 @@ export function PayrollWorkspace() {
 
   const selectedColaborador = extrato?.colaboradores.find((c) => c.id === selectedId) ?? null;
 
+  // Correção manual vinda do drawer: substitui o colaborador e recalcula os totais SÓ em tela (não grava no servidor).
   const handleSaveColaborador = (updated: Colaborador) => {
     if (!extrato) return;
     const colaboradores = extrato.colaboradores.map((c) => (c.id === updated.id ? updated : c));
     setResult({ ...extrato, colaboradores, totaisGerais: computeTotaisGerais(colaboradores) });
   };
 
+  // "Novo upload": limpa a extração em tela e esquece a última extração lembrada.
   const reset = () => {
     setStage("idle");
     setResult(null);

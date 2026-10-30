@@ -1,3 +1,6 @@
+// DELETE /api/accounts-payable/transit-voucher/[mapId] — exclusão (soft cancel) do mapa de Vale Transporte via
+// cancelTransitMap (deletion-server). Permissão: FINANCIAL_RECORDS_DELETE; 401 sem sessão / 403 sem permissão (requirePermission).
+// Entrada (JSON): { confirmation: "EXCLUIR", reason }. Erros: 400 sem confirmação digitada; 409 AccountsPayableDeletionError.
 import { NextResponse } from "next/server";
 import { PERMISSIONS,requirePermission } from "@/lib/auth/permissions";
 import { AccountsPayableDeletionError,cancelTransitMap } from "@/modules/accounts-payable/deletion-server";

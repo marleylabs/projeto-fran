@@ -13,10 +13,13 @@ import { UploadDropzone, type UploadFileLike } from "./UploadDropzone";
 // Este componente não faz requisições e não conhece nenhum domínio (Cesta, Café, VT, Férias, CPF...).
 // Erros BLOQUEIAM a aplicação; avisos NÃO bloqueiam — diferenciados por ícone + texto + cor (nunca só cor).
 // Etapa opcional "Revisar" (prop `review`): Prévia → Revisar → Aplicar — a aplicação só é liberada na revisão.
+/** Passo atual do fluxo, definido pelo consumidor. "review" só existe quando a prop `review` é usada. */
 export type ImportFlowStep = "select" | "processing" | "preview" | "review" | "applying" | "done";
 
+/** Erro ou aviso da prévia: `id` estável (chave de lista), mensagem e detalhe opcional (ex.: linha do arquivo). */
 export type ImportIssue = { id: string; message: ReactNode; detail?: ReactNode };
 
+/** Etapas do fluxo padrão (sem revisão), na ordem exibida pelo stepper. */
 export const IMPORT_FLOW_STEPS = [
   { key: "select", label: "Selecionar" },
   { key: "processing", label: "Processar" },
@@ -24,6 +27,7 @@ export const IMPORT_FLOW_STEPS = [
   { key: "applying", label: "Aplicar" },
   { key: "done", label: "Resultado" },
 ] as const;
+/** Etapas do fluxo com a etapa extra Revisar entre Prévia e Aplicar. */
 export const IMPORT_FLOW_REVIEW_STEPS = [
   { key: "select", label: "Selecionar" },
   { key: "processing", label: "Processar" },
@@ -34,6 +38,7 @@ export const IMPORT_FLOW_REVIEW_STEPS = [
 ] as const;
 type FlowSteps = ReadonlyArray<{ key: ImportFlowStep; label: string }>;
 
+/** Situação de uma etapa no stepper. */
 export type ImportStepState = "complete" | "current" | "upcoming";
 
 /** Estado de cada etapa do stepper para o passo atual. "done" marca todas como concluídas. */
@@ -49,6 +54,8 @@ export function canApplyImport({ step, errors = [], canApply = true, withReview 
 
 const STATE_TEXT: Record<ImportStepState, string> = { complete: "concluída", current: "etapa atual", upcoming: "pendente" };
 
+/** Stepper visual (<ol>) das etapas; a etapa atual tem aria-current="step" e spinner enquanto processa/aplica.
+ * Em telas pequenas só o rótulo da etapa atual aparece; o estado de cada etapa vai em texto sr-only. */
 export function ImportStepper({ step, steps = IMPORT_FLOW_STEPS, className }: { step: ImportFlowStep; steps?: FlowSteps; className?: string }) {
   const states = importStepStates(step, steps);
   const busy = step === "processing" || step === "applying";
@@ -112,6 +119,8 @@ export function ImportIssues({ errors = [], warnings = [] }: { errors?: readonly
   );
 }
 
+/** Props do ImportFlow, agrupadas por etapa (seleção, prévia/revisão, aplicação, resultado). onReset volta ao início
+ * (Cancelar/Recomeçar/Nova importação); o consumidor decide o que limpar. */
 export type ImportFlowProps = {
   step: ImportFlowStep;
   title?: ReactNode;
@@ -151,6 +160,8 @@ export type ImportFlowProps = {
   className?: string;
 };
 
+/** Orquestra a apresentação das etapas conforme `step`: seleção (UploadDropzone), processamento (skeleton),
+ * prévia/revisão com erros e avisos, aplicação e resultado. `failure` aparece em qualquer etapa. */
 export function ImportFlow({
   step, title, description, file, onSelect, onClearFile, accept, maxSize, uploadLabel = "Selecione o arquivo", uploadHelper,
   onProcess, processLabel = "Processar arquivo", processingText = "Processando o arquivo…",

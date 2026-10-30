@@ -7,6 +7,7 @@ import type { FormEvent } from "react";
 import { Field, TextInput, textInputClassName } from "@/components/ui";
 import type { AdministrativeEntityForm } from "./types";
 
+// formId liga o form aos botões do rodapé do Dialog (fora do form). cnpjError/choiceError vêm da validação da página.
 type Props = {
   formId: string;
   form: AdministrativeEntityForm;
@@ -19,6 +20,8 @@ type Props = {
   onSubmit: (event: FormEvent) => void;
 };
 
+// Formulário controlado: cada campo devolve um patch parcial em onChange; o CNPJ tem callback próprio (máscara na página).
+// SIM/NÃO começa em "Selecione" ("") para obrigar escolha explícita; choiceError só aparece no campo ainda vazio.
 export function EntityFormFields({ formId, form, activityAreas, localities, cnpjError, choiceError, onChange, onCnpjChange, onSubmit }: Props) {
   const yesNo = (key: "appliesProjeta" | "appliesBoinga", label: string) => (
     <Field label={label} required error={form[key] === "" ? choiceError : undefined}>

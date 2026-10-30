@@ -3,8 +3,10 @@
 import type { ReactNode } from "react";
 import clsx from "clsx";
 
+/** Item da faixa: rótulo, valor (já formatado pelo módulo), texto auxiliar opcional e destaque visual. */
 export type CompetenceSummaryItem = { label: string; value: ReactNode; helper?: ReactNode; emphasis?: boolean };
 
+/** Lista de definição (dl) responsiva com os itens da competência. */
 export function CompetenceSummary({ items, className }: { items: CompetenceSummaryItem[]; className?: string }) {
   return (
     <dl className={clsx("grid grid-cols-2 gap-px overflow-hidden rounded-control border border-border bg-border sm:grid-cols-3 xl:grid-cols-6", className)}>

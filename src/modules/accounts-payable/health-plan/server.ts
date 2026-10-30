@@ -1,4 +1,8 @@
 import "server-only";
+// Plano de Saúde — backend AUTORITATIVO (rotas /api/accounts-payable/health-plan/*): importa o PDF da operadora,
+// cruza titular × colaborador por CPF, grava fatura + alocações por titular (snapshots de empresa/CC/departamento) e
+// gera a obrigação financeira numa transação Serializable. O cancelamento fica em ../deletion-server.ts
+// (cancelHealthPlanInvoice); o XLSX em workbook.ts. Valores do PDF em centavos → Prisma.Decimal só ao gravar.
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { maskCpf } from "@/lib/cpf";
@@ -7,12 +11,15 @@ import { createFinancialRecordInTransaction } from "@/modules/accounts-payable/s
 import { centsToDecimalString } from "@/modules/accounts-payable/breakfast/calculations";
 import { HealthPlanParseError, matchContractCompany, parseHealthPlanRows, type HealthPlanBeneficiary } from "./parser";
 
+/** Erro de negócio com mensagem pronta para o usuário; as rotas respondem HTTP 400 com ela. */
 export class HealthPlanValidationError extends Error {}
+/** Limite do upload (15 MB), conferido na rota POST (a tela usa o mesmo valor em MAX_FILE). */
 export const MAX_HEALTH_PLAN_FILE_SIZE = 15 * 1024 * 1024;
 
 function validateCompetence(year: number, month: number) {
   if (!Number.isInteger(year) || year < 2000 || year > 2200 || !Number.isInteger(month) || month < 1 || month > 12) throw new HealthPlanValidationError("Competência inválida.");
 }
+// Centavos → Prisma.Decimal exato (via texto, sem float).
 const decimal = (cents: number) => new Prisma.Decimal(centsToDecimalString(cents));
 // "15/10/26" → 2026-10-15 (o PDF usa ano com 2 dígitos).
 function parseDueDate(text: string) {
@@ -24,6 +31,8 @@ function parseDueDate(text: string) {
 export type HealthPlanBeneficiaryView = Pick<HealthPlanBeneficiary, "credential" | "name" | "relationship" | "plan" | "contractCode" | "monthlyCents" | "additionalCents" | "discountCents" | "fineCents" | "chargedCents">;
 const beneficiaryView = (row: HealthPlanBeneficiary): HealthPlanBeneficiaryView => ({ credential: row.credential, name: row.name, relationship: row.relationship, plan: row.plan, contractCode: row.contractCode, monthlyCents: row.monthlyCents, additionalCents: row.additionalCents, discountCents: row.discountCents, fineCents: row.fineCents, chargedCents: row.chargedCents });
 
+// Include padrão: alocações por ordem do PDF, incluindo holderCpf/beneficiaries (omitidos por padrão pelo `omit` global
+// de src/lib/db/prisma.ts) para que toView os mascare/filtre antes de sair do servidor.
 const invoiceInclude = {
   administrativeEntity: true, financialRecord: true, competence: true,
   allocations: { orderBy: { sourceRow: "asc" }, omit: { holderCpf: false, beneficiaries: false } },
@@ -37,8 +46,10 @@ function toView(invoice: InvoiceWithRows) {
     allocations: invoice.allocations.map(({ holderCpf, beneficiaries, ...row }) => ({ ...row, holderCpf: maskCpf(holderCpf), beneficiaries: (beneficiaries as HealthPlanBeneficiary[]).map(beneficiaryView) })),
   };
 }
+/** Formato devolvido à tela (GET e POST da rota). */
 export type HealthPlanInvoiceView = ReturnType<typeof toView>;
 
+/** Faturas ATIVAS (não canceladas) da competência, em ordem de importação, já no formato seguro para a tela. */
 export async function getHealthPlanCompetence(year: number, month: number) {
   validateCompetence(year, month);
   const invoices = await prisma.healthPlanInvoice.findMany({ where: { competence: { year, month }, cancelledAt: null }, include: invoiceInclude, orderBy: { createdAt: "asc" } });
@@ -67,6 +78,10 @@ async function defaultCompanies(tx: Prisma.TransactionClient, employeeIds: strin
 }
 
 // Competência: a informada na tela ou, sem ela (year/month = null), o mês do vencimento da fatura.
+/** Importa UM PDF: extrai linhas (PDF sem texto → erro), faz o parse com conferências e, numa transação Serializable,
+ *  recusa obrigação já importada (fatura ativa com o mesmo número, em qualquer competência), cria a competência se
+ *  preciso, a obrigação (FinancialRecord), a fatura e uma alocação por titular, e confere Σ alocações = total = bruto.
+ *  Devolve a fatura no formato da tela (CPF mascarado). Erros: HealthPlanValidationError. */
 export async function importHealthPlanInvoice(input: { year: number | null; month: number | null; administrativeEntityId: string; fileName: string; buffer: Buffer; userId: string }) {
   if (input.year !== null || input.month !== null) validateCompetence(Number(input.year), Number(input.month));
   const { pages, hasExtractableText } = await extractPdfRows(input.buffer);

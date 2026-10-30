@@ -1,8 +1,12 @@
+// /api/master-data/[entity] — CRUD genérico (lista e criação) dos cadastros auxiliares: empresas, fornecedores,
+// projetos, contratos, centros de custo, departamentos, categorias, contas contábeis e filiais.
+// Usado por CompanyPicker, VT, Café e Cesta. Não há edição/exclusão por esta rota.
 import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 
+// Segmentos de URL aceitos; qualquer outro responde 404.
 const ENTITIES = ["companies", "suppliers", "projects", "contracts", "cost-centers", "departments", "categories", "ledger-accounts", "branches"] as const;
 type EntityName = (typeof ENTITIES)[number];
 
@@ -10,6 +14,7 @@ function isEntity(value: string): value is EntityName {
   return ENTITIES.includes(value as EntityName);
 }
 
+// Lê campo string obrigatório do corpo (com trim); lança "Campo obrigatório: <key>", convertido em 400 no POST.
 function requiredString(body: Record<string, unknown>, key: string): string {
   const value = body[key];
   if (typeof value !== "string" || !value.trim()) throw new Error(`Campo obrigatório: ${key}`);
@@ -18,6 +23,7 @@ function requiredString(body: Record<string, unknown>, key: string): string {
 
 type EntityRouteContext = { params: Promise<{ entity: string }> };
 
+/** GET: lista o cadastro `entity` ordenado por nome/código. Permissão: MASTER_DATA_READ — 401 sem sessão, 403 sem permissão. 404 entidade desconhecida. */
 export async function GET(_request: Request, context: EntityRouteContext) {
   const { response } = await requirePermission(PERMISSIONS.MASTER_DATA_READ);
   if (response) return response;
@@ -40,6 +46,11 @@ export async function GET(_request: Request, context: EntityRouteContext) {
   return NextResponse.json({ items });
 }
 
+/**
+ * POST: cria item no cadastro `entity` com os campos do corpo JSON (cada case define os obrigatórios).
+ * Permissão: MASTER_DATA_MANAGE. Retorna 201 { item }. Erros: 400 corpo/campo obrigatório ausente,
+ * 404 entidade desconhecida, 409 chave única duplicada (P2002).
+ */
 export async function POST(request: Request, context: EntityRouteContext) {
   const { response } = await requirePermission(PERMISSIONS.MASTER_DATA_MANAGE);
   if (response) return response;

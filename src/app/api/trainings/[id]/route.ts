@@ -1,8 +1,11 @@
+// /api/trainings/[id] — detalhe e edição de um treinamento (telas de Treinamentos e Contas a Pagar > Treinamentos).
+// Regras em modules/trainings/{schema,server}.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { TrainingValidationError, parseTrainingUpdateInput } from "@/modules/trainings/schema";
 import { getTraining, setTrainingActive, updateTraining } from "@/modules/trainings/server";
 
+/** GET: retorna { item }. Permissão: TRAINING_READ — 401 sem sessão, 403 sem permissão. 404 se não existe. */
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { response } = await requirePermission(PERMISSIONS.TRAINING_READ);
   if (response) return response;
@@ -12,6 +15,13 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   return NextResponse.json({ item });
 }
 
+/**
+ * PATCH: corpo JSON. Permissão: TRAINING_MANAGE.
+ *  - { active: boolean } sozinho: só ativa/inativa (setTrainingActive);
+ *  - demais campos: validados por parseTrainingUpdateInput e gravados por updateTraining.
+ * supplierId/proposalId são recusados (400): fornecedor e proposta não mudam por aqui.
+ * Erros: TrainingValidationError → 404 se a mensagem contém "não encontrado", senão 400.
+ */
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { response } = await requirePermission(PERMISSIONS.TRAINING_MANAGE);
   if (response) return response;

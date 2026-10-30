@@ -1,3 +1,5 @@
+// GET /api/accounts-payable/transit-voucher?year=&month= — competência de Vale Transporte com os mapas vigentes.
+// Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission). Saída: { competence }. Erros: 400 TransitVoucherValidationError.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { getTransitVoucherCompetence, TransitVoucherValidationError } from "@/modules/accounts-payable/transit-voucher/server";

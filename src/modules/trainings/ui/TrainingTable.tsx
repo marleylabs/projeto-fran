@@ -5,6 +5,7 @@ import { Button, DataTable, StatusBadge, type DataTableColumn } from "@/componen
 import { money } from "./format";
 import type { Training } from "./types";
 
+// Tabela do catálogo. "Visualizar" sempre aparece; Ativar/Inativar só para quem pode gerenciar (canManage).
 export function TrainingTable({ rows, loading, canManage, onView, onToggleActive }: { rows: Training[]; loading: boolean; canManage: boolean; onView: (item: Training) => void; onToggleActive: (item: Training) => void }) {
   const columns: DataTableColumn<Training>[] = [
     { id: "description", header: "Treinamento", rowHeader: true, sticky: "start", width: "16rem", wrap: true, cell: (item) => (

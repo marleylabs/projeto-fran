@@ -9,9 +9,12 @@
 // recaptura o snapshot (é uma correção deliberada, auditada em FoodBatchRevision).
 import type { Prisma } from "@/generated/prisma";
 
+/** Snapshot gravado em FoodMealOccurrence (costCenter, companyId, company). */
 export type FoodRateioSnapshot = { costCenter: string | null; companyId: string | null; company: string | null };
+// Empresa padrão do colaborador no Café da Manhã (pode não existir).
 type SnapshotCompany = { id: string; legalName: string; tradeName: string | null } | null | undefined;
 
+// Normaliza espaços; string vazia vira null.
 const collapse = (value: string | null | undefined) => value?.trim().replace(/\s+/g, " ") || null;
 
 /** Regra pura (testável): monta o snapshot a partir dos dados do colaborador e da empresa padrão no momento. */

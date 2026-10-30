@@ -1,7 +1,16 @@
+// PATCH /api/accounts-payable/basic-basket/[mapId]/entries/[allocationId] — correção de uma linha de um
+// lançamento da Cesta Básica já salvo. Delega a correctBasicBasketEntry (módulo basic-basket/server), que preserva
+// o registro original (cancelamento lógico + novo registro) e recalcula tudo no servidor.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { BasicBasketValidationError, correctBasicBasketEntry, type BasicBasketEntryInput } from "@/modules/accounts-payable/basic-basket/server";
 
+/**
+ * Permissão: FINANCIAL_RECORDS_UPDATE; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Entrada (JSON): { entry: BasicBasketEntryInput, reason?: string }. Saída: JSON com o resultado da correção.
+ * Erros: 400 para corpo inválido ou BasicBasketValidationError; demais exceções sobem (500).
+ * Só os campos editáveis do `entry` são considerados pelo servidor; valores calculados vêm do snapshot original.
+ */
 export async function PATCH(request: Request, context: { params: Promise<{ mapId: string; allocationId: string }> }) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_UPDATE);
   if (response || !user) return response;

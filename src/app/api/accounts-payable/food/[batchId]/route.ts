@@ -1,3 +1,7 @@
+// DELETE /api/accounts-payable/food/[batchId] — exclusão (soft cancel) do lote de Alimentação inteiro via
+// cancelFoodBatch (deletion-server). Permissão: FINANCIAL_RECORDS_DELETE; 401 sem sessão / 403 sem permissão (requirePermission).
+// Entrada (JSON): { confirmation: "EXCLUIR", reason }. Erros: 400 sem confirmação digitada (revalidada aqui);
+// 409 AccountsPayableDeletionError (motivo vazio, lote não vigente ou obrigação não alterável).
 import { NextResponse } from "next/server";
 import { PERMISSIONS,requirePermission } from "@/lib/auth/permissions";
 import { AccountsPayableDeletionError,cancelFoodBatch } from "@/modules/accounts-payable/deletion-server";

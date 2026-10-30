@@ -11,6 +11,7 @@ import { amountToCents } from "@/modules/accounts-payable/breakfast/rateio";
 import { FOOD_PA_INVOICES, FOOD_PA_UNIDENTIFIED_COMPANY, foodPaInvoiceLabel, parseFoodPaInvoice } from "./invoice-company";
 
 type NumericValue = number | string | { toString(): string };
+/** Refeição (subconjunto de FoodMealOccurrence) usada para montar as perspectivas de rateio. */
 export type FoodRateioViewOccurrence = {
   employeeId: string | null; normalizedReceivedName: string; receivedName: string; officialName: string | null;
   receivedDepartment: string; confirmedDepartment: string | null; invoiceEmission?: string | null; mealQuantity?: number;
@@ -36,6 +37,11 @@ export function foodRateioViewDimensions(locality: string, occurrence: FoodRatei
   return { key: [identity, companyId ?? company ?? "", costCenter ?? "", department].join("|"), identity, department, companyId, company, invoiceEmission, costCenter };
 }
 
+/**
+ * Agrupa as refeições incluídas por colaborador + empresa + CC + departamento (valores em centavos inteiros).
+ * Também conta refeições sem snapshot (legacyCompany só no MA; legacyCostCenter em ambos) para a tela avisar
+ * que há lançamentos anteriores à captura histórica.
+ */
 export function buildFoodRateioViewRows(locality: string, occurrences: readonly FoodRateioViewOccurrence[]) {
   const rows = new Map<string, FoodRateioViewRow>();
   let legacyCompany = 0, legacyCostCenter = 0;

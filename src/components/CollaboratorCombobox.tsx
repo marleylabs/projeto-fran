@@ -7,9 +7,15 @@ import { textInputClassName } from "@/components/ui";
 // Busca de colaborador (seleção única). Fase 7M: só visual (tokens da fundação); busca/matching, ordenação, limite,
 // IDs, teclado (setas/Enter/Esc/Tab), portal e aria-* inalterados.
 
+/** Opção de colaborador como vem dos endpoints de colaboradores (só os campos usados na busca e na exibição). */
 export type CollaboratorOption = { id: string; officialName: string; jobTitle: string; department: string; costCenter: string; active: boolean };
+// Comparação sem acento e sem caixa ("José" casa com "jose").
 const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
 
+/** Combobox de seleção única de colaborador (padrão ARIA combobox + listbox, campo único editável).
+ * value: id selecionado; onChange recebe a opção escolhida; onCreate: mostra "Cadastrar novo colaborador" quando a
+ * busca não encontra ninguém; includeInactive: inclui inativos (padrão só ativos). Busca por nome, departamento e
+ * centro de custo; ordena por nome e mostra até 8 sem busca ou 40 com busca. */
 export function CollaboratorCombobox({ value, onChange, options, onCreate, includeInactive=false }: { value: string; onChange: (value: CollaboratorOption) => void; options: CollaboratorOption[]; onCreate?: (query: string) => void; includeInactive?: boolean }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -22,8 +28,11 @@ export function CollaboratorCombobox({ value, onChange, options, onCreate, inclu
   const selected = options.find((item) => item.id === value);
   const matches = useMemo(() => options.filter((item) => (includeInactive||item.active) && normalize(`${item.officialName} ${item.department} ${item.costCenter}`).includes(normalize(query))).sort((a,b)=>comparePtBr(a.officialName,b.officialName)||comparePtBr(a.department,b.department)||comparePtBr(a.id,b.id)).slice(0, query.trim() ? 40 : 8), [options, query, includeInactive]);
   const close = () => { setOpen(false); setQuery(""); setActive(0); };
+  // Ao escolher, devolve o foco ao campo no próximo frame (o painel do portal já foi removido).
   const choose = (item: CollaboratorOption) => { onChange(item); close(); requestAnimationFrame(() => input.current?.focus()); };
 
+  // Painel em portal com posição fixa sob o campo (dentro do <dialog> quando houver, por causa da top layer).
+  // Reposiciona em resize/scroll e fecha com clique fora.
   useEffect(() => {
     if (!open) return;
     setPortalRoot(input.current?.closest("dialog") ?? document.body);
@@ -33,6 +42,7 @@ export function CollaboratorCombobox({ value, onChange, options, onCreate, inclu
     return () => { window.removeEventListener("resize",place); window.removeEventListener("scroll",place,true); document.removeEventListener("mousedown",closeOutside); };
   },[open]);
 
+  // onMouseDown preventDefault nas opções: evita o blur do campo antes do clique ser processado.
   const dropdown = open && portalRoot ? createPortal(<div ref={panel} style={position} className="fixed z-[100] rounded-card border border-border bg-surface p-1.5 shadow-elevation-lg"><div id={listId} role="listbox" className="max-h-64 overflow-y-auto">{matches.map((item, index) => <button id={item.id} key={item.id} type="button" role="option" aria-selected={item.id === value} onMouseDown={(event)=>event.preventDefault()} onClick={() => choose(item)} className={`block w-full cursor-pointer rounded-control px-3 py-2 text-left ${index === active ? "bg-primary-soft" : "hover:bg-surface-muted"}`}><strong className="block text-body">{item.officialName}</strong><span className="block truncate text-caption text-foreground-muted">{item.department} · {item.costCenter || "Sem centro de custo"}</span></button>)}{!matches.length && <div className="p-3 text-body text-foreground-muted"><p>Nenhum colaborador encontrado.</p>{onCreate && <button type="button" className="mt-2 font-semibold text-primary" onMouseDown={(event)=>event.preventDefault()} onClick={() => onCreate(query)}>Cadastrar novo colaborador</button>}</div>}</div></div>, portalRoot) : null;
 
   return <div className="min-w-0"><input ref={input} role="combobox" aria-autocomplete="list" aria-controls={listId} aria-expanded={open} aria-activedescendant={matches[active]?.id} autoComplete="off" value={open ? query : selected?.officialName ?? ""} placeholder="Digite para pesquisar..." title={selected?.officialName} onFocus={()=>{setQuery(selected?.officialName??"");setActive(0);setOpen(true)}} onClick={(event)=>event.currentTarget.select()} onChange={(event)=>{setQuery(event.target.value);setActive(0);setOpen(true)}} onKeyDown={(event)=>{if(event.key==="Escape"){event.preventDefault();close()}if(event.key==="Tab")close();if(event.key==="ArrowDown"){event.preventDefault();setActive(index=>Math.min(index+1,matches.length-1))}if(event.key==="ArrowUp"){event.preventDefault();setActive(index=>Math.max(index-1,0))}if(event.key==="Enter"&&matches[active]){event.preventDefault();choose(matches[active])}}} className={textInputClassName}/>{dropdown}</div>;

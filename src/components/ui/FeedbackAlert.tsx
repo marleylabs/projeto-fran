@@ -1,9 +1,12 @@
+// Alerta inline (dentro da página/formulário) para resultado de ação ou aviso persistente. Para avisos temporários
+// use useToast (ToastProvider).
 import type { HTMLAttributes, ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, Info, XCircle, type LucideIcon } from "lucide-react";
 import clsx from "clsx";
 
 type FeedbackStatus = "success" | "warning" | "error" | "info";
 
+// icon: substitui o ícone padrão do status; demais atributos de <div> são repassados.
 type FeedbackAlertProps = HTMLAttributes<HTMLDivElement> & {
   status: FeedbackStatus;
   title?: string;
@@ -25,6 +28,7 @@ const defaultIcons: Record<FeedbackStatus, LucideIcon> = {
   info: Info,
 };
 
+/** Caixa de feedback. Erro usa role="alert" (anuncia na hora); demais usam role="status" (anúncio educado). */
 export function FeedbackAlert({
   children,
   className,

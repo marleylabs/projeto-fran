@@ -1,7 +1,10 @@
+// Cabeçalho (empresa, departamento, período, tipo de processo, emissão) do Relatório Sintético.
+
 import type { PdfRow } from "@/lib/pdf/extractRows";
 import { rowText } from "@/lib/pdf/extractRows";
 import type { SinteticoEmpresa } from "@/lib/types/sintetico";
 
+// Datas dd/mm/aaaa ou aaaa-mm-dd; hora hh:mm:ss.
 const DATE_REGEX = /\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2}/g;
 const TIME_REGEX = /\d{2}:\d{2}:\d{2}/;
 
@@ -22,6 +25,7 @@ export function parseSinteticoCompanyInfo(otherRows: PdfRow[]): SinteticoEmpresa
     hora: "",
   };
 
+  // Cada campo fica com a primeira linha que o contém.
   for (const row of otherRows) {
     const text = rowText(row);
 

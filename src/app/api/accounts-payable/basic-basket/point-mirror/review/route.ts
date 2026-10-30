@@ -1,3 +1,7 @@
+// POST /api/accounts-payable/basic-basket/point-mirror/review — aplica a revisão do Espelho de Ponto da Cesta.
+// Permissão: FINANCIAL_RECORDS_CREATE; 401 sem sessão / 403 sem permissão (requirePermission).
+// Entrada (JSON): { importId, year, month, employeeIds, approvedIds, rejectedIds, manualVacationDays }.
+// Saída: JSON de reviewBasicBasketPointMirror. Erros: 400 BasicBasketValidationError.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { BasicBasketValidationError, reviewBasicBasketPointMirror } from "@/modules/accounts-payable/basic-basket/server";

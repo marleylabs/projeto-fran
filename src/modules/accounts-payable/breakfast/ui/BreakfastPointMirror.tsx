@@ -10,6 +10,7 @@ import { comparePtBr } from "@/lib/sorting/ptBr";
 import { MAX_POINT_MIRROR_FILE_SIZE } from "../point-mirror";
 import { isoBr, people as peopleLabel } from "./format";
 
+/** Mesmo conjunto de PointMirrorStatus de point-mirror-server.ts (APPLY = selecionado, ativo e no arquivo). */
 export type BreakfastPointMirrorStatus = "APPLY" | "NOT_SELECTED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "INVALID_CPF" | "NOT_IN_FILE";
 export type BreakfastPointMirrorPerson = { employeeId: string | null; employeeName: string; cpfMasked: string; saturdays: number; sundays: number; holidays: number; extraQuantity: number; status: BreakfastPointMirrorStatus };
 export type BreakfastPointMirrorPreview = {
@@ -41,6 +42,7 @@ type Props = {
   onReset: () => void;
 };
 
+/** Etapa do ImportFlow derivada das props: seleção → processamento → prévia → resultado (após aplicar). */
 export function BreakfastPointMirror({ description, file, busy, preview, stale, appliedCount, monthLabel, currentExtra, onSelect, onClearFile, onProcess, onApply, onReset }: Props) {
   const step: ImportFlowStep = busy ? "processing" : preview && appliedCount !== null ? "done" : preview ? "preview" : "select";
   const errors: ImportIssue[] = stale ? [{ id: "stale", message: "A competência mudou depois do processamento; processe o arquivo novamente." }] : [];
@@ -77,6 +79,7 @@ export function BreakfastPointMirror({ description, file, busy, preview, stale, 
   );
 }
 
+// Conteúdo da prévia: KPIs, tabela por pessoa (CPF só mascarado) e a Quantidade Extras atual da tela para comparação.
 function PreviewContent({ preview, monthLabel, currentExtra }: { preview: BreakfastPointMirrorPreview; monthLabel: string; currentExtra: Props["currentExtra"] }) {
   const t = preview.totals;
   const kpis = [["Período do ponto", preview.period ? `${isoBr(preview.period.from)} a ${isoBr(preview.period.to)}` : "—"], ["Competência", monthLabel], ["Linhas analisadas", t.rows], ["Colaboradores no arquivo", t.people], ["Localizados (CPF)", t.located], ["Não localizados", t.notFound + t.invalidCpf], ["Dias extras", `${t.extraDates} (Sáb ${t.saturdays} · Dom ${t.sundays} · Fer ${t.holidays})`], ["Serão aplicados", t.apply]] as const;

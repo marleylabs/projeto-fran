@@ -12,8 +12,10 @@ import { LowConfidence } from "./PayrollTables";
 
 type Tab = "detalhes" | "rubricas" | "texto" | "editar";
 
+// Tipo da rubrica → tom do badge na aba Rubricas.
 const RUBRICA_TONE: Record<Rubrica["tipo"], StatusTone> = { Provento: "success", Desconto: "danger", Informativa: "info", "Informativa Dedutora": "neutral" };
 
+// Lista de fatos rótulo/valor em grade (aba Detalhes).
 function Facts({ items, columns = "sm:grid-cols-3" }: { items: [string, ReactNode][]; columns?: string }) {
   return (
     <dl className={`grid grid-cols-2 gap-x-4 gap-y-3 ${columns}`}>
@@ -35,6 +37,8 @@ type FormValues = {
   salario: number; proventos: number; descontos: number; liquido: number;
 };
 
+// Formulário de revisão (react-hook-form). Valores monetários convertidos para número e colaborador marcado
+// como revisadoManualmente; os totais NÃO são recalculados aqui (o workspace recalcula).
 function EditForm({ colaborador, onSave, onCancel }: { colaborador: Colaborador; onSave: (updated: Colaborador) => void; onCancel: () => void }) {
   const { register, control, handleSubmit, formState: { errors } } = useForm<FormValues>({
     defaultValues: {
@@ -88,6 +92,7 @@ function EditForm({ colaborador, onSave, onCancel }: { colaborador: Colaborador;
   );
 }
 
+// Drawer aberto quando `colaborador` não é null; fechar chama onClose. Exibe dados pessoais (CPF, salário).
 export function PayrollEmployeeDrawer({ colaborador, onClose, onSave }: { colaborador: Colaborador | null; onClose: () => void; onSave: (updated: Colaborador) => void }) {
   const [tab, setTab] = useState<Tab>("detalhes");
   const [shownId, setShownId] = useState<string | null>(null);

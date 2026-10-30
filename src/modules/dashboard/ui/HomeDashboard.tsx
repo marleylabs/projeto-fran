@@ -18,6 +18,7 @@ import { DashboardRecentRecords, type RecentFinancialRecord } from "./DashboardR
 type Me = { name: string | null; email: string; permissions: string[] };
 type Block<T> = { loading: boolean; error: string | null; data: T };
 
+// Permissão exigida por bloco de dados da Home (mesmas chaves que as APIs exigem).
 export const HOME_PERMISSIONS = { records: "financial-records.read", payroll: "accounting.read" } as const;
 
 /** Quais blocos de dados o usuário pode ver (e, portanto, quais requests a Home faz). */
@@ -25,8 +26,10 @@ export function homeBlocksFor(permissions: readonly string[]) {
   return { records: permissions.includes(HOME_PERMISSIONS.records), payroll: permissions.includes(HOME_PERMISSIONS.payroll) };
 }
 
+// Primeiro nome para a saudação; sem nome cadastrado, usa a parte local do e-mail.
 const firstName = (me: Me) => (me.name?.trim().split(/\s+/)[0] || me.email.split("@")[0]);
 
+// GET com JSON; resposta não-ok lança Error com a mensagem da API (campo error) ou o texto padrão informado.
 async function getJson<T>(url: string, fallback: string): Promise<T> {
   const response = await fetch(url);
   const body = await response.json().catch(() => ({}));
@@ -34,6 +37,8 @@ async function getJson<T>(url: string, fallback: string): Promise<T> {
   return body as T;
 }
 
+// Página da Home (/). Carrega o perfil (/api/auth/me) e, conforme as permissões, os blocos de dados — cada bloco
+// tem seu próprio carregando/erro, então a falha de um não derruba o outro.
 export function HomeDashboard() {
   const [me, setMe] = useState<Me | null>(null);
   const [meError, setMeError] = useState<string | null>(null);

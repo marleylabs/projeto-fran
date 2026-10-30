@@ -1,7 +1,14 @@
+// GET /api/accounts-payable/breakfast/[mapId]/download — XLSX do rateio do Café da Manhã de um lançamento salvo.
+// Gerado por exportBreakfastMap a partir do que está gravado.
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/db/prisma";
 import { exportBreakfastMap } from "@/modules/accounts-payable/breakfast/export";
 export const runtime = "nodejs";
+/**
+ * Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Saída: arquivo .xlsx como anexo (Content-Disposition).
+ * Erros: 404 se o mapa não existe, não é vigente ou foi cancelado. Só alocações não excluídas.
+ */
 export async function GET(_request: Request, context: { params: Promise<{ mapId: string }> }) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);
   if (response) return response;

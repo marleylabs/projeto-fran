@@ -1,8 +1,15 @@
+// /api/auth/password-reset — conclusão da redefinição de senha pelo link enviado por e-mail
+// (tela src/app/redefinir-senha/page.tsx). O link é gerado por /api/users/[id]/password-reset.
 import { NextResponse } from "next/server";
 import { consumePasswordReset, UserAccessError } from "@/lib/db/users";
 
 export const runtime = "nodejs";
 
+/**
+ * POST: corpo JSON { token, password, confirmation }. Rota pública: o token de uso único é a credencial.
+ * consumePasswordReset valida token (hash, expiração, uso), tamanho mínimo da senha e grava o novo hash.
+ * Retorna { ok: true }. Erros: 400 token ausente/confirmação divergente; UserAccessError com seu status.
+ */
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const token = typeof body?.token === "string" ? body.token : "";

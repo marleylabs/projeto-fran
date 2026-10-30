@@ -1,3 +1,8 @@
+// POST /api/accounts-payable/basic-basket/point-mirror — prévia do Espelho de Ponto (multipart/form-data).
+// Permissão: FINANCIAL_RECORDS_CREATE; 401 sem sessão / 403 sem permissão (requirePermission).
+// Entrada: file (.xlsx/.csv, até MAX_POINT_MIRROR_FILE_SIZE), year, month, selectedIds (JSON de ids de colaboradores).
+// Saída: JSON de previewBasicBasketPointMirror (inclui o id da importação a enviar no salvamento).
+// Erros: 400 arquivo ausente/formato/BasicBasketPointMirrorError; 413 arquivo grande; 500 genérico (log sem dados).
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { MAX_POINT_MIRROR_FILE_SIZE } from "@/modules/accounts-payable/breakfast/point-mirror";
@@ -17,6 +22,7 @@ export async function POST(request: Request) {
     if (!(file instanceof File)) return NextResponse.json({ error: "Selecione o arquivo do Espelho de Ponto." }, { status: 400 });
     if (!/\.(csv|xlsx)$/i.test(file.name)) return NextResponse.json({ error: "Formato não suportado. Envie o Espelho de Ponto em .xlsx ou .csv." }, { status: 400 });
     if (file.size > MAX_POINT_MIRROR_FILE_SIZE) return NextResponse.json({ error: "Arquivo muito grande (limite de 10 MB)." }, { status: 413 });
+    // selectedIds malformado vira lista vazia em vez de erro.
     let selectedIds: string[] = [];
     try { const raw = JSON.parse(String(form?.get("selectedIds") ?? "[]")); if (Array.isArray(raw)) selectedIds = raw.filter((id): id is string => typeof id === "string"); } catch { selectedIds = []; }
     return NextResponse.json(await previewBasicBasketPointMirror({ buffer: Buffer.from(await file.arrayBuffer()), fileName: file.name, year: Number(form?.get("year")), month: Number(form?.get("month")), selectedIds, userId: user.id }));

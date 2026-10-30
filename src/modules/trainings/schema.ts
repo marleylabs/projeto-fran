@@ -1,5 +1,11 @@
+/** Erro de entrada com mensagem exibível; as rotas devolvem 400 com `error.message`. */
+// Validação das entradas do catálogo de Treinamentos (POST /api/trainings e PATCH /api/trainings/[id]).
+// Funções puras, sem Prisma; a existência de fornecedor/proposta é conferida em server.ts.
+// Valores monetários trafegam como TEXTO decimal (vírgula aceita e trocada por ponto) para não perder
+// casas no float; o servidor converte para Prisma.Decimal ao gravar.
 export class TrainingValidationError extends Error {}
 
+/** Entrada validada do cadastro manual. Preços em texto decimal; quantity = quantidade base do item. */
 export type ManualTrainingInput = {
   supplierId: string;
   proposalId: string | null;
@@ -14,12 +20,14 @@ export type ManualTrainingInput = {
   totalPrice: string;
 };
 
+// Texto obrigatório (string não vazia após trim).
 function requiredText(body: Record<string, unknown>, key: string, label: string): string {
   const value = body[key];
   if (typeof value !== "string" || !value.trim()) throw new TrainingValidationError(`${label} é obrigatório.`);
   return value.trim();
 }
 
+// Valor monetário obrigatório ≥ 0, recebido como texto ou número; devolve texto decimal com ponto.
 function requiredMoney(body: Record<string, unknown>, key: string, label: string): string {
   const value = body[key];
   if (typeof value !== "string" && typeof value !== "number") throw new TrainingValidationError(`${label} é obrigatório.`);
@@ -63,6 +71,7 @@ export function parseManualTrainingInput(body: unknown): ManualTrainingInput {
   };
 }
 
+/** Edição parcial: campo ausente = não alterar. supplierId/proposalId não são editáveis (ver server.ts). */
 export type TrainingUpdateInput = {
   description?: string;
   trainingType?: string | null;
@@ -75,6 +84,7 @@ export type TrainingUpdateInput = {
   totalPrice?: string;
 };
 
+// Texto opcional: ausente → undefined (não altera); null → null (limpa); string → aparada.
 function optionalText(body: Record<string, unknown>, key: string): string | null | undefined {
   if (!(key in body)) return undefined;
   const value = body[key];
@@ -83,6 +93,7 @@ function optionalText(body: Record<string, unknown>, key: string): string | null
   return value.trim();
 }
 
+// Valor monetário opcional: ausente → undefined; presente → mesmas regras de requiredMoney.
 function optionalMoney(body: Record<string, unknown>, key: string, label: string): string | undefined {
   if (!(key in body)) return undefined;
   const value = body[key];
@@ -96,6 +107,10 @@ function optionalMoney(body: Record<string, unknown>, key: string, label: string
   return normalized;
 }
 
+/**
+ * Valida o corpo do PATCH. Descrição, modalidade e forma de atendimento não podem ser esvaziadas; tipo e
+ * duração podem ser limpos (null). Lança TrainingValidationError na primeira falha.
+ */
 export function parseTrainingUpdateInput(body: unknown): TrainingUpdateInput {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new TrainingValidationError("Corpo da requisição inválido.");

@@ -1,3 +1,6 @@
+// GET /api/accounts-payable/breakfast/[mapId]/flash — XLSX da Máscara Flash do Café da Manhã.
+// Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission). Saída: arquivo .xlsx como anexo (Content-Disposition).
+// Erros: 404 mapa inexistente/não vigente/cancelado; 422 BreakfastFlashExportError (dados não permitem a máscara).
 import type ExcelJS from "exceljs";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/db/prisma";
@@ -8,6 +11,7 @@ export async function GET(_request: Request, context: { params: Promise<{ mapId:
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);
   if (response) return response;
   const { mapId } = await context.params;
+  // Inclui CNPJ da empresa e CPF do colaborador (dado pessoal): exigidos pela máscara, vão só para o arquivo.
   const map = await prisma.breakfastMap.findFirst({ where: { id: mapId, current: true, cancelledAt: null }, include: { competence: true, financialRecord: true, allocations: { where: { deletedAt: null }, orderBy: { sourceRow: "asc" }, include: { companyRef: { select: { taxId: true } }, employee: { select: { cpf: true } } } } } });
   if (!map) return Response.json({ error: "Lançamento não encontrado." }, { status: 404 });
   let buffer: ExcelJS.Buffer;

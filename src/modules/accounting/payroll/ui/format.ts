@@ -4,12 +4,14 @@ import type { DataTableSort } from "@/components/ui";
 import { formatBRNumber } from "@/lib/normalize/money";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 
+// Valor monetário para exibição: "R$ 1.234,56".
 export const brl = (value: number) => `R$ ${formatBRNumber(value)}`;
 
 /** Situação lida do PDF → tom do StatusBadge (mesmo mapeamento do badge antigo; desconhecida = neutra). */
 const SITUACAO_TONE: Record<string, StatusTone> = { Trabalhando: "success", Férias: "info", Afastado: "warning" };
 export const situacaoTone = (situacao: string): StatusTone => SITUACAO_TONE[situacao] ?? "neutral";
 
+// Método de leitura informado pela extração: "texto" (camada de texto do PDF) ou, caso contrário, OCR.
 export const leituraLabel = (metodo: string) => (metodo === "texto" ? "Texto" : "OCR");
 
 /** Ordenação de exibição por coluna: números numericamente, textos em pt-BR. Não altera os dados. */

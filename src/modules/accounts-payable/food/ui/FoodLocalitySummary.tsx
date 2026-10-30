@@ -7,6 +7,7 @@ type FoodLocalitySummaryProps = { locality: "MA" | "PA"; suppliers: number; coll
 type FoodInformativeTotalSummaryProps = { obligations: number; collaborators: number; meals: number; formattedTotal: string };
 type SummaryMetric = { icon: LucideIcon; title: string; value: string | number; description: string; emphasized?: boolean };
 
+// Bloco de 4 métricas (o último destacado); `total` aplica o visual do consolidado MA + PA.
 function FoodSummaryStats({ id, badge, title, description, metrics, total = false }: { id: string; badge: string; title: string; description: string; metrics: [SummaryMetric, SummaryMetric, SummaryMetric, SummaryMetric]; total?: boolean }) {
   return (
     <article aria-labelledby={id} className={clsx("min-w-0", total && "rounded-card border border-border-strong bg-surface-muted p-3 sm:p-4")}>
@@ -33,6 +34,7 @@ function FoodSummaryStats({ id, badge, title, description, metrics, total = fals
   );
 }
 
+/** Resumo de uma localidade (MA ou PA): fornecedores, colaboradores únicos, refeições e valor total já formatado. */
 export function FoodLocalitySummary({ collaborators, formattedTotal, locality, meals, suppliers }: FoodLocalitySummaryProps) {
   return (
     <FoodSummaryStats
@@ -50,6 +52,7 @@ export function FoodLocalitySummary({ collaborators, formattedTotal, locality, m
   );
 }
 
+/** Total informativo MA + PA da competência (não gera obrigação; cada lote tem a sua). */
 export function FoodInformativeTotalSummary({ collaborators, formattedTotal, meals, obligations }: FoodInformativeTotalSummaryProps) {
   return (
     <FoodSummaryStats

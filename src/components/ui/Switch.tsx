@@ -7,6 +7,7 @@
 import { useId, type ReactNode } from "react";
 import clsx from "clsx";
 
+/** `id` opcional: sem ele o id é gerado por useId (os ids de rótulo/descrição derivam dele). */
 export type SwitchProps = {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
@@ -17,6 +18,7 @@ export type SwitchProps = {
   className?: string;
 };
 
+/** Interruptor controlado: clique chama onCheckedChange(!checked); o estado visual vem só de `checked`. */
 export function Switch({ checked, onCheckedChange, label, description, disabled = false, id, className }: SwitchProps) {
   const autoId = useId();
   const baseId = id ?? autoId;

@@ -1,3 +1,6 @@
+// /api/extract — upload e extração de PDF de folha de pagamento (Contabilidade > Folha).
+// Chamado pelo PayrollUploadPanel/PayrollWorkspace via lib/uploadWithProgress. Detecta o formato e extrai
+// com lib/parser/router (extrato mensal ou relatório sintético) e persiste com lib/db/uploads.
 import { NextResponse } from "next/server";
 import { parsePayrollPdfAny } from "@/lib/parser/router";
 import { deleteUpload, findDuplicateUpload, getCombinedUploadById, saveUpload } from "@/lib/db/uploads";
@@ -5,8 +8,17 @@ import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 
 export const runtime = "nodejs";
 
+// Mesmo limite usado no cliente (PayrollUploadPanel); o teste de baseline verifica que os dois coincidem.
 const MAX_SIZE_BYTES = 30 * 1024 * 1024; // 30MB
 
+/**
+ * POST: multipart/form-data com `file` (PDF, até 30MB) e `duplicateAction` opcional ("replace" | "keep_both").
+ * Permissão: ACCOUNTING_UPLOAD — 401 sem sessão, 403 sem permissão.
+ * Retorna o resultado combinado do upload salvo (ExtractionResult com id).
+ * Erros: 400 requisição/arquivo inválido; 409 { duplicate, existing, result } quando já existe upload da mesma
+ * competência e nenhuma ação foi escolhida; 500 falha ao processar o PDF.
+ * Falha ao gravar no banco não derruba a resposta: o resultado volta com um aviso em `avisos`.
+ */
 export async function POST(request: Request) {
   const { response: authResponse } = await requirePermission(PERMISSIONS.ACCOUNTING_UPLOAD);
   if (authResponse) return authResponse;
@@ -40,6 +52,7 @@ export async function POST(request: Request) {
     const result = await parsePayrollPdfAny(buffer);
     let responseResult = result;
 
+    // Formato desconhecido não é checado contra duplicidade (não há chave de competência confiável).
     try {
       if (result.formato !== "desconhecido") {
         const duplicate = await findDuplicateUpload(result);

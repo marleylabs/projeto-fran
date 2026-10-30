@@ -1,9 +1,16 @@
+// PATCH /api/accounts-payable/transit-voucher/[mapId]/entries/[allocationId] — correção de uma linha de
+// lançamento de Vale Transporte já salvo (correctTransitVoucherEntry: cancelamento lógico + novo registro).
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { TransitVoucherCalculationError } from "@/modules/accounts-payable/transit-voucher/calculations";
 import { correctTransitVoucherEntry, type TransitVoucherEntryInput } from "@/modules/accounts-payable/transit-voucher/manual-server";
 import { TransitVoucherValidationError } from "@/modules/accounts-payable/transit-voucher/server";
 
+/**
+ * Permissão: FINANCIAL_RECORDS_UPDATE; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Entrada (JSON): { entry: TransitVoucherEntryInput, reason? }. Saída: JSON da correção.
+ * Erros: 400 corpo inválido, TransitVoucherValidationError ou TransitVoucherCalculationError.
+ */
 export async function PATCH(request: Request, context: { params: Promise<{ mapId: string; allocationId: string }> }) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_UPDATE);
   if (response || !user) return response;

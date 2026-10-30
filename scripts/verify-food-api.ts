@@ -1,3 +1,7 @@
+// Verificação manual da API de Alimentação contra um servidor em execução (padrão http://localhost:3000;
+// sobrescreva com VERIFY_BASE_URL). Requer VERIFY_EMAIL e VERIFY_PASSWORD de um usuário com permissão.
+// ESCREVE dados: define preço unitário para 08/2026 e envia dois CSVs fictícios (40 linhas MA "TIA LIKA",
+// 30 linhas "REI DO ASSADO"), depois baixa os rateios. Use apenas em banco de desenvolvimento.
 export {};
 
 const baseUrl = process.env.VERIFY_BASE_URL ?? "http://localhost:3000";
@@ -5,6 +9,7 @@ const email = process.env.VERIFY_EMAIL;
 const password = process.env.VERIFY_PASSWORD;
 if (!email || !password) throw new Error("Defina VERIFY_EMAIL e VERIFY_PASSWORD.");
 
+// Lê o corpo JSON e lança erro com status + corpo quando a resposta não é 2xx.
 async function json(response: Response) {
   const body = await response.json();
   if (!response.ok) throw new Error(`${response.status}: ${JSON.stringify(body)}`);
@@ -23,6 +28,7 @@ const tia = entities.find((item) => item.tradeName === "TIA LIKA");
 const rei = entities.find((item) => item.tradeName === "REI DO ASSADO");
 if (!tia || !rei) throw new Error("Cadastros de teste MA/PA não encontrados.");
 
+// Envia um arquivo de Alimentação para a competência/fornecedor; devolve status e corpo sem lançar (o chamador valida 201).
 async function upload(locality: "MA" | "PA", entityId: string, year: number, month: number, csv: string, name: string) {
   const form = new FormData(); form.set("year", String(year)); form.set("month", String(month)); form.set("locality", locality); form.set("administrativeEntityId", entityId);
   form.set("file", new Blob([csv], { type: "text/csv" }), name);
@@ -30,6 +36,7 @@ async function upload(locality: "MA" | "PA", entityId: string, year: number, mon
   const body = await response.json();
   return { status: response.status, body };
 }
+// Define o preço unitário da refeição do fornecedor na competência 08/2026.
 async function price(entityId: string, unitPrice: string) {
   return json(await fetch(`${baseUrl}/api/accounts-payable/food/price`, { method: "PATCH", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ administrativeEntityId: entityId, unitPrice, year: 2026, month: 8 }) }));
 }

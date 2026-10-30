@@ -1,8 +1,15 @@
+// GET /api/accounts-payable/food/consolidated/download?year=&month= — XLSX consolidado (gerencial) de Alimentação
+// com todos os lotes vigentes e READY da competência, via exportFoodConsolidated.
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/db/prisma";
 import { exportFoodConsolidated } from "@/modules/accounts-payable/food/export";
 
 export const runtime = "nodejs";
+/**
+ * Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Saída: arquivo .xlsx como anexo (Content-Disposition).
+ * Erros: 404 se a competência não existe ou não tem lote pronto.
+ */
 export async function GET(request: Request) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ); if (response) return response;
   const params = new URL(request.url).searchParams; const year = Number(params.get("year")); const month = Number(params.get("month"));

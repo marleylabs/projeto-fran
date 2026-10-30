@@ -1,4 +1,8 @@
 import "server-only";
+// Núcleo do módulo Alimentação: erro de validação do domínio, preço por refeição configurado por fornecedor,
+// consulta da competência para a tela /pagamentos/alimentacao (rota GET /api/accounts-payable/food) e o
+// processamento legado por planilha de colaboradores (processFoodBatch).
+// O fluxo atual de MA/PA por ocorrência está em ma-server.ts, pa-server.ts e manual-server.ts.
 import { buildFoodRateioViewRows } from "./rateio-views";
 import { buildFoodPaCompanyRateio } from "./invoice-company";
 import { Prisma } from "@/generated/prisma";
@@ -8,18 +12,28 @@ import { createFinancialRecordInTransaction } from "@/modules/accounts-payable/s
 import { localityAllows, parseFoodCsv, parseFoodXlsx } from "./processing";
 import { canManageFoodOccurrences } from "./batch-state";
 
+/** Tamanho máximo do arquivo enviado (10 MB). */
 export const MAX_FOOD_FILE_SIZE = 10 * 1024 * 1024;
+/** Localidades de Alimentação: MA (Maranhão) e PA (Pará). */
 export const FOOD_LOCALITIES = ["MA", "PA"] as const;
 export type FoodLocality = (typeof FOOD_LOCALITIES)[number];
 
+/** Erro de regra de negócio da Alimentação; as rotas devolvem 400 com a mensagem ao usuário. */
 export class FoodBatchValidationError extends Error {}
 
+// Competência aceita: ano 2000–2200 e mês 1–12 (inteiros).
 function validateCompetence(year: number, month: number) {
   if (!Number.isInteger(year) || year < 2000 || year > 2200 || !Number.isInteger(month) || month < 1 || month > 12) {
     throw new FoodBatchValidationError("Competência inválida.");
   }
 }
 
+/**
+ * Preço por refeição vigente para fornecedor + localidade na competência (Prisma.Decimal).
+ * Considera configurações ativas do fornecedor, com localidade igual ou vazia (vale para ambas) e vigência
+ * (ano/mês) até a competência. Prioriza a mais específica (com localidade), depois a vigência mais recente e,
+ * no empate, a criada por último. Lança FoodBatchValidationError se não houver configuração aplicável.
+ */
 export async function resolveFoodUnitPrice(year: number, month: number, locality: FoodLocality, administrativeEntityId: string) {
   const configs = await prisma.foodUnitPriceConfig.findMany({ where: { active: true } });
   const applicable = configs.filter((config) =>
@@ -37,6 +51,12 @@ export async function resolveFoodUnitPrice(year: number, month: number, locality
   return applicable[0].unitPrice;
 }
 
+/**
+ * Dados da tela de Alimentação para uma competência: lotes vigentes com fornecedor, obrigação, alocações,
+ * inconsistências e revisões; ocorrências completas só para lotes ainda editáveis; rateio PA por empresa e
+ * base das 4 perspectivas de rateio (snapshots) por lote; preço vigente por fornecedor; colaboradores ativos.
+ * Somente leitura. Lança FoodBatchValidationError se a competência é inválida.
+ */
 export async function getFoodCompetence(year: number, month: number) {
   validateCompetence(year, month);
   const [competence, priceConfigs] = await Promise.all([
@@ -60,6 +80,7 @@ export async function getFoodCompetence(year: number, month: number) {
   const companyRateioByBatch = new Map(paBatchIds.map((id) => [id, buildFoodPaCompanyRateio(paRows.filter((row) => row.batchId === id))]));
   const rateioViewsByBatch = new Map(competence?.batches.map((batch) => [batch.id, buildFoodRateioViewRows(batch.locality, occurrenceRows.filter((row) => row.batchId === batch.id))]) ?? []);
   const responseCompetence = competence ? { ...competence, batches: competence.batches.map(({ _count, ...batch }) => ({ ...batch, mealOccurrenceCount: _count.mealOccurrences, mealOccurrences: occurrencesByBatch.get(batch.id) ?? [], companyRateio: companyRateioByBatch.get(batch.id) ?? null, rateioViews: rateioViewsByBatch.get(batch.id) ?? null })) } : null;
+  // Preço vigente por fornecedor para pré-preencher a tela (configs já ordenadas da vigência mais recente para a mais antiga).
   const supplierPrices = new Map<string, Prisma.Decimal>();
   for (const config of priceConfigs) if (!supplierPrices.has(config.administrativeEntityId) &&
     (!config.effectiveYear || config.effectiveYear < year || (config.effectiveYear === year && (!config.effectiveMonth || config.effectiveMonth <= month)))) supplierPrices.set(config.administrativeEntityId, config.unitPrice);
@@ -67,12 +88,18 @@ export async function getFoodCompetence(year: number, month: number) {
   return { competence: responseCompetence, supplierPrices: Object.fromEntries(supplierPrices), employees };
 }
 
+/** Ocorrências não excluídas de um lote vigente (rota GET [batchId]/records). Lança FoodBatchValidationError se o lote não está vigente. */
 export async function getFoodBatchOccurrences(batchId: string) {
   const batch = await prisma.foodBatch.findFirst({ where: { id: batchId, current: true, cancelledAt: null }, select: { id: true } });
   if (!batch) throw new FoodBatchValidationError("Lote não encontrado.");
   return prisma.foodMealOccurrence.findMany({ where: { batchId, deletedAt: null }, orderBy: { sourceRow: "asc" } });
 }
 
+/**
+ * Cadastra um novo preço por refeição do fornecedor com vigência a partir da competência informada
+ * (rota /api/accounts-payable/food/price). Não altera lotes já lançados: cada ocorrência guarda o próprio unitPrice.
+ * Valor tratado como Decimal; deve ser > 0. Sem localidade (vale para MA e PA).
+ */
 export async function updateSupplierFoodPrice(unitPriceInput: string, year: number, month: number, administrativeEntityId: string) {
   validateCompetence(year, month);
   let unitPrice: Prisma.Decimal;
@@ -83,6 +110,13 @@ export async function updateSupplierFoodPrice(unitPriceInput: string, year: numb
   return prisma.foodUnitPriceConfig.create({ data: { unitPrice, effectiveYear: year, effectiveMonth: month, administrativeEntityId } });
 }
 
+/**
+ * Fluxo legado: planilha com uma linha por colaborador (sem data/quantidade), valor = preço configurado × colaboradores.
+ * Hoje a rota de upload desvia MA e PA para processFoodMaDraft/processFoodPaDraft, então este caminho só seria usado
+ * para outra localidade (FOOD_LOCALITIES atualmente só tem MA e PA).
+ * Lote sem inconsistências já nasce READY com obrigação financeira; versão anterior do escopo tem a obrigação cancelada.
+ * Confere total × soma por colaborador × soma por setor antes de gravar.
+ */
 export async function processFoodBatch(input: { year: number; month: number; locality: FoodLocality; administrativeEntityId: string; userId: string; file: File }) {
   validateCompetence(input.year, input.month);
   if (!FOOD_LOCALITIES.includes(input.locality)) throw new FoodBatchValidationError("Localidade inválida.");
@@ -104,6 +138,7 @@ export async function processFoodBatch(input: { year: number; month: number; loc
   if (!allocationSum.equals(totalAmount) || !departmentSum.equals(totalAmount)) throw new FoodBatchValidationError("Erro de integridade: os rateios não correspondem ao total do lote.");
   if (processing.allocations.length === 0 && processing.issues.length === 0) processing.issues.push({ sourceRow: null, employeeName: null, code: "NO_VALID_ROWS", message: "Nenhum colaborador válido foi encontrado." });
 
+  // Arquivo salvo antes da transação; removido no catch se a gravação falhar.
   const stored = await storePrivateFile(buffer);
   try {
     return await prisma.$transaction(async (tx) => {

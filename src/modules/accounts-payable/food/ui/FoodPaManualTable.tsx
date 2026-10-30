@@ -9,8 +9,10 @@ import { Note } from "@/modules/accounts-payable/shared/ui/parts";
 import { FOOD_PA_INVOICE_CODES, FOOD_PA_INVOICES, isFoodPaInvoiceCode, type FoodPaInvoiceCode } from "../invoice-company";
 import { money } from "./format";
 
+/** Linha da prévia: colaborador, quantidade digitada (texto), código da NF ("" = não escolhida) e subtotal calculado pela página. */
 export type FoodPaManualRow = { id: string; employee: CollaboratorOption | undefined; quantity: string; invoice: FoodPaInvoiceCode | ""; subtotal: number };
 
+/** Tabela editável do lançamento manual PA; onQuantity/onInvoice devolvem o valor bruto do campo para a página validar. */
 export function FoodPaManualTable({ rows, onQuantity, onInvoice }: { rows: FoodPaManualRow[]; onQuantity: (id: string, value: string) => void; onInvoice: (id: string, value: string) => void }) {
   const columns: DataTableColumn<FoodPaManualRow>[] = [
     { id: "employee", header: "Colaborador", rowHeader: true, sticky: "start", width: "15rem", cell: (row) => (

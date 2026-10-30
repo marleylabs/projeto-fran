@@ -74,6 +74,8 @@ const basketDetail = (status: CurrentBasketStatus, info: { admissionDate?: strin
     : status === "PRORATED" ? `Admissão: ${formatDateOnlyBR(info.admissionDate)} · ${info.days} de ${info.monthDays} dias (base comercial: ${BASIC_BASKET_CALCULATION_DAYS} − dia da admissão + 1)`
     : status === "AFTER_PAYMENT" ? `Admissão (${formatDateOnlyBR(info.admissionDate)}) após o pagamento (${formatDateOnlyBR(info.paymentDate)}): receberá a Cesta e o Retroativo na próxima competência.` : MISSING_ADMISSION;
 
+// Modal de correção: envia PATCH com insumos + motivo. A prévia local usa os snapshots da linha (dias de direito, Falta,
+// Férias importadas); o servidor cancela a linha original (soft delete) e cria a substituta.
 function CorrectionModal({ target, companies, onClose, onSaved }: { target: { map: MapData; row: Allocation } | null; companies: Company[]; onClose: () => void; onSaved: () => Promise<void> }) {
   const formId = `${useId()}-correction`;
   const [form, setForm] = useState({ companyText: "", driverBonus: "", agreement: "", basket: "", manualVacation: "", observation: "", reason: "" });
@@ -161,6 +163,8 @@ function CorrectionModal({ target, companies, onClose, onSaved }: { target: { ma
 }
 
 
+/** Aba "Cesta" de /pagamentos/alimentacao. Dona de todo o estado (competência, seleção, insumos, Espelho de Ponto,
+ *  prévia) e das chamadas às APIs /api/accounts-payable/basic-basket/*. */
 export function BasicBasketSection() {
   const toast = useToast();
   const now = new Date();
@@ -264,6 +268,7 @@ export function BasicBasketSection() {
     finally { setApplyingReview(false); }
   }
 
+  // Prévia por linha (mesmas funções puras do servidor; só informativa): erro em qualquer linha bloqueia o salvar.
   const preview = selectedIds.map((id) => {
     const value = values[id]; const employee = collaborators.find((item) => item.id === id); const person = personById.get(id);
     const status: RetroactiveStatus = person?.retroactiveStatus ?? "MISSING_ADMISSION", currentStatus: CurrentBasketStatus = person?.currentStatus ?? "MISSING_ADMISSION";
@@ -338,6 +343,7 @@ export function BasicBasketSection() {
       triggerDownload(await response.blob(), filename);
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Falha ao gerar a Máscara Flash.", "Máscara Flash"); } finally { setFlashBusy(null); }
   }
+  // Cancelamento do lançamento (soft cancel no servidor): exige motivo e a confirmação "EXCLUIR".
   async function confirmDelete(reason: string) {
     if (!deleteTarget) return; setDeleting(true); setDeleteError(null);
     try { await post(`/api/accounts-payable/basic-basket/${deleteTarget.mapId}`, "DELETE", { reason, confirmation: "EXCLUIR" }); setDeleteTarget(null); await reload(); }
@@ -346,6 +352,7 @@ export function BasicBasketSection() {
 
   const all = maps.flatMap((map) => map.allocations);
   const summary = useMemo(() => groupBasicBasketByCompanyCostCenter(all), [all]);
+  // Σ totais gravados nos mapas × Σ rateio (só exibição): a diferença aparece no Resumo e deve ser zero.
   const mapsTotalCents = maps.reduce((sum, map) => sum + Math.round(Number(map.totalAmount) * 100), 0);
   const difference = summary.totals.totalCents - mapsTotalCents;
   const monthLabel = `${String(month).padStart(2, "0")}/${year}`;

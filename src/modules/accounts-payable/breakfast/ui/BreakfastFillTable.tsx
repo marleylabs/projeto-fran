@@ -11,6 +11,7 @@ import { Note } from "@/modules/accounts-payable/shared/ui/parts";
 import { money, moneyCents, people } from "./format";
 import type { BreakfastEntryValue } from "./types";
 
+/** Linha da prévia vinda da seção: finalQuantity e total (centavos) já calculados; error bloqueia o salvar. */
 export type BreakfastFillRow = { id: string; employee: CollaboratorOption | undefined; error: string | null; finalQuantity: number; total: number };
 
 type Props = {
@@ -35,6 +36,7 @@ function CalculatedQuantity({ value, strong = false }: { value: number | string;
   );
 }
 
+/** Tabela editável (empresa, desconto, extras, observação); toda alteração sobe por onPatch/onCompanyText. */
 export function BreakfastFillTable({ rows, values, baseDays, unitPrice, companyListId, previewTotal, onPatch, onCompanyText }: Props) {
   const visible = rows.filter((row) => values[row.id]);
   const quantityInput = (row: BreakfastFillRow, key: "discount" | "extra", label: string) => {

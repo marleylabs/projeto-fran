@@ -8,14 +8,19 @@
 // Qtd …") encerra a leitura. Valores no padrão 1,234.56 → centavos inteiros (nunca float).
 import type { PdfPageRows, PdfRow } from "@/lib/pdf/extractRows";
 
+/** Layout inesperado ou conferência que não fecha; server.ts converte em HealthPlanValidationError (HTTP 400). */
 export class HealthPlanParseError extends Error {}
 
+/** Linha de beneficiário como no PDF (textos crus + 5 valores em centavos). Contém dados pessoais (CPF, nome da mãe,
+ *  nascimento): é gravada no JSON da alocação, mas nunca devolvida à tela nem ao XLSX. */
 export type HealthPlanBeneficiary = {
   credential: string; registration: string; cpf: string; name: string; relationship: string; motherName: string;
   birthDate: string; age: string; startDate: string; plan: string; txAd: string; ac: string; contractCode: string;
   monthlyCents: number; additionalCents: number; discountCents: number; fineCents: number; chargedCents: number;
 };
+/** Titular (CPF com 11 dígitos) com seus beneficiários (ele mesmo, -00, e dependentes); chargedCents = Σ Cobrado = base do rateio. */
 export type HealthPlanHolder = { cpf: string; name: string; chargedCents: number; beneficiaries: HealthPlanBeneficiary[] };
+/** Fatura lida. grossCents = Valor Bruto do cabeçalho; totalCents = Σ Cobrado dos titulares (sempre iguais na saída). */
 export type HealthPlanInvoice = {
   provider: string; obligation: string; control: string; dueDate: string; grossCents: number;
   contracts: { code: string; name: string }[];
@@ -24,13 +29,16 @@ export type HealthPlanInvoice = {
   totalCents: number;
 };
 
+// Credencial "<contrato>.<nnnnnn>-<ss>": grupo 1 = base (liga dependentes ao titular), grupo 2 = sequência (00 = titular).
 const CREDENTIAL = /^([0-9A-Z]{5}\.\d{6})-(\d{2})$/;
+// Valor no padrão do PDF: milhar com vírgula e decimal com ponto (1,234.56); exatamente 2 casas.
 const MONEY = /^(-?)(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})$/;
 // Início (x) de cada coluna de texto da linha do beneficiário; os 5 valores são sempre os 5 últimos itens.
 const COLUMNS = [["registration", 95], ["cpf", 140], ["name", 195], ["relationship", 265], ["motherName", 305], ["birthDate", 370], ["age", 415], ["startDate", 445], ["plan", 485], ["txAd", 515], ["ac", 545]] as const;
 const NAME_X: [number, number] = [195, 265];
 const MOTHER_X: [number, number] = [305, 370];
 
+/** "1,234.56" → 123456 (inteiro, sem float). Lança HealthPlanParseError em formato diferente. Também usado no XLSX (Tx_Ad). */
 export function moneyToCents(text: string) {
   const match = MONEY.exec(text.trim());
   if (!match) throw new HealthPlanParseError(`Valor inválido no PDF do plano de saúde: ${text}`);
@@ -41,8 +49,11 @@ const digits = (text: string) => text.replace(/\D/g, "");
 const cpfOf = (text: string) => digits(text).padStart(11, "0"); // o PDF descarta zeros à esquerda no "Titular … CPF"
 const joined = (items: PdfRow["items"]) => items.map((item) => item.text).join(" ").replace(/\s+/g, " ").trim();
 const first = (row: PdfRow) => row.items[0]?.text ?? "";
+// Rótulo de bloco: primeiro item com o texto exato e encostado na margem esquerda (x < 45).
 const isLabel = (row: PdfRow, label: string) => first(row) === label && (row.items[0]?.x ?? 99) < 45;
 
+// Distribui os itens de texto pelas colunas conforme o x inicial (COLUMNS); os 5 últimos itens são Mensalidade,
+// Adicional, Desconto, Multa e Cobrado, nesta ordem.
 function parseBeneficiary(row: PdfRow, contractCode: string): HealthPlanBeneficiary {
   const money = row.items.slice(-5).map((item) => moneyToCents(item.text));
   const text: Record<string, string> = {};
@@ -59,6 +70,9 @@ function parseBeneficiary(row: PdfRow, contractCode: string): HealthPlanBenefici
   };
 }
 
+/** Máquina de estados linha a linha sobre todas as páginas. Conferências que lançam HealthPlanParseError: Valor Bruto
+ *  igual em todas as páginas, CPF do -00 = CPF do cabeçalho "Titular", dependente no bloco do seu titular, subtotal de
+ *  cada bloco = Σ Cobrado lido e, no fim, Σ Cobrado = Valor Bruto. */
 export function parseHealthPlanRows(pages: readonly PdfPageRows[]): HealthPlanInvoice {
   let provider = "", obligation = "", control = "", dueDate = "", grossCents: number | null = null;
   const contracts = new Map<string, string>();
@@ -100,6 +114,7 @@ export function parseHealthPlanRows(pages: readonly PdfPageRows[]): HealthPlanIn
       if (credential) {
         if (!header) throw new HealthPlanParseError(`Beneficiário ${first(row)} sem titular.`);
         const beneficiary = parseBeneficiary(row, contract);
+        // O -00 registra a base da credencial → CPF do titular; dependentes da mesma base caem no mesmo titular.
         if (credential[2] === "00") {
           if (beneficiary.cpf !== header.cpf) throw new HealthPlanParseError(`CPF do titular diverge na credencial ${beneficiary.credential}.`);
           holderByBase.set(credential[1], header.cpf);

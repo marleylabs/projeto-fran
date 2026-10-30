@@ -1,3 +1,11 @@
+// XLSX de rateio de UM lote de Alimentação (download por lote, via export.ts). Abas:
+//   - "Resumo por Setor" (sempre);
+//   - MA: "Rateio por Colaborador" (setor, refeições, valor médio, custo, restaurante, NF);
+//   - PA: "Resumo por Empresa" e "Rateio por Colaborador" com Empresa derivada da Emissão NF (addPaCompanySheets);
+//   - ao final, as perspectivas de rateio compartilhadas (addAllocationViewSheets) e a base detalhada.
+// Só ocorrências incluídas entram. Conferências (assertEqual) comparam somas por setor/empresa com o total e lançam
+// Error se divergirem — o download falha em vez de gerar planilha inconsistente. Valores do banco (Decimal) só
+// viram Number para a célula; as perspectivas trabalham em centavos inteiros.
 import ExcelJS from "exceljs";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
@@ -14,7 +22,9 @@ import { buildFoodRateioViewRows, foodRateioViewDimensions, type FoodRateioViewR
 import { foodMaCycleLabel } from "./cycles";
 import { addAllocationViewSheets } from "@/modules/accounts-payable/shared/allocation-views-workbook";
 
+// Decimal do Prisma chega como objeto com toString(); aceita também number/string (testes).
 type NumericValue = number | string | { toString(): string };
+/** Lote de Alimentação com as ocorrências necessárias para o rateio (formato da rota de download). */
 export type FoodRateioBatch = {
   // PA: o rateio por colaborador ganha Empresa (derivada da Emissão NF) e a NF ao lado das Refeições.
   locality?: string;
@@ -45,16 +55,22 @@ export type FoodRateioBatch = {
   }>;
 };
 
+// Identidade do colaborador no lote: id do cadastro ou, na falta, o nome recebido.
 function personIdentity(row: FoodRateioBatch["mealOccurrences"][number]) {
   return row.employeeId || row.normalizedReceivedName || row.receivedName;
 }
 
+// Tolerância de meio centavo para somas feitas em float.
 function assertEqual(label: string, actual: number, expected: number) {
   if (Math.abs(actual - expected) > 0.005) {
     throw new Error(`Inconsistência no rateio de alimentação (${label}): ${actual.toFixed(2)} ≠ ${expected.toFixed(2)}.`);
   }
 }
 
+/**
+ * Monta o workbook de rateio (sem escrever em disco). Agrupa ocorrências incluídas por colaborador e por setor.
+ * Lança Error se as conferências de refeições/valor/empresas divergirem.
+ */
 export function buildFoodRateioWorkbook(batch: FoodRateioBatch) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Gestão Administrativa";
@@ -218,6 +234,7 @@ function addPaCompanySheets(workbook: ExcelJS.Workbook, batch: FoodRateioBatch, 
     for (const column of [6, 7]) allocation.getCell(row, column).alignment = { horizontal: "right", vertical: "middle" };
   }
 }
+/** Gera o buffer XLSX do rateio de um lote. */
 export async function exportFoodRateio(batch: FoodRateioBatch) {
   return buildFoodRateioWorkbook(batch).xlsx.writeBuffer();
 }

@@ -1,8 +1,12 @@
+// /api/accounts-payable/training-expense/[id] — detalhe e edição de um lançamento de treinamento.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { TrainingExpenseValidationError, parseUpdateTrainingExpenseInput } from "@/modules/accounts-payable/training-expense/schema";
 import { editCompletedTrainingExpense, getTrainingExpenseDetail, updateTrainingExpenseDraft } from "@/modules/accounts-payable/training-expense/server";
 
+/**
+ * GET — Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission). Saída: { item }. Erros: 404.
+ */
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);
   if (response) return response;
@@ -12,6 +16,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   return NextResponse.json({ item });
 }
 
+/**
+ * PATCH — Permissão: FINANCIAL_RECORDS_UPDATE; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Entrada (JSON): ver parseUpdateTrainingExpenseInput. Saída: { item }. Erros: 400 TrainingExpenseValidationError; 404.
+ * Rascunho é atualizado livremente; concluído passa por editCompletedTrainingExpense (guarda financeira + revisão).
+ */
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_UPDATE);
   if (response || !user) return response;

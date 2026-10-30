@@ -1,3 +1,7 @@
+// Verificação manual das pendências do Vale Transporte: envia tests/fixtures/Mascara_Vale_Transporte.xlsx
+// (espera exatamente 3 linhas pendentes) e resolve cada pendência via PATCH, completando data do serviço e o
+// departamento da linha de origem (mapa fixo abaixo). Requer VERIFY_EMAIL/VERIFY_PASSWORD; servidor em
+// http://localhost:3000; ESCREVE dados em 08/2026 no primeiro cadastro cuja localidade contém "MA".
 import { readFile } from "node:fs/promises";
 
 const base = "http://localhost:3000";
@@ -13,6 +17,7 @@ const entity = entities.items?.find((item: { locality: string }) => item.localit
 const bytes = await readFile("tests/fixtures/Mascara_Vale_Transporte.xlsx"); const form = new FormData(); form.set("year", "2026"); form.set("month", "8"); form.set("administrativeEntityId", entity.id); form.set("file", new File([bytes], "Mascara_Vale_Transporte.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
 const upload = await fetch(`${base}/api/accounts-payable/transit-voucher/upload`, { method: "POST", headers, body: form }); const uploaded = await upload.json(); if (!upload.ok) throw new Error(uploaded.error);
 if (uploaded.map.invalidRows !== 3) throw new Error(`Esperadas 3 pendências; recebidas ${uploaded.map.invalidRows}.`);
+// Linha da planilha (sourceRow) → departamento usado para resolver a pendência correspondente.
 const departments: Record<number, string> = { 3: "SSMA", 6: "FINANCEIRO", 9: "SONDAGEM" };
 let current = uploaded.map;
 for (const issue of uploaded.map.issues.filter((item: { resolvedAt: string | null }) => !item.resolvedAt)) { const data = { ...issue.rawData, serviceDate: "2026-08-01", department: departments[issue.sourceRow] }; const response = await fetch(`${base}/api/accounts-payable/transit-voucher/${uploaded.map.id}/issues/${issue.id}`, { method: "PATCH", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ data }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); current = body.map; }

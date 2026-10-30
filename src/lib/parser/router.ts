@@ -1,3 +1,8 @@
+// Roteador dos parsers de folha em PDF. Chamado por src/app/api/extract/route.ts.
+// Extrai as linhas (extractRows), detecta o layout (formatDetector) e delega ao parser do
+// Extrato Mensal ou do Relatório Sintético. Formato não suportado ou PDF sem texto não lançam:
+// voltam como { formato: "desconhecido", avisos }. Erros do pdf.js são propagados.
+
 import { extractPdfRows } from "@/lib/pdf/extractRows";
 import { detectFormat } from "./formatDetector";
 import { parseExtratoMensalFromPages } from "./parsePayrollPdf";
@@ -5,6 +10,7 @@ import { parseSinteticoFromPages } from "./sintetico/parseSintetico";
 import type { ExtractionResult, FormatoDesconhecidoResult } from "@/lib/types/payroll";
 import type { SinteticoResult } from "@/lib/types/sintetico";
 
+/** União discriminada por `formato` de todos os resultados possíveis. */
 export type PayrollExtractionResult = ExtractionResult | SinteticoResult | FormatoDesconhecidoResult;
 
 /** Ponto de entrada único: extrai o texto do PDF, detecta o formato e chama o parser certo. */

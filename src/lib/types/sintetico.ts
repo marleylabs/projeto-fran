@@ -3,7 +3,9 @@
 // Os nomes de campo seguem a tabela de referência do usuário (Tabela2): MAT, NOME,
 // CH, SALARIO, H.E, DSR, TOTAL H.E, SAL FAMILIA, ADC NOTURNO, PERICULOSIDADE, TOTAL,
 // INSS, VT, DESC AUT, IR, OUTROS, TOTAL DESC, LIQUIDO.
+// Produzidos por src/lib/parser/sintetico/parseSintetico.ts (experimental) e exportados por src/lib/export/sinteticoExport.ts.
 
+/** Uma linha da tabela (um colaborador). Valores em reais; campos ilegíveis viram 0 e entram em camposBaixaConfianca. */
 export interface LinhaSintetico {
   id: string;
   mat: string;
@@ -34,6 +36,7 @@ export interface LinhaSintetico {
   camposBaixaConfianca: string[];
 }
 
+/** Cabeçalho do relatório; "" quando não encontrado. Datas como impressas (dd/mm/aaaa ou aaaa-mm-dd). */
 export interface SinteticoEmpresa {
   codigo: string;
   nome: string;
@@ -45,6 +48,7 @@ export interface SinteticoEmpresa {
   hora: string;
 }
 
+/** Totais calculados das linhas (computeSinteticoTotais); não há conferência com o total impresso. */
 export interface SinteticoTotais {
   totalColaboradores: number;
   totalSalario: number;
@@ -57,6 +61,7 @@ export interface SinteticoTotais {
   liquidoGeral: number;
 }
 
+/** Resultado completo do parser do Relatório Sintético. */
 export interface SinteticoResult {
   formato: "relatorio-sintetico";
   /** Id do registro salvo no banco (ausente se a extração não foi persistida). */

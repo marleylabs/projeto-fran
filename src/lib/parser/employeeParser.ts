@@ -1,3 +1,5 @@
+// Converte um bloco de linhas do Extrato Mensal (EmployeeBlock) em Colaborador. Usado por parsePayrollPdf.ts.
+
 import type { PdfRow } from "@/lib/pdf/extractRows";
 import { rowText } from "@/lib/pdf/extractRows";
 import type { EmployeeBlock } from "./segmentEmployees";
@@ -19,6 +21,7 @@ import { looksLikeRubricaRow, parseRubricaRow } from "./rubricaParser";
 import { isValidCpfFormat, isValidDateFormat, parseBRNumber } from "@/lib/normalize/money";
 import type { Colaborador, Rubrica } from "@/lib/types/payroll";
 
+// Converte valor BR ("1.234,56"); se ausente/ilegível marca o campo como baixa confiança e usa 0.
 function requireNumber(raw: string | undefined, fieldName: string, lowConfidence: string[]): number {
   const value = parseBRNumber(raw);
   if (value === null) {
@@ -28,6 +31,11 @@ function requireNumber(raw: string | undefined, fieldName: string, lowConfidence
   return value;
 }
 
+/**
+ * Lê as linhas fixas do bloco (Empr./Vínculo/Cargo/ND/NF), as rubricas e as observações.
+ * `index` só gera o id de fallback quando não há matrícula. Nunca lança: o que não for
+ * encontrado vai para camposBaixaConfianca. O resultado contém CPF (dado pessoal).
+ */
 export function parseEmployeeBlock(block: EmployeeBlock, index: number): Colaborador {
   const lowConfidence: string[] = [];
   const rubricas: Rubrica[] = [];
@@ -39,6 +47,7 @@ export function parseEmployeeBlock(block: EmployeeBlock, index: number): Colabor
   let ndRow: PdfRow | undefined;
   let nfRow: PdfRow | undefined;
 
+  // Cada linha-rótulo é capturada uma vez; linha com um único item é observação livre; o resto é rubrica.
   for (const row of block.rows) {
     if (!row1 && isRow1(row)) {
       row1 = row;
@@ -84,6 +93,7 @@ export function parseEmployeeBlock(block: EmployeeBlock, index: number): Colabor
 
   if (!codigo) lowConfidence.push("codigo");
   if (!nome) lowConfidence.push("nome");
+  // CPF e admissão validados só pela máscara (sem dígito verificador).
   if (!cpf || !isValidCpfFormat(cpf)) lowConfidence.push("cpf");
   if (!admissao || !isValidDateFormat(admissao)) lowConfidence.push("admissao");
   if (!row2) lowConfidence.push("vinculo", "centroCusto", "departamento", "horasMes");

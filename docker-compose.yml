@@ -1,3 +1,6 @@
+# Ambiente de produção/homologação: Postgres + aplicação web + worker de extração de documentos.
+# Variáveis lidas do .env: POSTGRES_PASSWORD (obrigatória), POSTGRES_USER, POSTGRES_DB, DB_PORT, WEB_PORT, SECURE_COOKIES.
+# Web e worker compartilham o volume do armazenamento privado (arquivos enviados) — precisam enxergar os mesmos arquivos.
 name: extrato-mensal
 
 services:
@@ -43,6 +46,8 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Mesmo build da web, mas executa o worker que consome a fila de extração (OCR/texto) de documentos.
+  # O volume de cache guarda os dados de idioma do Tesseract para não baixá-los a cada reinício.
   document-worker:
     container_name: financeiro-document-worker
     build:

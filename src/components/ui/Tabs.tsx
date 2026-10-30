@@ -9,11 +9,13 @@ import clsx from "clsx";
 export type TabItem = { value: string; label: ReactNode; disabled?: boolean };
 type TabsVariant = "underline" | "segmented";
 
+// Contexto interno: TabPanel lê o id base e a aba ativa para montar ids/aria-labelledby coerentes com o tablist.
 type TabsContextValue = { baseId: string; value: string };
 const TabsContext = createContext<TabsContextValue | null>(null);
 const tabId = (baseId: string, value: string) => `${baseId}-tab-${value}`;
 const panelId = (baseId: string, value: string) => `${baseId}-panel-${value}`;
 
+/** Abas controladas (value/onValueChange). variant: underline (padrão, navegação de seção) ou segmented (alternador). */
 export type TabsProps = {
   /** Nome acessível do grupo (aria-label do tablist). */
   label: string;
@@ -36,6 +38,7 @@ const tabClasses: Record<TabsVariant, { list: string; tab: string }> = {
   },
 };
 
+/** Lista de abas + painéis (children). Setas/Home/End movem o foco E selecionam (ativação automática). */
 export function Tabs({ label, items, value, onValueChange, variant = "underline", children, className }: TabsProps) {
   const baseId = useId();
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -46,6 +49,7 @@ export function Tabs({ label, items, value, onValueChange, variant = "underline"
     onValueChange(next.value);
     refs.current[next.value]?.focus();
   }
+  // Navegação circular só entre abas habilitadas; teclas fora do mapa seguem o comportamento padrão.
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const index = enabled.findIndex((item) => item.value === value);
     const keys: Record<string, () => TabItem | undefined> = {

@@ -17,6 +17,8 @@ function Amount({ row, cents }: { row: SummaryRow; cents: number }) {
   return row.kind === "company" ? <strong>{moneyCents(cents)}</strong> : <>{moneyCents(cents)}</>;
 }
 
+/** summary = groupBasicBasketByCompanyCostCenter(alocações); difference = Σ rateio − Σ totais dos mapas, em centavos.
+ *  Diferença ≠ 0 ou summary inconsistente → rodapé em alerta. */
 export function BasicBasketSummaryView({ summary, difference }: { summary: Summary; difference: number }) {
   if (!summary.companies.length) return <Card><EmptyState title="Nenhum lançamento nesta competência." /></Card>;
   const ok = difference === 0 && summary.consistent;

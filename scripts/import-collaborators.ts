@@ -1,7 +1,14 @@
+// Importação inicial/legada de colaboradores a partir da planilha "Dados Cadastro.xlsx" (1ª aba).
+// Uso: npx tsx scripts/import-collaborators.ts <caminho.xlsx> — ESCREVE no banco (FoodEmployee).
+// Colunas obrigatórias (cabeçalho na linha 1, comparado sem acento/caixa): Nome, Função, Departamento, Centro De Custo.
+// Regras: chave de casamento é o nome normalizado; existente → update, novo → create; todos ficam active=true.
+// Nome repetido na própria planilha aborta a execução (os registros anteriores já gravados permanecem).
+// A importação pela tela (src/modules/collaborators/import.ts) é a via atual, com prévia e detecção de duplicidade.
 import ExcelJS from "exceljs";
 import { prisma } from "../src/lib/db/prisma";
 import { normalizeCollaboratorText, normalizeCollaboratorSearch } from "../src/modules/collaborators/schema";
 
+// Lê a planilha, valida cabeçalhos e faz upsert manual por normalizedName; imprime contagens em JSON.
 async function main() {
 const source = process.argv[2]; if (!source) throw new Error("Informe o caminho de Dados Cadastro.xlsx.");
 const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(source); const sheet = workbook.worksheets[0];

@@ -6,6 +6,7 @@ import { ProjetaWordmark } from "@/components/brand/ProjetaWordmark";
 // "01 Login / 02 Forgot Password" do UI Kit de referência, com identidade Projeta.
 // Ordem no DOM: formulário PRIMEIRO (teclado e mobile chegam direto nele); o painel institucional só aparece
 // a partir de 1024px, à esquerda (lg:order-first). Superfícies neutras e claras; vermelho só como acento.
+// Destaques do painel institucional (texto estático de apresentação).
 const highlights: Array<{ icon: LucideIcon; title: string; text: string }> = [
   { icon: Wallet, title: "Despesas e obrigações", text: "Alimentação, Café da Manhã, Cesta Básica, Vale Transporte e Treinamentos." },
   { icon: PieChart, title: "Rateio auditável", text: "Por empresa, departamento e centro de custo, com conferência do total." },
@@ -13,6 +14,8 @@ const highlights: Array<{ icon: LucideIcon; title: string; text: string }> = [
 ];
 
 
+/** Moldura das telas públicas: recebe o formulário em `children`. Usado por app/login e app/redefinir-senha
+ * (que ficam fora do App Shell). */
 export function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-dvh bg-background lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(26rem,34rem)]">

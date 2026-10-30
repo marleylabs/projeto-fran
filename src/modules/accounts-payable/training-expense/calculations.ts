@@ -1,7 +1,15 @@
 import { Prisma } from "@/generated/prisma";
+// Cálculo puro das Despesas de Treinamento (sem banco): valor do evento a partir do snapshot de preço do catálogo
+// e divisão do valor final entre participantes. Usado por server.ts. Dinheiro sempre em Prisma.Decimal; o rateio
+// trabalha em centavos inteiros para nunca perder/sobrar centavo.
 
+/** Erro de regra de cálculo; não é tratado como 400 pelas rotas (só TrainingExpenseValidationError é). */
 export class TrainingExpenseCalculationError extends Error {}
 
+/**
+ * Preços copiados do Training (catálogo) para o lançamento no momento da criação. Edições posteriores do catálogo
+ * não alteram lançamentos existentes: os recálculos usam sempre estes snapshots.
+ */
 export type TrainingExpenseSnapshot = {
   baseQuantitySnapshot: number;
   unitPriceSnapshot: Prisma.Decimal;
@@ -23,7 +31,8 @@ export function calculateTrainingExpenseAmount(snapshot: TrainingExpenseSnapshot
   return snapshot.unitPriceSnapshot.add(additionalAmount);
 }
 
-export type ParticipantShare = { employeeId: string; amount: Prisma.Decimal };
+/** Parcela de um participante (Decimal com 2 casas). */
+export type ParticipantShare ={ employeeId: string; amount: Prisma.Decimal };
 
 // Divide o valor total do evento entre os participantes de forma determinística:
 // valor médio (arredondado para baixo, 2 casas) para todos, e o resto (sempre
@@ -45,6 +54,7 @@ export function distributeAmountAcrossParticipants(totalAmount: Prisma.Decimal, 
     return { employeeId, amount: cents.div(100) };
   });
 
+  // Rede de segurança: se totalAmount tiver mais de 2 casas, o arredondamento em centavos não fecha e o erro aparece aqui.
   const sum = shares.reduce((acc, share) => acc.add(share.amount), new Prisma.Decimal(0));
   if (!sum.equals(totalAmount)) {
     throw new TrainingExpenseCalculationError(

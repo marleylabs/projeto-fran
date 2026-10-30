@@ -1,5 +1,7 @@
 "use client";
 
+// Índice de Despesas (/pagamentos): um card por seção de despesa, cada uma com regras próprias de origem, cálculo e
+// rateio. Só navegação; sem chamadas de API. Para incluir uma nova seção, adicione em expenseSections (e no menu lateral).
 import { BusFront, GraduationCap, HeartPulse, UtensilsCrossed } from "lucide-react";
 import { ExpenseSectionCard } from "@/components/ExpenseSectionCard";
 import { PageHeader } from "@/components/ui";

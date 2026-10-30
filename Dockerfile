@@ -1,6 +1,10 @@
 # syntax=docker.io/docker/dockerfile:1
+# Imagem única usada pelos serviços web (Next.js) e document-worker do docker-compose.yml.
+# Estágios: deps (npm ci) → builder (prisma generate + next build) → runner (produção, usuário nextjs).
+# O entrypoint aplica as migrations a cada subida (ver docker-entrypoint.sh).
 
 FROM node:22-alpine AS base
+# libc6-compat: compatibilidade glibc no Alpine para binários nativos usados por dependências (ex.: engines do Prisma).
 RUN apk add --no-cache libc6-compat
 
 # --- Dependências ---
@@ -34,6 +38,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# su-exec: o entrypoint roda como root (para ajustar o dono do volume) e depois troca para nextjs.
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 nextjs \
   && apk add --no-cache su-exec

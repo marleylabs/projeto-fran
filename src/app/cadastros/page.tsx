@@ -13,12 +13,17 @@ import { EntityFormFields } from "@/modules/administrative-entities/ui/EntityFor
 import { EntityTable } from "@/modules/administrative-entities/ui/EntityTable";
 import type { AdministrativeEntityForm as FormState, AdministrativeEntityItem as Entity } from "@/modules/administrative-entities/ui/types";
 
+// Formulário vazio. appliesProjeta/appliesBoinga começam "" para forçar a escolha explícita de SIM/NÃO.
 const EMPTY_FORM: FormState = { cnpj: "", legalName: "", tradeName: "", activityArea: "", appliesProjeta: "", appliesBoinga: "", locality: "" };
 
+// Máscara visual de CNPJ durante a digitação (00.000.000/0000-00); o envio usa só os dígitos.
 function maskCnpj(value: string) {
   return value.replace(/\D/g, "").slice(0, 14).replace(/^(\d{2})(\d)/, "$1.$2").replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3").replace(/\.(\d{3})(\d)/, ".$1/$2").replace(/(\d{4})(\d)/, "$1-$2");
 }
 
+/** Tela /cadastros: lista, filtra e cria/edita entidades administrativas via /api/administrative-entities.
+ * Os filtros (busca, área, Projeta, Boinga, localidade) vão como query string e são aplicados no servidor; as opções
+ * de área/localidade também vêm da resposta (`filters`). Link para Colaboradores no cabeçalho. */
 export default function AdministrativeEntitiesPage() {
   const [items, setItems] = useState<Entity[]>([]);
   const [filters, setFilters] = useState({ activityAreas: [] as string[], localities: [] as string[] });
@@ -38,6 +43,7 @@ export default function AdministrativeEntitiesPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Query string dos filtros; muda a cada filtro e dispara um novo load.
   const params = useMemo(() => {
     const value = new URLSearchParams();
     if (query.trim()) value.set("q", query.trim());
@@ -61,6 +67,7 @@ export default function AdministrativeEntitiesPage() {
     finally { setLoading(false); }
   }, [params]);
 
+  // Debounce de 250ms para não consultar a API a cada tecla da busca.
   useEffect(() => { const timeout = window.setTimeout(() => void load(), 250); return () => window.clearTimeout(timeout); }, [load]);
 
   const clearFormErrors = () => { setFormError(null); setCnpjError(undefined); setChoiceError(undefined); };
@@ -71,6 +78,8 @@ export default function AdministrativeEntitiesPage() {
     setEditingId(item.id); clearFormErrors(); setShowForm(true);
   };
 
+  // Valida no cliente CNPJ (se informado; é opcional) e a escolha SIM/NÃO; envia POST (novo) ou PATCH (edição) com
+  // CNPJ só dígitos e os SIM/NÃO convertidos para boolean. O servidor valida de novo.
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     const digits = form.cnpj.replace(/\D/g, "");

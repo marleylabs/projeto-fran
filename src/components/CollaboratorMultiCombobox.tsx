@@ -9,11 +9,16 @@ import clsx from "clsx";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 import { textInputClassName } from "@/components/ui";
 import type { CollaboratorOption } from "./CollaboratorCombobox";
+// Comparação sem acento/caixa e com espaços colapsados.
 const normalize = (value: string) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("pt-BR").replace(/\s+/g, " ").trim();
+// Ordem estável: nome, depois departamento, depois id (desempate).
 const compareCollaborator = (a: CollaboratorOption, b: CollaboratorOption) => comparePtBr(a.officialName, b.officialName) || comparePtBr(a.department, b.department) || comparePtBr(a.id, b.id);
 
 // filterBy: campo do filtro acima da busca — Departamento (padrão) ou Centro de Custo (Café da Manhã).
 const NO_COST_CENTER = "Sem centro de custo";
+/** Seleção múltipla controlada (value = ids, onChange devolve a nova lista). Lista só colaboradores ATIVOS, até 50
+ * resultados por busca; "Selecionar todos os resultados" soma os resultados visíveis ao que já estava marcado.
+ * Abaixo, resumo dos selecionados por departamento e lista expansível com Remover. */
 export function CollaboratorMultiCombobox({ value, onChange, options, filterBy = "department" }: { value: string[]; onChange: (ids: string[]) => void; options: CollaboratorOption[]; filterBy?: "department" | "costCenter" }) {
   const baseId = useId();
   const listId = `${baseId}-options`; const departmentId = `${baseId}-department`; const searchId = `${baseId}-search`; const selectedId = `${baseId}-selected`;
@@ -25,6 +30,7 @@ export function CollaboratorMultiCombobox({ value, onChange, options, filterBy =
   const selected = options.filter((item) => value.includes(item.id)).sort(compareCollaborator);
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((current) => current !== id) : [...value, id]);
   const selectAll = () => onChange([...new Set([...value, ...results.map((item) => item.id)])]);
+  // Contagem de selecionados por departamento (chips do resumo).
   const groups = [...selected.reduce((map, item) => map.set(item.department, (map.get(item.department) ?? 0) + 1), new Map<string, number>())].sort(([a], [b]) => comparePtBr(a, b));
   const label = "mb-1.5 block text-label text-foreground";
 

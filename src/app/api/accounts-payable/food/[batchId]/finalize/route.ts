@@ -1,3 +1,7 @@
+// POST /api/accounts-payable/food/[batchId]/finalize — conclui a revisão de um lote de Alimentação (FoodMaReview).
+// Delega a finalizeFoodMaBatch (food/ma-server) com as resoluções de cada grupo de nome recebido.
+// Permissão: FINANCIAL_RECORDS_CREATE; 401 sem sessão / 403 sem permissão (requirePermission). Entrada (JSON): { resolutions: FoodMaResolution[] }.
+// Saída: { batch }. Erros: 400 sem resolutions ou FoodBatchValidationError.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { finalizeFoodMaBatch, type FoodMaResolution } from "@/modules/accounts-payable/food/ma-server";

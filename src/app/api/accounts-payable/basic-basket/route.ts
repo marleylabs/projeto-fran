@@ -1,3 +1,5 @@
+// GET /api/accounts-payable/basic-basket?year=&month= — competência da Cesta Básica com os lançamentos vigentes.
+// Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission). Saída: { competence }. Erros: 400 BasicBasketValidationError.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { BasicBasketValidationError, getBasicBasketCompetence } from "@/modules/accounts-payable/basic-basket/server";

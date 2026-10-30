@@ -11,6 +11,7 @@ import { TrainingFormFields } from "@/modules/trainings/ui/TrainingFormFields";
 import { TrainingTable } from "@/modules/trainings/ui/TrainingTable";
 import type { NewTrainingForm, Proposal, Supplier, Training, TrainingForm } from "@/modules/trainings/ui/types";
 
+// Valor mais frequente da lista (indicador "Modalidade predominante"); null se vazia.
 function mostFrequent(values: string[]): string | null {
   if (values.length === 0) return null;
   const counts = new Map<string, number>();
@@ -18,6 +19,7 @@ function mostFrequent(values: string[]): string | null {
   return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
 }
 
+// Converte o treinamento da API no estado do formulário de edição (valores monetários já chegam como texto decimal).
 function toEditForm(item: Training): TrainingForm {
   return {
     description: item.description,
@@ -30,12 +32,15 @@ function toEditForm(item: Training): TrainingForm {
   };
 }
 
+// Diálogo de detalhe de um treinamento (`item` null = fechado). Com training.manage permite alternar para edição e
+// salvar via PATCH /api/trainings/:id; valores monetários vão como texto com ponto decimal (vírgula trocada por ponto).
 function TrainingDialog({ item, canManage, onClose, onSaved }: { item: Training | null; canManage: boolean; onClose: () => void; onSaved: () => void }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<TrainingForm | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Ao trocar de item: sai do modo edição e recarrega o formulário (setTimeout 0 evita setState síncrono no efeito).
   useEffect(() => {
     const timeout = window.setTimeout(() => { setEditing(false); setError(null); setForm(item ? toEditForm(item) : null); }, 0);
     return () => window.clearTimeout(timeout);
@@ -110,6 +115,7 @@ function TrainingDialog({ item, canManage, onClose, onSaved }: { item: Training 
   );
 }
 
+// Estado inicial do cadastro manual (padrões: PRESENCIAL, EM TURMA, quantidade 1, ativo).
 const EMPTY_NEW_TRAINING: NewTrainingForm = {
   supplierId: "",
   proposalId: "",
@@ -125,6 +131,8 @@ const EMPTY_NEW_TRAINING: NewTrainingForm = {
   active: "true",
 };
 
+// Diálogo de cadastro manual (POST /api/trainings). Fornecedores vêm de /api/administrative-entities; as propostas
+// são recarregadas ao trocar o fornecedor (/api/training-proposals?supplierId=...) e a proposta é opcional.
 function NewTrainingDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
@@ -221,6 +229,9 @@ function NewTrainingDialog({ open, onClose, onCreated }: { open: boolean; onClos
   );
 }
 
+/** Tela /treinamentos: catálogo de treinamentos. Carrega tudo de /api/trainings e filtra no cliente (busca na
+ * descrição, fornecedor, modalidade, forma de atendimento e situação; padrão PRESENCIAL + Ativos). Criar, editar e
+ * ativar/inativar só aparecem com a permissão training.manage (lida de /api/auth/me); o servidor também exige. */
 export default function TrainingsPage() {
   const [items, setItems] = useState<Training[]>([]);
   const [facets, setFacets] = useState<{ modalities: string[]; attendanceTypes: string[] }>({ modalities: [], attendanceTypes: [] });
@@ -262,6 +273,7 @@ export default function TrainingsPage() {
       .catch(() => undefined);
   }, []);
 
+  // Fornecedores presentes no catálogo carregado (opções do filtro).
   const suppliers = useMemo(() => {
     const map = new Map<string, string>();
     for (const item of items) map.set(item.supplier.id, item.supplier.tradeName);
@@ -281,6 +293,7 @@ export default function TrainingsPage() {
     });
   }, [items, query, supplierId, modality, attendanceType, activeFilter]);
 
+  // Indicadores do topo, calculados sobre todo o catálogo (não sobre o filtro).
   const summary = useMemo(() => {
     const uniqueSuppliers = [...new Set(items.map((item) => item.supplier.tradeName))];
     const uniqueProposals = [...new Set(items.map((item) => item.proposal?.proposalNumber).filter((value): value is string => Boolean(value)))];
@@ -293,6 +306,7 @@ export default function TrainingsPage() {
     };
   }, [items]);
 
+  // Ativar/inativar direto da tabela; recarrega a lista em seguida.
   const toggleActive = async (item: Training) => {
     try {
       const response = await fetch(`/api/trainings/${item.id}`, {

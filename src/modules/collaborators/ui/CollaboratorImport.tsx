@@ -8,10 +8,12 @@ import clsx from "clsx";
 import { DataTable, FeedbackAlert, ImportFlow, StatusBadge, textInputClassName, type DataTableColumn, type ImportFlowStep, type ImportIssue, type StatusTone } from "@/components/ui";
 import { IMPORT_STATUS_LABELS, MATCHED_BY_LABELS, type ImportOverride, type ImportPreview, type ImportResult, type ImportRow, type ImportStatus } from "./types";
 
+// Status da linha → tom do badge.
 const STATUS_TONE: Record<ImportStatus, StatusTone> = { CREATE: "success", UPDATE: "info", UNCHANGED: "neutral", REVIEW: "warning", SKIP: "neutral", ERROR: "danger" };
 // Linhas que dependem de decisão humana (as demais seguem automaticamente o resultado do servidor).
 const needsDecision = (row: ImportRow) => (row.matchedBy !== null && ["ALIAS", "SIMILAR", "REVISAO"].includes(row.matchedBy)) || row.status === "REVIEW" || row.status === "SKIP";
 
+// Estado do fluxo controlado pela página: etapa, arquivo, prévia/resultado, filtro por status e decisões por linha.
 type Props = {
   step: ImportFlowStep;
   file: File | null;
@@ -29,6 +31,8 @@ type Props = {
   onReset: () => void;
 };
 
+// Fluxo de importação sobre o ImportFlow. "Confirmar" só é liberado com prévia sem bloqueio e algo a criar/atualizar.
+// A decisão de cada linha em revisão volta por onDecide(sourceRow, ação) e é reenviada pela página como override.
 export function CollaboratorImport({ step, file, preview, result, filter, overrides, busy, onSelect, onClear, onProcess, onFilter, onDecide, onApply, onReset }: Props) {
   const errors: ImportIssue[] = preview?.blocked ? [{ id: "blocked", message: `Importação bloqueada: ${preview.counts.ERROR} linha(s) com erro. Corrija a planilha e analise novamente — nada foi gravado.` }] : [];
   const columns: DataTableColumn<ImportRow>[] = [

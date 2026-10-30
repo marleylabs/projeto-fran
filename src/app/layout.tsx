@@ -1,3 +1,6 @@
+// Layout raiz de TODAS as rotas: fontes (Manrope + Geist Mono como variáveis CSS), estilos globais, tema daisyUI
+// (data-theme) e os provedores globais: ToastProvider (notificações) envolvendo o AppShell (sidebar/header).
+// O AppShell decide sozinho se mostra a moldura (telas públicas de login/redefinição ficam sem ela).
 import type { Metadata } from "next";
 import { Manrope, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -22,6 +25,7 @@ export const metadata: Metadata = {
   description: "Plataforma financeira e administrativa: despesas, rateios, cadastros e folha.",
 };
 
+/** Layout raiz (server component). `lang="pt-BR"` vale para leitores de tela e para a hifenização/formatação do navegador. */
 export default function RootLayout({
   children,
 }: Readonly<{

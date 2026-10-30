@@ -16,6 +16,7 @@ export type CalculatedValueProps = {
   className?: string;
 };
 
+/** Exibe um valor calculado em <dl>: rótulo (com "(calculado)" só para leitor de tela), status opcional e texto de apoio. */
 export function CalculatedValue({ label, value, helper, status, size = "md", live = false, className }: CalculatedValueProps) {
   return (
     <dl className={clsx("grid gap-1 rounded-control bg-calc-surface px-3 py-2.5", className)}>

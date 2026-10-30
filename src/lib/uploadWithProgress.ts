@@ -1,9 +1,11 @@
+// Cliente (navegador): envio de PDF de folha para POST /api/extract com barra de progresso.
 import type { PayrollExtractionResult } from "@/lib/parser/router";
 
 interface ApiError {
   error: string;
 }
 
+/** Upload já existente no histórico devolvido pela API no 409 de duplicidade. */
 export interface DuplicateExisting {
   id: string;
   fileName: string;
@@ -12,10 +14,15 @@ export interface DuplicateExisting {
   liquidoGeral: number;
 }
 
+/**
+ * "ok": PDF processado (e salvo). "duplicate": a API respondeu 409 porque já existe upload da mesma
+ * empresa/período; a UI pergunta e reenvia com `duplicateAction` ("replace" ou "keep_both").
+ */
 export type UploadOutcome =
   | { status: "ok"; data: PayrollExtractionResult }
   | { status: "duplicate"; existing: DuplicateExisting; result: PayrollExtractionResult };
 
+// Rejeita com Error (mensagem da API ou genérica) em status não-2xx, JSON inválido ou falha de rede.
 /** Upload via XHR (em vez de fetch) para termos acesso ao evento de progresso de envio. */
 export function uploadPdf(
   file: File,

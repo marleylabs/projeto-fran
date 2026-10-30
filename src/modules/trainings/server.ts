@@ -1,10 +1,16 @@
+// Regras de servidor do catálogo de Treinamentos (Training/TrainingProposal). Chamado pelas rotas
+// /api/trainings/**, /api/training-proposals e pelo script scripts/seed-training-proposal-898.ts (importação
+// de proposta comercial a partir de seed-data.ts). Invariante: Training.supplierId é sempre o fornecedor da
+// proposta vinculada. Valores monetários são gravados como Prisma.Decimal a partir de texto.
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { TrainingValidationError, type ManualTrainingInput, type TrainingUpdateInput } from "./schema";
 import type { TrainingProposalSeed } from "./seed-data";
 
+/** Falha na importação de proposta (ex.: fornecedor ainda não cadastrado). */
 export class TrainingImportError extends Error {}
 
+/** Resumo devolvido pela importação de proposta (exibido pelo script de seed). */
 export type TrainingImportSummary = {
   supplierId: string;
   supplierName: string;
@@ -140,10 +146,12 @@ export async function createManualTraining(input: ManualTrainingInput) {
   });
 }
 
+/** Propostas de um fornecedor (mais recentes primeiro), para o seletor do cadastro manual. */
 export async function listTrainingProposalsBySupplier(supplierId: string) {
   return prisma.trainingProposal.findMany({ where: { supplierId }, orderBy: { proposalDate: "desc" } });
 }
 
+/** Filtros da listagem; campo undefined = sem filtro. query busca na descrição sem diferenciar maiúsculas. */
 export type TrainingListFilters = {
   query?: string;
   supplierId?: string;
@@ -152,6 +160,10 @@ export type TrainingListFilters = {
   active?: boolean;
 };
 
+/**
+ * Lista treinamentos filtrados (com fornecedor e proposta resumidos) e devolve as opções de filtro
+ * (modalidades e formas de atendimento) calculadas sobre o catálogo inteiro, não só sobre o resultado.
+ */
 export async function listTrainings(filters: TrainingListFilters) {
   const items = await prisma.training.findMany({
     where: {
@@ -177,6 +189,7 @@ export async function listTrainings(filters: TrainingListFilters) {
   };
 }
 
+/** Treinamento com fornecedor e proposta, ou null se não existir. */
 export async function getTraining(id: string) {
   return prisma.training.findUnique({
     where: { id },
@@ -210,6 +223,7 @@ export async function updateTraining(id: string, input: TrainingUpdateInput) {
   });
 }
 
+/** Ativa/inativa (não há exclusão de treinamento). Lança TrainingValidationError se não existir. */
 export async function setTrainingActive(id: string, active: boolean) {
   const existing = await prisma.training.findUnique({ where: { id } });
   if (!existing) throw new TrainingValidationError("Treinamento não encontrado.");

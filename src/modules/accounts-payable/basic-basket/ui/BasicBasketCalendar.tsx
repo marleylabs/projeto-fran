@@ -6,9 +6,11 @@ import clsx from "clsx";
 import { buildCompetenceCalendar } from "@/modules/shared/calendar";
 import type { BasicBasketHoliday } from "../calculations";
 
+/** Rótulo de cada fonte de feriado (legenda e descrição acessível). */
 export const HOLIDAY_SOURCE_LABEL = { NATIONAL: "Feriado nacional", TRANSIT_VOUCHER: "Feriado manual (Vale Transporte)", BREAKFAST: "Feriado manual (Café da Manhã)" } as const;
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
+/** Grade do mês com feriados e o dia de pagamento em destaque; a descrição completa de cada dia vai no aria-label. */
 export function BasicBasketCalendar({ year, month, holidays, paymentDate }: { year: number; month: number; holidays: BasicBasketHoliday[]; paymentDate: string }) {
   const byDate = new Map(holidays.map((holiday) => [holiday.date, holiday]));
   const days = buildCompetenceCalendar(year, month, holidays.map((holiday) => holiday.date));
@@ -46,6 +48,7 @@ export function BasicBasketCalendar({ year, month, holidays, paymentDate }: { ye
   );
 }
 
+/** Lista textual dos feriados da competência com suas fontes. */
 export function BasicBasketHolidayList({ holidays }: { holidays: BasicBasketHoliday[] }) {
   if (!holidays.length) return <p className="text-body text-foreground-muted">Nenhum feriado na competência.</p>;
   return (

@@ -1,7 +1,16 @@
+// /api/collaborators/delete — exclusão em lote de colaboradores, em duas etapas (analyze → execute).
+// Chamado pela tela de colaboradores. Permissão base MASTER_DATA_MANAGE (401/403 via requirePermission).
+// Corpo JSON: { action: "analyze" | "execute", mode?: "purge", scope?: "all", ids?: string[], confirmation? }.
+//  - mode padrão: exclusão comum (deleteCollaboratorsBatch), respeitando vínculos;
+//  - mode "purge": exclusão definitiva (purgeCollaborators) — exige papel ADMIN;
+//  - scope "all": aplica a toda a base (ids ignorados) — também exige ADMIN.
+// Purge executado em mais de um colaborador (ou na base toda) exige a frase "EXCLUIR COLABORADORES" no campo confirmation.
+// Erros: 403 sem ADMIN, 400 ação/confirmação inválida ou CollaboratorValidationError, 500 demais.
 import { NextResponse } from "next/server";
 import { PERMISSIONS,requirePermission,roleKeysOf } from "@/lib/auth/permissions";
 import { analyzeCollaboratorDeletion,analyzeCollaboratorPurge,CollaboratorValidationError,deleteCollaboratorsBatch,purgeCollaborators } from "@/modules/collaborators/server";
 export async function POST(request:Request){
+ // Segurança: além da permissão, purge e limpeza completa checam papel ADMIN explicitamente.
  const{user,response}=await requirePermission(PERMISSIONS.MASTER_DATA_MANAGE);if(response||!user)return response;
  try{const body=await request.json();const all=body.scope==="all";
   const purge=body.mode==="purge";

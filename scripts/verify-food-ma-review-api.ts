@@ -1,4 +1,9 @@
 export {};
+// Verificação manual do fluxo de revisão da Alimentação MA (upload → UNDER_REVIEW → finalize) contra http://localhost:3000.
+// Requer VERIFY_EMAIL/VERIFY_PASSWORD e a planilha real em um caminho fixo da máquina do desenvolvedor (ajuste antes de rodar).
+// ESCREVE dados (preço 06/2026 do fornecedor "TIA LIKA" e um lote). Na resolução, cada nome agrupado recebe o
+// departamento mais frequente e "victor hugo" é forçado para o nome oficial com alias salvo (caso de ambiguidade).
+// A saída contém contagens e nomes normalizados de colaboradores (dado pessoal).
 import { readFile } from "node:fs/promises";
 const base = "http://localhost:3000"; const email = process.env.VERIFY_EMAIL; const password = process.env.VERIFY_PASSWORD; if (!email || !password) throw new Error("Credenciais ausentes.");
 async function json(response: Response) { const value = await response.json(); if (!response.ok) throw new Error(`${response.status}: ${JSON.stringify(value)}`); return value; }

@@ -1,3 +1,6 @@
+// Segmentação do Extrato Mensal em cabeçalho da empresa, blocos por colaborador e linhas de total geral.
+// Usado por parsePayrollPdf.ts; os marcos de linha vêm de boilerplate.ts.
+
 import type { PdfPageRows, PdfRow } from "@/lib/pdf/extractRows";
 import {
   isEmployeeStartRow,
@@ -13,6 +16,10 @@ export interface EmployeeBlock {
   rows: PdfRow[];
 }
 
+/**
+ * companyHeaderRows: linhas antes do 1º colaborador (vazio se não houver colaborador).
+ * totalGeralRow / liquidoGeralRow: rodapé com os totais impressos, null se ausentes.
+ */
 export interface SegmentationResult {
   companyHeaderRows: PdfRow[];
   employeeBlocks: EmployeeBlock[];
@@ -48,6 +55,7 @@ export function segmentEmployees(pages: PdfPageRows[]): SegmentationResult {
     }
   };
 
+  // Sem colaborador (firstEmployeeIdx = -1) o laço não executa.
   for (let i = firstEmployeeIdx === -1 ? allRows.length : firstEmployeeIdx; i < resumoIdx; i++) {
     const row = allRows[i];
 
@@ -56,6 +64,7 @@ export function segmentEmployees(pages: PdfPageRows[]): SegmentationResult {
       flushBlock();
       continue;
     }
+    // "Líquido Geral:" vem numa linha própria depois de "Total Geral Proventos:".
     if (totalGeralRow && !liquidoGeralRow && /Líquido Geral:/.test(row.items.map((it) => it.text).join(" "))) {
       liquidoGeralRow = row;
       continue;

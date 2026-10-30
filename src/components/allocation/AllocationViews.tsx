@@ -10,9 +10,11 @@ import clsx from "clsx";
 import { Field, textInputClassName } from "@/components/ui";
 import { ALLOCATION_VIEWS, buildAllocationTree, type AllocationNode, type AllocationViewId, type AllocationViewRow } from "@/modules/accounts-payable/shared/allocation-views";
 
+// Valores chegam em centavos (inteiros); formatação BRL só na exibição.
 const money = (cents: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
 const peopleLabel = (count: number) => `${count} ${count === 1 ? "colaborador" : "colaboradores"}`;
 
+/** rows: linhas do rateio já com valor final em centavos; value/onValueChange: perspectiva atual (controlada pelo módulo). */
 export type AllocationViewsProps<T> = {
   rows: readonly AllocationViewRow<T>[];
   value: AllocationViewId;
@@ -31,6 +33,8 @@ export type AllocationViewsProps<T> = {
   className?: string;
 };
 
+/** Seletor de perspectiva + árvore expansível de grupos com total e pessoas. Mostra alerta quando a árvore não é
+ * consistente ou quando a soma difere de `expectedCents` (total do lançamento). */
 export function AllocationViews<T>({ rows, value, onValueChange, available = ALLOCATION_VIEWS.map((view) => view.id), unavailableReason, custom, renderLeaf, notice, expectedCents, className }: AllocationViewsProps<T>) {
   const tree = useMemo(() => buildAllocationTree(rows, value), [rows, value]);
   const ok = tree.consistent && (expectedCents === undefined || expectedCents === tree.totalCents);
@@ -58,6 +62,7 @@ export function AllocationViews<T>({ rows, value, onValueChange, available = ALL
   );
 }
 
+// Nó da árvore (recursivo): botão expande/recolhe; folhas mostram as linhas de colaborador (ou renderLeaf).
 function TreeNode<T>({ node, depth, renderLeaf }: { node: AllocationNode<T>; depth: number; renderLeaf?: (rows: AllocationViewRow<T>[], node: AllocationNode<T>) => ReactNode }) {
   const [open, setOpen] = useState(false);
   const panelId = `${useId()}-allocation-node`;

@@ -1,3 +1,6 @@
+// /api/administrative-entities — listagem/filtro e criação de cadastros administrativos (empresas por CNPJ).
+// Consumido pelo cadastro (src/app/cadastros/page.tsx), pelo CompanyPicker e pelas seções de Contas a Pagar
+// (Alimentação, VT, Café, Cesta, Plano de Saúde, Treinamentos) para escolher a empresa do rateio.
 import { NextRequest, NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/db/prisma";
@@ -6,12 +9,19 @@ import {
   parseAdministrativeEntityInput,
 } from "@/modules/administrative-entities/schema";
 
+// Converte o parâmetro de query "true"/"false" em boolean; qualquer outro valor (ou ausência) = sem filtro.
 function optionalBoolean(value: string | null): boolean | undefined {
   if (value === "true") return true;
   if (value === "false") return false;
   return undefined;
 }
 
+/**
+ * GET: lista cadastros. Permissão: MASTER_DATA_READ — 401 sem sessão, 403 sem permissão.
+ * Query: q (busca em razão social, nome fantasia, área; se tiver dígitos, também no CNPJ), activityArea, locality,
+ * appliesProjeta/appliesBoinga ("true"/"false"). Retorna { items, filters: { activityAreas, localities } };
+ * os filtros são calculados sobre a base inteira (não sobre o resultado filtrado) para alimentar os selects da tela.
+ */
 export async function GET(request: NextRequest) {
   const { response } = await requirePermission(PERMISSIONS.MASTER_DATA_READ);
   if (response) return response;
@@ -56,6 +66,10 @@ export async function GET(request: NextRequest) {
   });
 }
 
+/**
+ * POST: cria um cadastro. Permissão: MASTER_DATA_MANAGE — 401 sem sessão, 403 sem permissão.
+ * Corpo JSON validado por parseAdministrativeEntityInput. Retorna 201 { item }; 400 em dado inválido.
+ */
 export async function POST(request: Request) {
   const { response } = await requirePermission(PERMISSIONS.MASTER_DATA_MANAGE);
   if (response) return response;

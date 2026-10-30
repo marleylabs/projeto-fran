@@ -1,4 +1,7 @@
 import "server-only";
+// Café da Manhã — backend AUTORITATIVO (chamado pelas rotas /api/accounts-payable/breakfast/*): contexto da
+// competência (valor unitário, feriados, dias úteis), feriados manuais, padrões do colaborador, lançamento e correção.
+// Quantidade final e valores são sempre recalculados aqui; o cliente só envia insumos.
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { createFinancialRecordInTransaction } from "@/modules/accounts-payable/server/financialRecords";
@@ -17,6 +20,7 @@ function validateCompetence(year: number, month: number) {
   if (!Number.isInteger(year) || year < 2000 || year > 2200 || !Number.isInteger(month) || month < 1 || month > 12) throw new BreakfastValidationError("Competência inválida.");
 }
 const isoDay = (date: Date) => date.toISOString().slice(0, 10);
+// Data de feriado "yyyy-MM-dd" obrigatoriamente dentro da competência.
 function parseHolidayDate(value: unknown, year: number, month: number) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BreakfastValidationError("Data do feriado inválida.");
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -27,9 +31,11 @@ const holidayName = (value: unknown) => {
   if (typeof value !== "string" || !value.trim()) throw new BreakfastValidationError("Informe o nome do feriado.");
   return value.trim().slice(0, 120);
 };
+// Cria a competência sob demanda (idempotente).
 async function ensureCompetence(tx: Tx, year: number, month: number) {
   return tx.breakfastCompetence.upsert({ where: { year_month: { year, month } }, create: { year, month }, update: {} });
 }
+// Valor unitário da competência ou o padrão (DEFAULT_UNIT_PRICE), como texto com 2 casas.
 const unitPriceOf = (competence: { unitPrice: Prisma.Decimal | null } | null) => (competence?.unitPrice ?? new Prisma.Decimal(DEFAULT_UNIT_PRICE)).toFixed(2);
 
 // Leitura pura (não cria competência): valor unitário (padrão R$ 12,50 até ser definido), feriados e dias úteis.
@@ -43,6 +49,8 @@ export async function getBreakfastContext(year: number, month: number) {
   return { year, month, unitPrice: unitPriceOf(competence), unitPriceDefined: Boolean(competence?.unitPrice), holidays, ...summarizeCompetenceDays(year, month, holidays.map((holiday) => holiday.date)) };
 }
 
+/** Define o valor unitário da competência (PUT .../context). Só afeta mapas NOVOS: mapas existentes mantêm o valor
+ *  gravado nas próprias linhas. Devolve o contexto atualizado. */
 export async function setBreakfastUnitPrice(year: number, month: number, price: string | number) {
   validateCompetence(year, month);
   let cents: number;
@@ -51,6 +59,7 @@ export async function setBreakfastUnitPrice(year: number, month: number, price: 
   return getBreakfastContext(year, month);
 }
 
+/** Cria/renomeia feriado MANUAL do Café (não afeta o Vale Transporte). Feriado nacional automático é recusado. */
 export async function saveBreakfastHoliday(input: { year: number; month: number; date: unknown; name: unknown; userId: string }) {
   validateCompetence(input.year, input.month);
   const date = parseHolidayDate(input.date, input.year, input.month);
@@ -63,6 +72,7 @@ export async function saveBreakfastHoliday(input: { year: number; month: number;
   return getBreakfastContext(input.year, input.month);
 }
 
+/** Remove feriado manual da data; feriado nacional automático (sem manual na mesma data) não pode ser removido. */
 export async function removeBreakfastHoliday(year: number, month: number, date: unknown) {
   validateCompetence(year, month);
   const parsed = parseHolidayDate(date, year, month);
@@ -79,6 +89,7 @@ export async function getBreakfastEmployeeConfigs() {
   return rows.map((row) => ({ employeeId: row.employeeId, defaultCompanyId: row.defaultCompany?.active ? row.defaultCompanyId : null, defaultCompanyUnavailable: Boolean(row.defaultCompanyId && !row.defaultCompany?.active) }));
 }
 
+/** Payload do cliente por colaborador: só insumos (quantidades inteiras ≥ 0, empresa do cadastro, observação). */
 export type BreakfastEntryInput = {
   employeeId: string;
   companyId: string;
@@ -88,8 +99,10 @@ export type BreakfastEntryInput = {
   observationDetails?: string | null;
 };
 
+// Chave de agrupamento da conferência: sem acentos e minúscula.
 const normalizedKey = (value: string) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("pt-BR");
 
+// Validação de formato do insumo (antes de abrir transação). Lança BreakfastValidationError.
 function validateEntryShape(entry: BreakfastEntryInput) {
   if (typeof entry.employeeId !== "string" || !entry.employeeId) throw new BreakfastValidationError("Colaborador inválido.");
   // A empresa vem SEMPRE do cadastro mestre (Company): id obrigatório; texto livre nunca é aceito.
@@ -183,6 +196,8 @@ export async function addBreakfastEntries(input: { year: number; month: number; 
     // Empresa já validada (ativa, cadastro mestre) acima; o padrão é atualizado na MESMA transação do lançamento.
     for (const entry of accepted) await tx.breakfastEmployeeConfig.upsert({ where: { employeeId: entry.employeeId }, create: { employeeId: entry.employeeId, defaultCompanyId: entry.companyId }, update: { defaultCompanyId: entry.companyId } });
 
+    // Conferência de integridade em Decimal: Σ por empresa, por empresa+departamento e por empresa+centro de custo
+    // precisam igualar o total do mapa; senão erro e nada é gravado (rollback da transação).
     const all = await tx.breakfastAllocation.findMany({ where: { mapId: map.id, deletedAt: null }, select: { amount: true, company: true, department: true, costCenter: true } });
     const total = all.reduce((sum, row) => sum.add(row.amount), new Prisma.Decimal(0));
     const group = (key: (row: (typeof all)[number]) => string) => [...all.reduce((groups, row) => groups.set(key(row), (groups.get(key(row)) ?? new Prisma.Decimal(0)).add(row.amount)), new Map<string, Prisma.Decimal>()).values()].reduce((sum, value) => sum.add(value), new Prisma.Decimal(0));
@@ -190,6 +205,7 @@ export async function addBreakfastEntries(input: { year: number; month: number; 
       throw new BreakfastValidationError("Erro de integridade no rateio: colaborador, departamento, centro de custo, empresa e total geral divergem.");
     }
 
+    // Obrigação financeira: atualiza o valor bruto da existente ou cria uma nova, na mesma transação.
     let financialRecordId = map.financialRecordId;
     if (financialRecordId) await tx.financialRecord.update({ where: { id: financialRecordId }, data: { grossAmount: total } });
     else financialRecordId = (await createFinancialRecordInTransaction(tx, { administrativeEntityId: input.administrativeEntityId, grossAmount: total, createdByUserId: input.userId })).id;
@@ -199,6 +215,7 @@ export async function addBreakfastEntries(input: { year: number; month: number; 
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+// Correção só enquanto a obrigação não avançou: ativa e PENDING em pagamento, conciliação e contabilidade.
 function assertFinancialPristine(record: { lifecycleState: string; paymentState: string; reconciliationState: string; accountingState: string } | null) {
   if (record && (record.lifecycleState !== "ACTIVE" || record.paymentState !== "PENDING" || record.reconciliationState !== "PENDING" || record.accountingState !== "PENDING")) {
     throw new BreakfastValidationError("Este lançamento já avançou no fluxo financeiro e não pode ser corrigido diretamente.");
@@ -208,7 +225,7 @@ function assertFinancialPristine(record: { lifecycleState: string; paymentState:
 // Correção de lançamento concluído: cancelamento LÓGICO do registro original + novo registro, na mesma transação
 // (nunca DELETE físico). Por padrão PRESERVA os snapshots do registro original (valor unitário, dias úteis,
 // empresa, departamento, centro de custo e feriados do mapa); só campos alterados explicitamente
-// (quantidade extras, empresa, observação) mudam — mesmo princípio do Vale Transporte.
+// (quantidade extras, desconto, empresa, observação) mudam — mesmo princípio do Vale Transporte.
 export async function correctBreakfastEntry(input: { mapId: string; allocationId: string; entry: BreakfastEntryInput; reason: string; userId: string }) {
   if (!input.reason?.trim()) throw new BreakfastValidationError("Informe o motivo da correção.");
   validateEntryShape(input.entry);

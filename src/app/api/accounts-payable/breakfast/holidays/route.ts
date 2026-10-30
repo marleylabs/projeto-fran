@@ -1,8 +1,13 @@
+// /api/accounts-payable/breakfast/holidays — feriados extras da competência do Café da Manhã (reduzem dias úteis).
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { removeBreakfastHoliday, saveBreakfastHoliday } from "@/modules/accounts-payable/breakfast/manual-server";
 import { BreakfastValidationError } from "@/modules/accounts-payable/breakfast/server";
 
+/**
+ * POST — inclui feriado. Permissão: FINANCIAL_RECORDS_CREATE; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Entrada (JSON): { year, month, date, name } (validados em saveBreakfastHoliday). Erros: 400 BreakfastValidationError.
+ */
 export async function POST(request: Request) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_CREATE);
   if (response || !user) return response;
@@ -13,6 +18,10 @@ export async function POST(request: Request) {
   } catch (error) { if (error instanceof BreakfastValidationError) return NextResponse.json({ error: error.message }, { status: 400 }); throw error; }
 }
 
+/**
+ * DELETE — remove feriado. Mesma permissão do POST. Entrada (JSON): { year, month, date }.
+ * Erros: 400 BreakfastValidationError.
+ */
 export async function DELETE(request: Request) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_CREATE);
   if (response) return response;

@@ -7,6 +7,7 @@
 import type { ReactNode } from "react";
 import { Field, FilterBar, SearchInput, TextInput, textInputClassName } from "@/components/ui";
 
+// Valores dos filtros (strings; "" = sem filtro). A semântica de cada um está no PayrollWorkspace.
 export interface FiltersState {
   empresa: string;
   nome: string;
@@ -17,6 +18,7 @@ export interface FiltersState {
   situacao: string;
 }
 
+// Estado inicial / "Limpar filtros".
 export const EMPTY_FILTERS: FiltersState = {
   empresa: "",
   nome: "",
@@ -27,8 +29,11 @@ export const EMPTY_FILTERS: FiltersState = {
   situacao: "",
 };
 
+// Campos do painel "Filtros avançados": [chave, rótulo, placeholder].
 const ADVANCED: [keyof FiltersState, string, string?][] = [["cpf", "CPF", "000.000.000-00"], ["cargo", "Cargo"], ["departamento", "Departamento"], ["centroCusto", "Centro de custo"]];
 
+// Barra de filtros controlada: cada alteração devolve o FiltersState inteiro em onChange. O seletor de empresa só
+// aparece quando a extração tem mais de uma empresa (PDF consolidado).
 export function PayrollFilters({ filters, onChange, empresasDisponiveis, situacoesDisponiveis, actions }: { filters: FiltersState; onChange: (filters: FiltersState) => void; empresasDisponiveis: string[]; situacoesDisponiveis: string[]; actions?: ReactNode }) {
   const set = (key: keyof FiltersState) => (value: string) => onChange({ ...filters, [key]: value });
   const activeCount = Object.values(filters).filter((value) => value.trim() !== "").length;

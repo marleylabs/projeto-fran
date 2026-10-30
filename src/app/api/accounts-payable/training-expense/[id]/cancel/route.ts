@@ -1,8 +1,15 @@
+// POST /api/accounts-payable/training-expense/[id]/cancel — cancelamento lógico (soft cancel) do lançamento de
+// treinamento via cancelTrainingExpense; nunca DELETE físico.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { TrainingExpenseValidationError, parseCancelTrainingExpenseInput } from "@/modules/accounts-payable/training-expense/schema";
 import { cancelTrainingExpense } from "@/modules/accounts-payable/training-expense/server";
 
+/**
+ * Permissão: FINANCIAL_RECORDS_UPDATE; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Entrada (JSON): { reason } (parseCancelTrainingExpenseInput). Saída: { item }.
+ * Erros: 400 TrainingExpenseValidationError.
+ */
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_UPDATE);
   if (response || !user) return response;

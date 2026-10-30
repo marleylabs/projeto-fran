@@ -1,4 +1,13 @@
 import "server-only";
+// Servidor das Despesas de Treinamento (tela /pagamentos/treinamentos, rotas /api/accounts-payable/training-expense/**).
+// Ciclo de vida: DRAFT (livre, sem obrigação) → COMPLETED (cria FinancialRecord do fornecedor) → CANCELLED (soft).
+// Regras centrais:
+// - valor calculado = snapshot de preço do catálogo (base + adicionais por aluno); valor final pode divergir só com
+//   justificativa (adjustmentReason);
+// - rateio por participante soma EXATAMENTE o valor final (centavos distribuídos de forma determinística);
+// - participante guarda snapshot de departamento/centro de custo do Cadastro Mestre no momento do cálculo;
+// - após COMPLETED, alterações só enquanto a obrigação está no estado inicial e sempre geram TrainingExpenseRevision.
+// Toda escrita roda em transação Serializable. Erros de regra: TrainingExpenseValidationError (HTTP 400 nas rotas).
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { createFinancialRecordInTransaction } from "@/modules/accounts-payable/server/financialRecords";
@@ -7,6 +16,7 @@ import { TrainingExpenseValidationError, type CreateTrainingExpenseInput, type U
 
 type Tx = Prisma.TransactionClient;
 
+// Include padrão das respostas de detalhe (participantes na ordem de criação; revisões da mais recente para a mais antiga).
 const DETAIL_INCLUDE = {
   training: true,
   supplier: true,
@@ -16,6 +26,8 @@ const DETAIL_INCLUDE = {
   revisions: { orderBy: { revision: "desc" as const } },
 };
 
+// Guarda financeira: sem obrigação passa; com obrigação, só se estiver ATIVA e PENDENTE em pagamento, conciliação e
+// contabilidade. Usada antes de editar, redistribuir ou cancelar um lançamento concluído.
 function assertDeletable(record: { lifecycleState: string; paymentState: string; reconciliationState: string; accountingState: string } | null) {
   if (!record) return;
   if (record.lifecycleState !== "ACTIVE" || record.paymentState !== "PENDING" || record.reconciliationState !== "PENDING" || record.accountingState !== "PENDING") {
@@ -23,6 +35,7 @@ function assertDeletable(record: { lifecycleState: string; paymentState: string;
   }
 }
 
+// Todos os ids precisam existir e estar ativos no Cadastro Mestre (FoodEmployee); senão erro de validação.
 async function loadActiveEmployees(tx: Tx, employeeIds: string[]) {
   const employees = await tx.foodEmployee.findMany({ where: { id: { in: employeeIds }, active: true } });
   if (employees.length !== employeeIds.length) {
@@ -37,6 +50,8 @@ async function loadActiveEmployees(tx: Tx, employeeIds: string[]) {
 async function buildParticipants(tx: Tx, employeeIds: string[], finalAmount: Prisma.Decimal) {
   const employees = await loadActiveEmployees(tx, employeeIds);
   const byId = new Map(employees.map((employee) => [employee.id, employee]));
+  // Ordem estável por id: o mesmo conjunto de participantes sempre recebe os mesmos centavos extras.
+  // Departamento/CC vêm do cadastro ATUAL e viram snapshot no participante (recalcular sobrescreve o snapshot).
   const orderedIds = [...employeeIds].sort();
   const shares = distributeAmountAcrossParticipants(finalAmount, orderedIds);
   return shares.map((share) => {
@@ -50,6 +65,11 @@ async function buildParticipants(tx: Tx, employeeIds: string[], finalAmount: Pri
   });
 }
 
+/**
+ * Cria o lançamento em DRAFT: exige treinamento ativo no catálogo e participantes ativos; grava snapshot de preço,
+ * valor calculado = valor final e o rateio por participante. Cria a competência se não existir. Não gera obrigação.
+ * Ajuste de valor final é feito depois via PATCH (a tela faz POST + PATCH em sequência).
+ */
 export async function createTrainingExpenseDraft(input: CreateTrainingExpenseInput & { userId: string }) {
   return prisma.$transaction(async (tx) => {
     const training = await tx.training.findUnique({ where: { id: input.trainingId } });
@@ -109,6 +129,7 @@ export async function updateTrainingExpenseDraft(id: string, input: UpdateTraini
       throw new TrainingExpenseValidationError("Informe a justificativa do ajuste quando o valor final divergir do valor calculado.");
     }
 
+    // Participantes são recriados do zero (DELETE físico das linhas de rateio do rascunho — ainda sem efeito financeiro).
     const participants = await buildParticipants(tx, employeeIds, finalAmount);
     await tx.trainingExpenseParticipant.deleteMany({ where: { trainingExpenseId: id } });
 
@@ -184,6 +205,7 @@ export async function editCompletedTrainingExpense(id: string, input: UpdateTrai
       throw new TrainingExpenseValidationError("Informe a justificativa do ajuste quando o valor final divergir do valor calculado.");
     }
 
+    // Linhas de rateio são recriadas (a distribuição anterior não é guardada na Revision deste fluxo, só os totais).
     const participants = await buildParticipants(tx, employeeIds, finalAmount);
     await tx.trainingExpenseParticipant.deleteMany({ where: { trainingExpenseId: id } });
 
@@ -226,6 +248,7 @@ export async function editCompletedTrainingExpense(id: string, input: UpdateTrai
 }
 
 // Soft cancel — nunca DELETE físico, mesmo padrão de cancelFoodBatch/cancelTransitMap.
+// A obrigação vinculada (se houver) é zerada e marcada CANCELLED; exige motivo e a mesma guarda financeira.
 export async function cancelTrainingExpense(id: string, reason: string, userId: string) {
   if (!reason.trim()) throw new TrainingExpenseValidationError("Informe o motivo do cancelamento.");
   return prisma.$transaction(async (tx) => {
@@ -245,6 +268,7 @@ export async function cancelTrainingExpense(id: string, reason: string, userId: 
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+/** Filtros das listagens; competência só filtra quando ano E mês vêm juntos. query busca na descrição do treinamento. */
 export type TrainingExpenseListFilters = {
   year?: number;
   month?: number;
@@ -259,6 +283,7 @@ function competenceWhere(filters: TrainingExpenseListFilters) {
   return { competence: { year: filters.year, month: filters.month } };
 }
 
+/** Lista de lançamentos (todos os status, salvo filtro), mais recentes primeiro. Só leitura. */
 export async function listTrainingExpenses(filters: TrainingExpenseListFilters) {
   return prisma.trainingExpense.findMany({
     where: {
@@ -273,10 +298,12 @@ export async function listTrainingExpenses(filters: TrainingExpenseListFilters) 
   });
 }
 
+/** Detalhe com participantes, obrigação e revisões; null se não existir. */
 export async function getTrainingExpenseDetail(id: string) {
   return prisma.trainingExpense.findUnique({ where: { id }, include: DETAIL_INCLUDE });
 }
 
+/** Tipos do rateio consolidado (Fornecedor → Departamento → participações); valores em Prisma.Decimal. */
 export type RateioRow = {
   participantId: string;
   expenseId: string;
@@ -305,6 +332,7 @@ export type RateioSupplierCard = {
 
 // Só leitura/consolidação: 1 card por fornecedor na competência; cada
 // TrainingExpense (e seu FinancialRecord) continua individual e rastreável.
+// Considera só COMPLETED. Departamento = snapshot gravado no participante. difference = total − rateado (deve ser 0).
 export async function getTrainingExpenseRateio(filters: TrainingExpenseListFilters) {
   const expenses = await prisma.trainingExpense.findMany({
     where: { ...competenceWhere(filters), supplierId: filters.supplierId, trainingId: filters.trainingId, status: "COMPLETED" },
@@ -364,6 +392,8 @@ export async function getTrainingExpenseRateio(filters: TrainingExpenseListFilte
 // altera o valor total nem o conjunto de participantes. Em lançamento
 // concluído, mesma guarda financeira das demais edições + Revision com a
 // distribuição anterior e a nova.
+// Cada valor: >= 0, até 2 casas; a soma precisa ser igual ao finalAmount (comparação exata em Decimal).
+// Em DRAFT não há Revision, e uma edição posterior do rascunho (updateTrainingExpenseDraft) refaz a divisão automática.
 export async function editTrainingExpenseAllocation(id: string, rows: Array<{ participantId: string; allocatedAmount: string }>, userId: string) {
   return prisma.$transaction(async (tx) => {
     const expense = await tx.trainingExpense.findUnique({ where: { id }, include: { participants: true, financialRecord: true } });
@@ -404,6 +434,11 @@ export async function editTrainingExpenseAllocation(id: string, rows: Array<{ pa
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+/**
+ * Indicadores da competência (só COMPLETED): treinamentos, participantes únicos, participações, fornecedores e valor
+ * total, mais valores por fornecedor/treinamento (valor final) e por departamento (valor rateado). Só leitura.
+ * Agrupa pelo NOME (tradeName/descrição): homônimos são somados juntos.
+ */
 export async function getTrainingExpenseSummary(filters: TrainingExpenseListFilters) {
   const expenses = await prisma.trainingExpense.findMany({
     where: { ...competenceWhere(filters), status: "COMPLETED" },

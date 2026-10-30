@@ -7,8 +7,10 @@
 //   a autoridade (requirePermission nas APIs); nenhuma regra nova de autorização é criada aqui.
 // - Subseções contextuais (Café da Manhã / Cesta Básica dentro de Alimentação) NÃO entram na sidebar.
 
+/** Chave do ícone de cada item; o mapeamento para o componente de ícone fica no SidebarNav. */
 export type NavigationIconKey = "dashboard" | "food" | "transit" | "health" | "training" | "payroll" | "entities" | "collaborators" | "catalog" | "users";
 
+/** Item da sidebar. `permissions`: basta UMA das chaves (mesmas de PERMISSIONS em src/lib/auth/permissions). */
 export interface NavigationItem {
   id: string;
   label: string;
@@ -20,6 +22,7 @@ export interface NavigationItem {
   availability: "available" | "planned";
 }
 
+/** Grupo (seção) da sidebar. */
 export interface NavigationGroup {
   id: string;
   label: string;
@@ -28,6 +31,7 @@ export interface NavigationGroup {
   items: NavigationItem[];
 }
 
+/** Fonte única da navegação: ordem dos grupos e itens = ordem exibida na sidebar. */
 export const NAVIGATION_GROUPS: NavigationGroup[] = [
   {
     id: "overview",
@@ -73,6 +77,7 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
 /** Compatibilidade: lista plana de todos os itens da navegação. */
 export const NAVIGATION_MODULES: NavigationItem[] = NAVIGATION_GROUPS.flatMap((group) => group.items);
 
+/** Indica se o item deve aparecer como ativo para a rota atual, conforme `matchPaths`. */
 export function isNavigationItemActive(pathname: string, item: NavigationItem) {
   return (item.matchPaths ?? []).some((path) => path.startsWith("exact:") ? pathname === path.slice(6) : pathname === path || pathname.startsWith(`${path}/`));
 }
@@ -90,10 +95,12 @@ export function visibleNavigationGroups(permissions: readonly string[]) {
 
 // ---- Metadados por rota: título (aba do navegador) e TRILHA de ancestrais para o header do shell.
 // A trilha NUNCA repete o título da página atual — o título visível (h1) é do PageHeader da própria página.
+/** Elo da trilha; sem href = texto não clicável. */
 export type RouteCrumb = { label: string; href?: string };
 export type RouteMeta = { title: string; trail: RouteCrumb[] };
 
 const expenses: RouteCrumb = { label: "Despesas", href: "/pagamentos" };
+// Ordem importa: a primeira regex que casar vence (ex.: /pagamentos/[id]/validacao antes de /pagamentos/[id]).
 const ROUTES: Array<{ pattern: RegExp; meta: (match: RegExpMatchArray) => RouteMeta }> = [
   { pattern: /^\/login$/, meta: () => ({ title: "Entrar", trail: [] }) },
   { pattern: /^\/redefinir-senha$/, meta: () => ({ title: "Definir nova senha", trail: [] }) },
@@ -112,6 +119,7 @@ const ROUTES: Array<{ pattern: RegExp; meta: (match: RegExpMatchArray) => RouteM
   { pattern: /^\/usuarios$/, meta: () => ({ title: "Usuários", trail: [{ label: "Administração" }] }) },
 ];
 
+/** Título e trilha da rota; rota não mapeada → título "Projeta" e trilha vazia. */
 export function resolveRouteMeta(pathname: string): RouteMeta {
   for (const route of ROUTES) {
     const match = pathname.match(route.pattern);
@@ -129,4 +137,5 @@ const ROLE_LABELS: Record<string, string> = {
   FINANCE: "Financeiro",
   REQUESTER: "Solicitante",
 };
+/** Nome amigável do papel; chave desconhecida volta como está; undefined → "". */
 export const roleLabel = (key: string | undefined) => (key ? ROLE_LABELS[key] ?? key : "");

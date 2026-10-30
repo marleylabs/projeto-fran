@@ -6,6 +6,7 @@ import { FolderOpen } from "lucide-react";
 import { Button, DataTable, StatusBadge, type DataTableColumn } from "@/components/ui";
 import { brl } from "./format";
 
+// Item de GET /api/uploads. periodoChave: competência (Extrato) ou período (Sintético), quando identificado.
 export interface UploadSummary {
   id: string;
   fileName: string;
@@ -16,6 +17,7 @@ export interface UploadSummary {
   periodoChave?: string | null;
 }
 
+// Linha exibida: um upload ou vários PDFs da mesma competência somados.
 interface UploadGroup extends UploadSummary {
   fileNames: string[];
   uploadCount: number;
@@ -38,6 +40,8 @@ function periodoLabel(u: UploadSummary): string | null {
   return `Competência ${u.periodoChave}`;
 }
 
+// Agrupa Extratos Mensais da mesma competência numa linha (soma colaboradores e líquido; abre o upload mais
+// recente do grupo). Sintético e uploads sem período ficam isolados. Resultado ordenado do mais recente ao mais antigo.
 export function groupUploadsByPeriod(uploads: UploadSummary[]): UploadGroup[] {
   const groups = new Map<string, UploadGroup>();
 
@@ -69,6 +73,7 @@ export function groupUploadsByPeriod(uploads: UploadSummary[]): UploadGroup[] {
   return [...groups.values()].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
+// Tabela de uploads recentes; não renderiza nada quando a lista está vazia. onSelect recebe o id a abrir.
 export function PayrollRecentUploads({ uploads, onSelect }: { uploads: UploadSummary[]; onSelect: (id: string) => void }) {
   if (uploads.length === 0) return null;
   const rows = groupUploadsByPeriod(uploads);

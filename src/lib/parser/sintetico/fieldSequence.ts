@@ -26,8 +26,10 @@ export const SINTETICO_FIELD_SEQUENCE = [
   "assinatura",
 ] as const;
 
+/** Chave de campo da tabela. "assinatura" é a coluna de assinatura e não vai para a saída. */
 export type SinteticoFieldKey = (typeof SINTETICO_FIELD_SEQUENCE)[number];
 
+/** Campos monetários; também usados para detectar linha de dados quebrada (ver rowParser.ts). */
 export const SINTETICO_NUMERIC_FIELDS: SinteticoFieldKey[] = [
   "salario",
   "he",

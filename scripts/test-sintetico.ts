@@ -1,8 +1,12 @@
+// Script manual do parser do relatório Sintético de folha, sem PDF: monta linhas (PdfRow) à mão com as
+// coordenadas x de cada coluna e chama parseSinteticoRows / parseSinteticoCompanyInfo / computeSinteticoTotais.
+// Uso: npx tsx scripts/test-sintetico.ts — confira visualmente a saída. Os nomes e valores são de exemplo.
 import type { PdfRow } from "../src/lib/pdf/extractRows";
 import { parseSinteticoRows } from "../src/lib/parser/sintetico/rowParser";
 import { parseSinteticoCompanyInfo } from "../src/lib/parser/sintetico/companyParser";
 import { computeSinteticoTotais } from "../src/lib/parser/sintetico/computeTotals";
 
+// Monta uma linha de PDF: todos os itens na mesma altura y, cada um com seu texto e posição x.
 function row(y: number, items: [string, number][]): PdfRow {
   return { y, items: items.map(([text, x]) => ({ text, x, y })) };
 }

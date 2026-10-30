@@ -1,11 +1,17 @@
+// XLSX do rateio de Despesas de Treinamento (abas "Rateio" e "Departamentos"). Recebe o resultado de
+// getTrainingExpenseRateio (server.ts); chamado pela rota .../training-expense/rateio/download (botão da aba Rateio).
+// Sem acesso a banco. Antes de gravar, confere em centavos que as linhas fecham com o total rateado e o total dos
+// lançamentos; divergência lança Error (o download falha em vez de sair inconsistente).
 import ExcelJS from "exceljs";
 import { configureFoodExcelSheet, FOOD_EXCEL_MONEY_FORMAT, styleFoodExcelHeader, styleFoodExcelTotal } from "@/modules/accounts-payable/food/excel-style";
 import type { getTrainingExpenseRateio } from "./server";
 
 type RateioResult = Awaited<ReturnType<typeof getTrainingExpenseRateio>>;
 
+// Decimal → centavos inteiros só para a conferência (valores de 2 casas; Math.round absorve o erro do float).
 const cents = (value: { toString(): string }) => Math.round(Number(value.toString()) * 100);
 
+/** Nome do arquivo: rateio-treinamentos[-slug-do-fornecedor]-AAAA-MM.xlsx (slug sem acentos, até 40 caracteres). */
 export function trainingRateioFilename(year: number, month: number, supplierName?: string) {
   const slug = (supplierName ?? "")
     .normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
@@ -14,6 +20,7 @@ export function trainingRateioFilename(year: number, month: number, supplierName
 }
 
 // Mesmos helpers de estilo do rateio de Alimentação (cabeçalho vermelho, total preto, moeda pt-BR).
+/** Gera o Buffer do XLSX para a competência (year/month só rotulam as linhas; o filtro já veio aplicado em `data`). */
 export async function buildTrainingRateioWorkbook(data: RateioResult, year: number, month: number) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Gestão Administrativa";

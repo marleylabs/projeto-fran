@@ -72,6 +72,8 @@ model User {
   cancelledHealthPlanInvoices HealthPlanInvoice[] @relation("HealthPlanInvoiceCanceller")
 }
 
+// Token de redefinição de senha enviado por e-mail. Só o hash do token é gravado (o valor puro vai apenas no link);
+// expira em expiresAt e é de uso único (usedAt preenchido ao consumir).
 model PasswordResetToken {
   id        String    @id @default(cuid())
   userId    String
@@ -84,6 +86,8 @@ model PasswordResetToken {
   @@index([userId, expiresAt])
 }
 
+// Trilha de auditoria de ações administrativas sobre contas de usuário (ex.: TEMPORARY_PASSWORD_SET,
+// PASSWORD_RESET_SENT). details nunca deve conter senha. Restrict nos usuários preserva o histórico.
 model UserAccessAudit {
   id           String   @id @default(cuid())
   actorId      String
@@ -126,6 +130,7 @@ model Role {
   approvalInstances   ApprovalStepInstance[]
 }
 
+// Permissão atômica do RBAC (chave estável usada no código, ex.: PERMISSIONS.ROLES_MANAGE); ligada a papéis via RolePermission.
 model Permission {
   id          String           @id @default(cuid())
   key         String           @unique
@@ -134,6 +139,7 @@ model Permission {
   roles       RolePermission[]
 }
 
+// Associação N:N usuário × papel.
 model UserRole {
   userId     String
   roleId     String
@@ -145,6 +151,7 @@ model UserRole {
   @@index([roleId])
 }
 
+// Associação N:N papel × permissão.
 model RolePermission {
   roleId       String
   permissionId String
@@ -155,6 +162,8 @@ model RolePermission {
   @@index([permissionId])
 }
 
+// Empresa do grupo (CNPJ em taxId). Usada como "empresa" no rateio dos benefícios (Allocation.companyId) e
+// como empresa padrão nos *EmployeeConfig.
 model Company {
   id               String            @id @default(cuid())
   legalName        String
@@ -180,6 +189,7 @@ model Company {
   foodMealOccurrences FoodMealOccurrence[]
 }
 
+// Filial de uma Company (código único por empresa). Estrutura do kernel financeiro; uso opcional em FinancialRecord.
 model Branch {
   id               String            @id @default(cuid())
   companyId        String
@@ -196,6 +206,8 @@ model Branch {
   @@index([companyId])
 }
 
+// Fornecedor do kernel financeiro original (endereço/dados bancários em JSON). Os módulos de Despesas usam
+// AdministrativeEntity como favorecido; Supplier permanece para os vínculos legados de Contas a Pagar.
 model Supplier {
   id               String            @id @default(cuid())
   legalName        String
@@ -246,6 +258,7 @@ model AdministrativeEntity {
   @@index([locality])
 }
 
+// Projeto de uma Company (código único por empresa); dimensão opcional de classificação do FinancialRecord.
 model Project {
   id               String            @id @default(cuid())
   companyId        String
@@ -263,6 +276,7 @@ model Project {
   @@index([companyId])
 }
 
+// Contrato de uma Company, opcionalmente ligado a fornecedor/projeto; amount é o valor contratado (opcional).
 model Contract {
   id               String            @id @default(cuid())
   companyId        String
@@ -288,6 +302,8 @@ model Contract {
   @@index([projectId])
 }
 
+// Centro de custo estruturado do kernel financeiro. Atenção: os rateios dos benefícios usam o texto
+// FoodEmployee.costCenter (snapshot em String), não esta tabela.
 model CostCenter {
   id               String            @id @default(cuid())
   companyId        String
@@ -303,6 +319,7 @@ model CostCenter {
   @@index([companyId])
 }
 
+// Departamento estruturado do kernel financeiro; os rateios usam o texto do cadastro do colaborador, não esta tabela.
 model Department {
   id               String            @id @default(cuid())
   companyId        String
@@ -318,6 +335,7 @@ model Department {
   @@index([companyId])
 }
 
+// Categoria de despesa em árvore (parentId = categoria pai); código único global.
 model Category {
   id               String            @id @default(cuid())
   parentId         String?
@@ -333,6 +351,7 @@ model Category {
   @@index([parentId])
 }
 
+// Conta contábil (plano de contas) para classificação do FinancialRecord.
 model LedgerAccount {
   id               String            @id @default(cuid())
   code             String            @unique
@@ -343,18 +362,24 @@ model LedgerAccount {
   financialRecords FinancialRecord[]
 }
 
+// ===== Estados do FinancialRecord =====
+// Cada dimensão do ciclo de vida da obrigação financeira tem seu próprio enum/campo, evoluindo de forma
+// independente (documento, extração, validação, aprovação, pagamento, comprovante, conciliação, rateio, contabilidade).
+// Ciclo de vida geral do registro (cancelado/arquivado não some do banco).
 enum RecordLifecycleState {
   ACTIVE
   CANCELLED
   ARCHIVED
 }
 
+// Situação do documento fiscal anexado à obrigação.
 enum DocumentState {
   PENDING
   ATTACHED
   REJECTED
 }
 
+// Situação da extração (OCR/parse) dos documentos anexados.
 enum ExtractionState {
   NOT_STARTED
   QUEUED
@@ -363,6 +388,7 @@ enum ExtractionState {
   FAILED
 }
 
+// Situação da validação humana dos dados extraídos.
 enum ValidationState {
   PENDING
   IN_REVIEW
@@ -370,6 +396,7 @@ enum ValidationState {
   REJECTED
 }
 
+// Situação da aprovação (NOT_REQUIRED quando nenhuma ApprovalPolicy se aplica).
 enum ApprovalState {
   NOT_REQUIRED
   PENDING
@@ -377,6 +404,7 @@ enum ApprovalState {
   REJECTED
 }
 
+// Situação do pagamento da obrigação.
 enum PaymentState {
   PENDING
   SCHEDULED
@@ -386,6 +414,7 @@ enum PaymentState {
   CANCELLED
 }
 
+// Situação do comprovante de pagamento.
 enum ReceiptState {
   PENDING
   ATTACHED
@@ -393,17 +422,20 @@ enum ReceiptState {
   REJECTED
 }
 
+// Situação da conciliação bancária.
 enum ReconciliationState {
   PENDING
   MATCHED
   DIVERGENT
 }
 
+// Situação do rateio (alocação por centro de custo/departamento).
 enum AllocationState {
   PENDING
   COMPLETED
 }
 
+// Situação da exportação contábil.
 enum AccountingState {
   PENDING
   READY
@@ -411,6 +443,7 @@ enum AccountingState {
   ERROR
 }
 
+// Tipo do arquivo anexado a uma obrigação (FinancialDocumentFile.kind).
 enum FinancialFileKind {
   INVOICE
   TAX_INVOICE
@@ -422,6 +455,7 @@ enum FinancialFileKind {
   OTHER
 }
 
+// Estado de um job da fila de extração (DocumentExtractionJob) processado pelo scripts/document-worker.ts.
 enum ExtractionJobState {
   PENDING
   PROCESSING
@@ -431,12 +465,14 @@ enum ExtractionJobState {
   REVIEW_REQUIRED
 }
 
+// Decisão do revisor em DocumentValidationReview.
 enum ValidationDecision {
   VALIDATED
   REJECTED
   CORRECTION_REQUESTED
 }
 
+// Status geral de uma solicitação de aprovação (ApprovalRequest).
 enum ApprovalRequestStatus {
   PENDING
   APPROVED
@@ -445,6 +481,7 @@ enum ApprovalRequestStatus {
   CANCELLED
 }
 
+// Status de uma etapa de aprovação: WAITING = etapa futura, PENDING = etapa atual aguardando ação.
 enum ApprovalStepStatus {
   WAITING
   PENDING
@@ -454,18 +491,27 @@ enum ApprovalStepStatus {
   SKIPPED
 }
 
+// Status de um lote/lançamento de benefício. Apesar do nome "Food", é reutilizado por TransitVoucherMap,
+// BreakfastMap e BasicBasketMap. READY = sem pendências, apto a gerar/atualizar o FinancialRecord.
 enum FoodBatchStatus {
   UNDER_REVIEW
   WITH_INCONSISTENCIES
   READY
 }
 
+// Contador anual para o identificador sequencial do FinancialRecord. Incrementado dentro da transação de criação
+// (src/modules/accounts-payable/server/financialRecords.ts): nextNumber é o PRÓXIMO número livre do ano.
 model FinancialSequence {
   year       Int      @id
   nextNumber Int      @default(1)
   updatedAt  DateTime @updatedAt
 }
 
+// ===== Kernel financeiro =====
+// Obrigação financeira (conta a pagar) — destino comum de todos os lançamentos de benefícios (FoodBatch,
+// TransitVoucherMap, BreakfastMap, BasicBasketMap, HealthPlanInvoice, TrainingExpense: relação 1:1 opcional).
+// identifier é legível e gerado de sequenceYear/sequenceNumber (FinancialSequence). administrativeEntityId é o
+// favorecido; os demais vínculos (empresa, fornecedor, projeto...) são dimensões opcionais do kernel original.
 model FinancialRecord {
   id                     String                     @id @default(cuid())
   identifier             String                     @unique
@@ -489,6 +535,7 @@ model FinancialRecord {
   receivedAt             DateTime                   @default(now())
   dueDate                DateTime?
   competenceDate         DateTime?
+  // Valores monetários sempre em Decimal(19,4); netAmount é opcional (calculado/informado quando aplicável).
   grossAmount            Decimal                    @db.Decimal(19, 4)
   discountAmount         Decimal                    @default(0) @db.Decimal(19, 4)
   taxAmount              Decimal                    @default(0) @db.Decimal(19, 4)
@@ -537,6 +584,9 @@ model FinancialRecord {
   @@index([approvalState, createdAt])
 }
 
+// ===== Alimentação (Refeição) =====
+// Preço unitário da refeição por fornecedor (AdministrativeEntity) e localidade (MA/PA). Vigência opcional
+// (effectiveYear/effectiveMonth): vale a configuração ativa mais recente com vigência <= competência; null = sem início.
 model FoodUnitPriceConfig {
   id                     String                @id @default(cuid())
   unitPrice              Decimal               @db.Decimal(19, 4)
@@ -552,6 +602,7 @@ model FoodUnitPriceConfig {
   @@index([active, locality, administrativeEntityId, effectiveYear, effectiveMonth])
 }
 
+// Competência (ano/mês) da Alimentação; agrupa os lotes (FoodBatch) e as alocações.
 model FoodCompetence {
   id        String      @id @default(cuid())
   year      Int
@@ -565,6 +616,9 @@ model FoodCompetence {
   @@index([year, month])
 }
 
+// Lote de Alimentação: um upload (ou lançamento manual) por competência × localidade × fornecedor × ciclo.
+// Cada reprocessamento cria nova version; só a linha com current = true vale. O arquivo original fica no
+// storage privado (storageKey), com sha256 para rastreabilidade. Cancelamento é lógico (cancelled*).
 model FoodBatch {
   id                     String               @id @default(cuid())
   competenceId           String
@@ -572,6 +626,8 @@ model FoodBatch {
   uploadedByUserId       String
   financialRecordId      String?              @unique
   locality               String               @db.VarChar(10)
+  // Ciclo do lote em MA: 1 = dias 1 a 15, 2 = dia 16 ao fim do mês; 0 = lote mensal (PA ou histórico).
+  // Ver src/modules/accounts-payable/food/cycles.ts.
   cycle                  Int                  @default(0)
   version                Int
   current                Boolean              @default(true)
@@ -607,6 +663,8 @@ model FoodBatch {
   @@index([administrativeEntityId])
 }
 
+// Linha de rateio da Alimentação (formato legado por linha da planilha): valor por colaborador/departamento
+// com snapshot do preço unitário.
 model FoodAllocation {
   id               String    @id @default(cuid())
   batchId          String
@@ -629,6 +687,7 @@ model FoodAllocation {
   @@index([competenceId, locality, administrativeEntityId])
 }
 
+// Inconsistência encontrada ao processar um lote de Alimentação (linha, código e mensagem para o usuário).
 model FoodBatchIssue {
   id           String    @id @default(cuid())
   batchId      String
@@ -642,6 +701,9 @@ model FoodBatchIssue {
   @@index([batchId, sourceRow])
 }
 
+// Cadastro Mestre de colaboradores. Apesar do nome histórico "FoodEmployee", é compartilhado por todos os
+// benefícios (VT, Café da Manhã, Cesta Básica, Plano de Saúde, Treinamentos). normalizedName é a chave de
+// match por nome (sem acento/caixa). Não é apagado: inativação via active e unificação de duplicados via mergedIntoId.
 model FoodEmployee {
   id             String               @id @default(cuid())
   officialName   String
@@ -656,6 +718,7 @@ model FoodEmployee {
   // Dado cadastral pessoal — também omitido por padrão no PrismaClient. Não é chave de match.
   admissionDate  DateTime?            @db.Date
   active         Boolean              @default(true)
+  // Quando preenchido, este cadastro foi unificado (merge) no colaborador indicado e deixa de aparecer nas listas.
   mergedIntoId   String?
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
@@ -676,6 +739,7 @@ model FoodEmployee {
   @@index([mergedIntoId])
 }
 
+// Nome alternativo (como veio em planilhas/PDFs) já associado a um colaborador; acelera o match nos próximos uploads.
 model FoodEmployeeAlias {
   id              String       @id @default(cuid())
   employeeId      String
@@ -687,12 +751,14 @@ model FoodEmployeeAlias {
   @@index([employeeId])
 }
 
+// Status de validação do vínculo ocorrência → colaborador (automático ou confirmado pelo usuário).
 enum FoodOccurrenceValidationStatus {
   PENDING
   AUTO_MATCHED
   CONFIRMED
 }
 
+// Como a ocorrência foi associada ao colaborador (exato, normalizado, apelido, aproximado ou manual).
 enum FoodOccurrenceMatchMethod {
   UNMATCHED
   EXACT
@@ -702,17 +768,22 @@ enum FoodOccurrenceMatchMethod {
   MANUAL
 }
 
+// Destino da ocorrência no cálculo: válida, duplicada ou ignorada.
 enum FoodOccurrenceDisposition {
   VALID
   DUPLICATE
   IGNORED
 }
 
+// Origem de uma linha: importada de arquivo (UPLOAD) ou lançada à mão (MANUAL).
 enum EntryOrigin {
   UPLOAD
   MANUAL
 }
 
+// Ocorrência de refeição (uma linha por colaborador × dia) de um lote de Alimentação. Guarda o nome recebido
+// e o oficial, o resultado do match, flags de duplicidade e o valor (snapshot do preço). Exclusão é lógica
+// (deletedAt/deletedByUserId/deletionReason).
 model FoodMealOccurrence {
   id                     String                         @id @default(cuid())
   batchId                String
@@ -761,6 +832,7 @@ model FoodMealOccurrence {
   @@index([batchId, deletedAt])
 }
 
+// Auditoria de edição de um lote já processado: total antes/depois e diff das mudanças em JSON.
 model FoodBatchRevision {
   id             String    @id @default(cuid())
   batchId        String
@@ -777,6 +849,8 @@ model FoodBatchRevision {
   @@index([batchId, createdAt])
 }
 
+// ===== Vale Transporte =====
+// Competência do VT; fareUnitPrice é a tarifa da passagem vigente no mês, aplicada a novos lançamentos.
 model TransitVoucherCompetence {
   id          String                    @id @default(cuid())
   year        Int
@@ -791,6 +865,8 @@ model TransitVoucherCompetence {
   @@unique([year, month])
 }
 
+// Lançamento de VT por competência × fornecedor (versionado: current = true é o vigente). Guarda metadados do
+// arquivo importado e holidaysSnapshot (feriados usados no cálculo, congelados no lançamento).
 model TransitVoucherMap {
   id                     String                   @id @default(cuid())
   competenceId           String
@@ -829,6 +905,10 @@ model TransitVoucherMap {
   @@index([competenceId, administrativeEntityId, current])
 }
 
+// Linha do VT por colaborador com snapshot completo (empresa, departamento, CC, passagens, tarifa e valor):
+// não é recalculada se o cadastro ou a tarifa mudarem. Exclusão lógica (deleted*). Os campos monetários antigos
+// (dailyAmount, previousMonthDifference, occasionalDiscounts, days) vêm do formato de planilha legado; os de
+// passagens (dailyPassageQuantity ... passagesToReceive) do cálculo atual por quantidade × tarifa.
 model TransitVoucherAllocation {
   id                     String                   @id @default(cuid())
   mapId                  String
@@ -879,6 +959,7 @@ model TransitVoucherAllocation {
   @@index([mapId, deletedAt])
 }
 
+// Tipo de observação de uma linha de VT (férias ou outro motivo descrito em observationDetails).
 enum TransitObservationType {
   VACATION
   OTHER
@@ -915,6 +996,8 @@ model TransitVoucherEmployeeConfig {
   @@index([defaultCompanyId])
 }
 
+// Pendência de importação do VT. Guarda a linha bruta, erros por campo e sugestão; ao ser corrigida pelo usuário,
+// correctedData/resolvedAt/resolvedByUserId são preenchidos e a linha vira alocação.
 model TransitVoucherIssue {
   id           String            @id @default(cuid())
   mapId        String
@@ -956,6 +1039,8 @@ model BreakfastCompetence {
   @@unique([year, month])
 }
 
+// Lançamento de Café da Manhã por competência × fornecedor (versionado, current = vigente), com feriados
+// congelados em holidaysSnapshot e vínculo 1:1 opcional com o FinancialRecord.
 model BreakfastMap {
   id                     String              @id @default(cuid())
   competenceId           String
@@ -986,6 +1071,8 @@ model BreakfastMap {
   @@index([competenceId, administrativeEntityId, current])
 }
 
+// Linha do Café da Manhã por colaborador com snapshot completo: finalQuantity = base (dias úteis) + extra −
+// desconto, amount = finalQuantity × unitPrice. Exclusão lógica (deleted*).
 model BreakfastAllocation {
   id                     String              @id @default(cuid())
   mapId                  String
@@ -1025,6 +1112,7 @@ model BreakfastAllocation {
   @@index([competenceId, administrativeEntityId])
 }
 
+// Tipo de observação de uma linha do Café da Manhã (retroativo ou outro motivo em observationDetails).
 enum BreakfastObservationType {
   RETROACTIVE
   OTHER
@@ -1078,6 +1166,7 @@ model BasicBasketCompetence {
   @@unique([year, month])
 }
 
+// Lançamento de Cesta Básica por competência × fornecedor (versionado, current = vigente).
 model BasicBasketMap {
   id                     String                @id @default(cuid())
   competenceId           String
@@ -1109,6 +1198,7 @@ model BasicBasketMap {
   @@index([competenceId, administrativeEntityId, current])
 }
 
+// Linha da Cesta Básica por colaborador com snapshot de todos os dados e valores usados no cálculo (ver blocos abaixo).
 model BasicBasketAllocation {
   id                     String                @id @default(cuid())
   mapId                  String
@@ -1215,6 +1305,9 @@ model BasicBasketEmployeeConfig {
 
   @@index([defaultCompanyId])
 }
+// ===== Documentos e extração =====
+// Arquivo anexado a uma obrigação (nota, boleto, comprovante...). Versionado por tipo: um novo envio cria nova
+// version e aponta para o anterior em supersedesFileId; active marca a versão vigente. Conteúdo no storage privado.
 model FinancialDocumentFile {
   id                String                  @id @default(cuid())
   financialRecordId String
@@ -1241,6 +1334,8 @@ model FinancialDocumentFile {
   @@index([sha256])
 }
 
+// Job da fila de extração consumido por scripts/document-worker.ts: o worker reserva o job (PENDING → PROCESSING,
+// lockedBy = id do worker), reprocessa até maxAttempts com availableAt adiado e devolve à fila jobs presos (lease).
 model DocumentExtractionJob {
   id             String                @id @default(cuid())
   fileId         String
@@ -1263,6 +1358,7 @@ model DocumentExtractionJob {
   @@index([fileId, createdAt])
 }
 
+// Resultado de uma execução de extração (texto bruto, dados estruturados e confiança por campo).
 model DocumentExtraction {
   id                String                     @id @default(cuid())
   jobId             String                     @unique
@@ -1286,6 +1382,7 @@ model DocumentExtraction {
   @@index([state, createdAt])
 }
 
+// Revisão humana de uma extração: snapshot do extraído, dados corrigidos e decisão do revisor.
 model DocumentValidationReview {
   id                        String                    @id @default(cuid())
   financialRecordId         String
@@ -1306,6 +1403,7 @@ model DocumentValidationReview {
   @@index([reviewerUserId, createdAt])
 }
 
+// Campo individual de uma revisão (valor extraído × final, confiança e se foi alterado).
 model DocumentValidationField {
   id             String                   @id @default(cuid())
   reviewId       String
@@ -1319,6 +1417,9 @@ model DocumentValidationField {
   @@unique([reviewId, fieldKey])
 }
 
+// ===== Aprovação =====
+// Política de aprovação por empresa/moeda/faixa de valor (minAmount..maxAmount); priority ordena a escolha
+// entre políticas aplicáveis e define as etapas (ApprovalPolicyStep).
 model ApprovalPolicy {
   id        String               @id @default(cuid())
   name      String
@@ -1337,6 +1438,7 @@ model ApprovalPolicy {
   @@index([companyId, currency, active, priority])
 }
 
+// Etapa de uma política: sequência e papel (Role) responsável por aprovar.
 model ApprovalPolicyStep {
   id       String         @id @default(cuid())
   policyId String
@@ -1350,6 +1452,8 @@ model ApprovalPolicyStep {
   @@index([roleId])
 }
 
+// Solicitação de aprovação de uma obrigação. Valor e moeda são congelados (snapshot) na abertura;
+// currentStep aponta a etapa em andamento.
 model ApprovalRequest {
   id                String                 @id @default(cuid())
   financialRecordId String
@@ -1402,6 +1506,8 @@ enum TrainingOrigin {
   MANUAL
 }
 
+// Item do catálogo de treinamentos (ver comentário acima de TrainingOrigin). sourceItemId = nº do item na
+// proposta importada; origin indica se veio de importação (seed) ou de cadastro manual.
 model Training {
   id                     String   @id @default(cuid())
   supplierId             String
@@ -1434,6 +1540,7 @@ model Training {
   @@index([modality, attendanceType])
 }
 
+// Status de um lançamento de treinamento: rascunho, concluído (gera obrigação) ou cancelado.
 enum TrainingExpenseStatus {
   DRAFT
   COMPLETED
@@ -1532,6 +1639,7 @@ model TrainingExpenseRevision {
   @@index([trainingExpenseId, createdAt])
 }
 
+// Instância de uma etapa de aprovação numa solicitação (cópia da ApprovalPolicyStep), com quem agiu e quando.
 model ApprovalStepInstance {
   id            String             @id @default(cuid())
   requestId     String
@@ -1567,6 +1675,9 @@ model HealthPlanCompetence {
   @@unique([year, month])
 }
 
+// Fatura do Plano de Saúde (um PDF da operadora) = uma obrigação financeira. obligation/control identificam a
+// fatura no PDF; grossAmount é o Valor Bruto lido do PDF e totalAmount a soma dos titulares — o servidor exige
+// que coincidam, e esse total vai para a obrigação. Cancelamento lógico (cancelled*).
 model HealthPlanInvoice {
   id                     String               @id @default(cuid())
   competenceId           String
@@ -1601,6 +1712,7 @@ model HealthPlanInvoice {
   @@index([obligation])
 }
 
+// Linha do Plano de Saúde por titular; employeeId null quando o CPF não casou com nenhum colaborador.
 model HealthPlanAllocation {
   id                     String               @id @default(cuid())
   invoiceId              String
@@ -1619,6 +1731,7 @@ model HealthPlanAllocation {
   costCenter             String?
   amount                 Decimal              @db.Decimal(19, 4)
   beneficiaryCount       Int
+  // Lista dos beneficiários (titular e dependentes) da fatura com seus valores; contém dados pessoais.
   beneficiaries          Json
   createdAt              DateTime             @default(now())
   invoice                HealthPlanInvoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)

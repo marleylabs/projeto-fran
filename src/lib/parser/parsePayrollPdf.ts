@@ -1,3 +1,7 @@
+// Parser do layout "Extrato Mensal" (um bloco por colaborador).
+// Fluxo: segmentEmployees -> parseCompanyInfo / parseEmployeeBlock -> computeTotaisGerais,
+// conferido com os totais impressos no rodapé (parseTotaisImpressos). Divergências viram avisos, não erros.
+
 import { extractPdfRows, type PdfPageRows } from "@/lib/pdf/extractRows";
 import { segmentEmployees } from "./segmentEmployees";
 import { parseCompanyInfo } from "./companyParser";
@@ -6,8 +10,10 @@ import { parseTotaisImpressos } from "./totalsParser";
 import { computeTotaisGerais } from "./computeTotals";
 import type { Colaborador, ExtractionResult } from "@/lib/types/payroll";
 
+// Tolerância (R$) ao comparar totais calculados com os impressos, para absorver arredondamento.
 const EPSILON = 0.02;
 
+// Remove matrículas repetidas (mantém a 1ª ocorrência) e registra aviso; sem código não deduplica.
 function dedupeByCodigo(colaboradores: Colaborador[], avisos: string[]): Colaborador[] {
   const seen = new Map<string, Colaborador>();
   const result: Colaborador[] = [];

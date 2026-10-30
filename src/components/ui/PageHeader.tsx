@@ -18,6 +18,7 @@ type PageHeaderProps = {
   className?: string;
 };
 
+/** Cabeçalho da página com h1, descrição, ações à direita e link "Voltar" opcional (`backHref`). */
 export function PageHeader({
   title,
   description,

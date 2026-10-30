@@ -1,4 +1,8 @@
 "use client";
+// Detalhe de uma obrigação financeira (FinancialRecord) em /pagamentos/[id]: dados do fornecedor, estados
+// documento/extração/validação, envio de documentos (nota, boleto, XML...) e histórico de versões.
+// APIs: GET /api/financial-records/[id], GET/POST .../files (upload multipart; o servidor versiona e enfileira a
+// extração OCR), POST /api/financial-files/[fileId]/reprocess. A conferência dos dados extraídos fica em ./validacao.
 import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
@@ -8,6 +12,7 @@ import { Badge, Button, EmptyState, FileInput, PageHeader, type BadgeTone, type 
 type Detail = { identifier: string; description: string | null; grossAmount: string; currency: string; documentState: string; extractionState: string; validationState: string; company: { legalName: string } | null; administrativeEntity: { cnpj: string | null; legalName: string; tradeName: string; activityArea: string; locality: string; appliesProjeta: boolean; appliesBoinga: boolean } };
 type Doc = { id: string; kind: string; version: number; originalName: string; sizeBytes: number; active: boolean; createdAt: string };
 
+// Cor do Badge por estado (documento, extração ou validação); estado desconhecido = neutro.
 const STATE_TONES: Record<string, BadgeTone> = {
   COMPLETED: "success",
   ATTACHED: "success",
@@ -23,6 +28,7 @@ function stateTone(value?: string): BadgeTone {
   return value ? STATE_TONES[value] ?? "neutral" : "neutral";
 }
 
+/** Página de detalhe. Após upload, atualiza localmente os estados para ATTACHED/QUEUED (otimista) e recarrega os arquivos. */
 export default function PaymentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [detail, setDetail] = useState<Detail | null>(null); const [files, setFiles] = useState<Doc[]>([]); const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false); const [fileName, setFileName] = useState(""); const [uploadStatus, setUploadStatus] = useState<FileInputStatus>("normal");

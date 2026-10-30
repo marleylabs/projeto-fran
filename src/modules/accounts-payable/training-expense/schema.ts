@@ -1,5 +1,10 @@
+// Validação dos corpos JSON das rotas de Despesas de Treinamento (fronteira de confiança: o body vem do cliente).
+// Só formato; regras que dependem do banco (treinamento ativo, colaborador ativo, estado financeiro) ficam em server.ts.
+
+/** Erro de negócio/validação; as rotas devolvem a mensagem com HTTP 400. */
 export class TrainingExpenseValidationError extends Error {}
 
+/** POST de criação (rascunho). Sem valores: o servidor calcula a partir do snapshot do catálogo. */
 export type CreateTrainingExpenseInput = {
   year: number;
   month: number;
@@ -8,6 +13,10 @@ export type CreateTrainingExpenseInput = {
   employeeIds: string[];
 };
 
+/**
+ * PATCH (parcial): só os campos presentes no body são alterados. finalAmount é texto decimal com ponto e, se diferente
+ * do calculado, exige adjustmentReason (checado no servidor). adjustmentReason null/vazio limpa a justificativa.
+ */
 export type UpdateTrainingExpenseInput = {
   trainingDate?: string;
   employeeIds?: string[];
@@ -15,6 +24,7 @@ export type UpdateTrainingExpenseInput = {
   adjustmentReason?: string | null;
 };
 
+/** POST de cancelamento: motivo obrigatório (vai para cancellationReason). */
 export type CancelTrainingExpenseInput = { reason: string };
 
 function requiredString(body: Record<string, unknown>, key: string, label: string): string {
@@ -32,6 +42,7 @@ function requiredEmployeeIds(body: Record<string, unknown>): string[] {
   return unique;
 }
 
+/** Valida competência (ano 2000–2200, mês 1–12), data "aaaa-mm-dd", treinamento e participantes únicos. */
 export function parseCreateTrainingExpenseInput(body: unknown): CreateTrainingExpenseInput {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new TrainingExpenseValidationError("Corpo da requisição inválido.");
   const input = body as Record<string, unknown>;
@@ -50,6 +61,10 @@ export function parseCreateTrainingExpenseInput(body: unknown): CreateTrainingEx
   };
 }
 
+/**
+ * Valida o PATCH. finalAmount aceita vírgula ou ponto e precisa ser > 0; a quantidade de casas não é limitada aqui
+ * (mais de 2 casas acaba recusada pela conferência do rateio em distributeAmountAcrossParticipants).
+ */
 export function parseUpdateTrainingExpenseInput(body: unknown): UpdateTrainingExpenseInput {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new TrainingExpenseValidationError("Corpo da requisição inválido.");
   const input = body as Record<string, unknown>;
@@ -76,6 +91,7 @@ export function parseUpdateTrainingExpenseInput(body: unknown): UpdateTrainingEx
   return result;
 }
 
+/** Valida o body do cancelamento (motivo obrigatório). */
 export function parseCancelTrainingExpenseInput(body: unknown): CancelTrainingExpenseInput {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new TrainingExpenseValidationError("Corpo da requisição inválido.");
   const input = body as Record<string, unknown>;

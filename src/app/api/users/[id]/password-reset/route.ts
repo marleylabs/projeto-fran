@@ -1,3 +1,6 @@
+// /api/users/[id]/password-reset — administrador redefine a senha de outro usuário (tela src/app/usuarios/page.tsx).
+// Duas estratégias: senha temporária definida pelo admin, ou link de uso único enviado por e-mail
+// (concluído pelo próprio usuário em /api/auth/password-reset). Regras e auditoria em lib/db/users.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { sendPasswordResetMail } from "@/lib/auth/password-reset-mail";
@@ -6,6 +9,11 @@ import { prisma } from "@/lib/db/prisma";
 
 export const runtime = "nodejs";
 
+/**
+ * POST: corpo JSON { strategy?: "temporary", password?, confirmation? }. Permissão: ROLES_MANAGE — 401 sem sessão, 403 sem permissão.
+ * Sem strategy "temporary", gera token e envia e-mail. Retorna { ok, strategy, expiresAt? }.
+ * Erros: UserAccessError com seu status (ex.: 404 usuário, 409 inativo, 400 senha); 503 falha no envio do e-mail.
+ */
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { user, response } = await requirePermission(PERMISSIONS.ROLES_MANAGE);
   if (response) return response;
@@ -25,6 +33,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       await prisma.userAccessAudit.create({ data: { actorId: user.id, targetUserId: id, action: "PASSWORD_RESET_SENT" } });
     }
     catch (error) {
+      // Se o e-mail não sai, apaga o token recém-criado para não deixar um link válido que ninguém recebeu.
       await prisma.passwordResetToken.delete({ where: { id: reset.user.resetTokenId } }).catch(() => undefined);
       return NextResponse.json({ error: error instanceof Error ? error.message : "Não foi possível enviar o e-mail de redefinição." }, { status: 503 });
     }

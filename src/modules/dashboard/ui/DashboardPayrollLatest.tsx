@@ -10,11 +10,13 @@ import type { UploadSummary } from "@/modules/accounting/payroll/ui/PayrollRecen
 
 const FORMATO_LABEL: Record<string, string> = { "extrato-mensal": "Extrato Mensal", "relatorio-sintetico": "Relatório Sintético", desconhecido: "Formato desconhecido" };
 
+// Competência (Extrato) ou período "início a fim" (Sintético); null quando o período não foi identificado.
 function periodo(upload: UploadSummary) {
   if (!upload.periodoChave) return null;
   return upload.formato === "relatorio-sintetico" ? upload.periodoChave.replace("_", " a ") : upload.periodoChave;
 }
 
+// Card com estados de carregando, erro, vazio e o resumo do upload mais recente, com link para a Folha.
 export function DashboardPayrollLatest({ upload, loading, error }: { upload: UploadSummary | null; loading: boolean; error: string | null }) {
   return (
     <Card as="section" aria-labelledby="home-payroll-latest" className="grid min-w-0 content-start gap-3">

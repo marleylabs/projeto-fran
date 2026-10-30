@@ -1,3 +1,4 @@
+// /api/users — listagem e criação de usuários do sistema (tela src/app/usuarios/page.tsx).
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { createUser, listRoles, listUsers } from "@/lib/db/users";
@@ -6,6 +7,10 @@ import { Prisma } from "@/generated/prisma";
 
 export const runtime = "nodejs";
 
+/**
+ * GET: retorna { users, roles, recoveryEmailConfigured } — o último indica se o SMTP de recuperação está configurado.
+ * Permissão: USERS_READ — 401 sem sessão, 403 sem permissão.
+ */
 export async function GET() {
   const { response } = await requirePermission(PERMISSIONS.USERS_READ);
   if (response) return response;
@@ -14,6 +19,10 @@ export async function GET() {
   return NextResponse.json({ users, roles, recoveryEmailConfigured: passwordResetMailConfigured() });
 }
 
+/**
+ * POST: corpo JSON { email, password (mín. 8), name?, roleKey? (padrão "REQUESTER") }. Permissão: USERS_CREATE.
+ * Retorna { user }. Erros: 400 dados/perfil inválido, 409 e-mail já cadastrado (P2002).
+ */
 export async function POST(request: Request) {
   const { response } = await requirePermission(PERMISSIONS.USERS_CREATE);
   if (response) return response;

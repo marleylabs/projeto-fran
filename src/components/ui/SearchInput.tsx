@@ -18,6 +18,8 @@ export type SearchInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type
   className?: string;
 };
 
+/** Campo de busca com ícone, rótulo acessível e botão de limpar (que devolve o foco ao campo). Não faz debounce:
+ * cada tecla chama onValueChange, o consumidor decide quando filtrar. */
 export function SearchInput({ label, hideLabel = true, value, onValueChange, clearLabel = "Limpar busca", id, className, disabled, onKeyDown, ...props }: SearchInputProps) {
   const generated = useId();
   const inputId = id ?? `search-${generated}`;

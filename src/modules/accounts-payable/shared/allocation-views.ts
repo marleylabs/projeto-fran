@@ -4,20 +4,27 @@
 //   Departamento = Centro de Custo = Empresa/Departamento = Empresa/CC/Departamento = total do lançamento.
 // Chaves: Empresa pelo id do snapshot (companyId) quando houver; CC/Departamento pelo texto normalizado do snapshot
 // (não há id histórico para eles). Vazio vira "Sem departamento"/"Sem centro de custo" — a linha nunca é descartada.
+// Usado pelas telas (components/allocation/AllocationViews.tsx e as views de cada benefício) e pelos XLSX
+// (allocation-views-workbook.ts). Além dos benefícios acima, Vale Transporte e Plano de Saúde também consomem.
 import { comparePtBr } from "@/lib/sorting/ptBr";
 
+/** Rótulos usados quando o snapshot não tem departamento/centro de custo/empresa. */
 export const ALLOCATION_EMPTY_DEPARTMENT = "Sem departamento";
 export const ALLOCATION_EMPTY_COST_CENTER = "Sem centro de custo";
 export const ALLOCATION_EMPTY_COMPANY = "Sem empresa";
 
+/** Nível de agrupamento das perspectivas. */
 export type AllocationLevel = "company" | "costCenter" | "department";
+/** As 4 perspectivas de rateio e a ordem dos níveis de cada uma (do mais externo ao mais interno). */
 export const ALLOCATION_VIEWS = [
   { id: "department", label: "Departamento", levels: ["department"] },
   { id: "costCenter", label: "Centro de Custo", levels: ["costCenter"] },
   { id: "companyDepartment", label: "Empresa / Departamento", levels: ["company", "department"] },
   { id: "companyCostCenterDepartment", label: "Empresa / CC / Departamento", levels: ["company", "costCenter", "department"] },
 ] as const satisfies ReadonlyArray<{ id: string; label: string; levels: readonly AllocationLevel[] }>;
+/** Identificador de perspectiva. */
 export type AllocationViewId = (typeof ALLOCATION_VIEWS)[number]["id"];
+/** Rótulo de exibição de cada nível. */
 export const ALLOCATION_LEVEL_LABEL: Record<AllocationLevel, string> = { company: "Empresa", costCenter: "Centro de Custo", department: "Departamento" };
 
 /** Linha normalizada: uma alocação (colaborador) com o valor FINAL já determinado pela regra do módulo. */
@@ -31,10 +38,13 @@ export type AllocationViewRow<T = unknown> = {
   source: T;
 };
 
+// collapse: trim + espaços colapsados. keyOf: chave de agrupamento sem diferença de maiúsculas/minúsculas.
 const collapse = (value: string | null | undefined) => (value ?? "").trim().replace(/\s+/g, " ");
 const keyOf = (value: string) => value.toLocaleUpperCase("pt-BR");
 
 /** Monta a linha normalizada a partir dos snapshots do módulo (sem consultar cadastro atual). */
+// Lança Error se o valor não estiver em centavos inteiros (evita somar float). Empresa agrupa por id quando há
+// companyId (duas empresas com o mesmo nome continuam separadas); colaborador idem com employeeId.
 export function normalizeAllocationRow<T>(input: { id: string; companyId?: string | null; company?: string | null; costCenter?: string | null; department?: string | null; employeeId?: string | null; employeeName: string; cents: number; source: T }): AllocationViewRow<T> {
   if (!Number.isInteger(input.cents)) throw new Error(`Valor do rateio deve estar em centavos inteiros (${input.employeeName}).`);
   const company = collapse(input.company) || ALLOCATION_EMPTY_COMPANY;
@@ -53,7 +63,9 @@ export function normalizeAllocationRow<T>(input: { id: string; companyId?: strin
   };
 }
 
+/** Nó da árvore: um grupo de um nível, com subtotal (centavos), pessoas distintas, filhos e as linhas da folha. */
 export type AllocationNode<T = unknown> = { key: string; level: AllocationLevel; label: string; cents: number; people: number; children: AllocationNode<T>[]; rows: AllocationViewRow<T>[] };
+/** Árvore de uma perspectiva; consistent = todos os nós fecham com filhos/linhas e o topo fecha com o total. */
 export type AllocationTree<T = unknown> = { view: AllocationViewId; nodes: AllocationNode<T>[]; totalCents: number; people: number; consistent: boolean };
 
 const levelKey = (row: AllocationViewRow, level: AllocationLevel) => (level === "company" ? row.companyKey : level === "costCenter" ? row.costCenterKey : row.departmentKey);
@@ -62,6 +74,7 @@ const sumCents = (rows: readonly AllocationViewRow[]) => rows.reduce((total, row
 const peopleOf = (rows: readonly AllocationViewRow[]) => new Set(rows.map((row) => row.employeeKey)).size;
 const byEmployee = <T>(rows: AllocationViewRow<T>[]) => [...rows].sort((a, b) => comparePtBr(a.employeeName, b.employeeName) || comparePtBr(a.id, b.id));
 
+// Agrupa recursivamente pelos níveis restantes; a chave do nó inclui o caminho completo (ex.: "company:id:x/department:RH").
 function group<T>(rows: AllocationViewRow<T>[], levels: readonly AllocationLevel[], prefix: string): AllocationNode<T>[] {
   const [level, ...rest] = levels;
   if (!level) return [];
@@ -84,6 +97,7 @@ function nodeConsistent(node: AllocationNode): boolean {
   return node.children.reduce((total, child) => total + child.cents, 0) === node.cents && node.children.every(nodeConsistent);
 }
 
+/** Monta a árvore de uma perspectiva e calcula se ela fecha (consistent). */
 export function buildAllocationTree<T>(rows: readonly AllocationViewRow<T>[], view: AllocationViewId): AllocationTree<T> {
   const definition = ALLOCATION_VIEWS.find((item) => item.id === view)!;
   const nodes = group([...rows], definition.levels, "");
@@ -91,11 +105,13 @@ export function buildAllocationTree<T>(rows: readonly AllocationViewRow<T>[], vi
   return { view, nodes, totalCents, people: peopleOf(rows), consistent: nodes.reduce((total, node) => total + node.cents, 0) === totalCents && nodes.every(nodeConsistent) };
 }
 
+/** Monta as perspectivas pedidas (padrão: as 4). */
 export function buildAllocationViews<T>(rows: readonly AllocationViewRow<T>[], views: readonly AllocationViewId[] = ALLOCATION_VIEWS.map((view) => view.id)) {
   return Object.fromEntries(views.map((view) => [view, buildAllocationTree(rows, view)])) as Partial<Record<AllocationViewId, AllocationTree<T>>>;
 }
 
 /** Validação obrigatória antes de exibir/exportar: cada visão fecha consigo mesma e com o total do lançamento. */
+// Lança Error (bloqueia tela/exportação) se alguma árvore não fecha ou difere de expectedCents.
 export function assertAllocationViews(views: Partial<Record<AllocationViewId, AllocationTree>>, expectedCents: number, context: string) {
   for (const tree of Object.values(views)) {
     if (!tree) continue;

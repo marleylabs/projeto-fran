@@ -1,3 +1,5 @@
+// Lista de navegação do App Shell (sidebar fixa no desktop e conteúdo do drawer no mobile). Os grupos/itens vêm
+// de moduleRegistry (visibleNavigationGroups, já filtrados por permissão no AppShell); aqui só a apresentação.
 "use client";
 
 import Link from "next/link";
@@ -6,6 +8,7 @@ import clsx from "clsx";
 import { ProjetaWordmark } from "@/components/brand/ProjetaWordmark";
 import { isNavigationItemActive, type NavigationGroup, type NavigationIconKey } from "@/modules/core/navigation/moduleRegistry";
 
+// Mapa chave de ícone do registro → componente lucide. Ao criar um NavigationIconKey novo, adicione aqui.
 const ICONS: Record<NavigationIconKey, LucideIcon> = {
   dashboard: LayoutDashboard,
   food: UtensilsCrossed,
@@ -22,6 +25,9 @@ const ICONS: Record<NavigationIconKey, LucideIcon> = {
 // Navegação principal. `variant="sidebar"`: expandida a partir de 1280px e em TRILHO de ícones entre 1024 e
 // 1279px (rótulo vira texto para leitor de tela + dica visual no hover/foco). `variant="drawer"`: sempre expandida.
 // Item ativo: fundo primary-soft + texto/ícone primary + peso + barra lateral + aria-current="page".
+/** groups: grupos visíveis; pathname: rota atual (define o item ativo); loading: mostra placeholders enquanto a sessão
+ * carrega; onNavigate: chamado ao clicar num link (o drawer usa para fechar). Itens "planned" ou sem href aparecem
+ * desabilitados com "Em breve". */
 export function SidebarNav({ groups, pathname, loading, onNavigate, variant = "sidebar" }: { groups: NavigationGroup[]; pathname: string; loading: boolean; onNavigate?: () => void; variant?: "sidebar" | "drawer" }) {
   const rail = variant === "sidebar";
   return (

@@ -1,3 +1,6 @@
+// Card de atalho para uma seção de despesa (ex.: Alimentação, Vale Transporte) na página inicial de Contas a Pagar
+// (src/app/pagamentos/page.tsx). Sem `href` ou com `disabled` vira um card tracejado não clicável (seção ainda não
+// disponível). Mantém as classes daisyUI `card` por compatibilidade visual (há teste conferindo o layout).
 import Link from "next/link";
 import { ArrowRight, type LucideIcon } from "lucide-react";
 
@@ -9,12 +12,15 @@ type ExpenseSectionCardProps = {
   disabled?: boolean;
 };
 
+// Classes comuns às duas variantes (link ativo e card desabilitado).
 const baseClass = "card card-side min-h-[9.5rem] overflow-hidden border border-base-300 bg-base-100 shadow-sm sm:flex-row";
 
+// Conteúdo interno compartilhado: ícone decorativo à esquerda, título, descrição e "Acessar seção" (só se ativo).
 function CardContent({ title, description, icon: Icon, disabled = false }: ExpenseSectionCardProps) {
   return <><figure className={`flex h-20 w-full shrink-0 items-center justify-center sm:h-auto sm:w-[7.5rem] ${disabled ? "bg-base-200" : "bg-primary/5"}`}><Icon aria-hidden="true" strokeWidth={1.8} className={`h-8 w-8 ${disabled ? "text-secondary" : "text-primary"}`}/></figure><div className="card-body min-w-0 justify-center p-4 sm:p-[1.125rem]"><h2 className="card-title text-base font-bold sm:text-[1.0625rem]">{title}</h2><p className="max-w-xl text-xs leading-relaxed text-secondary sm:text-[.8125rem]">{description}</p>{!disabled&&<div className="card-actions mt-1 justify-start"><span className="text-sm font-semibold text-primary transition-colors group-hover:text-primary-hover">Acessar seção <ArrowRight size={14} aria-hidden="true" className="inline"/></span></div>}</div></>;
 }
 
+/** Card da seção: <Link> inteiro clicável quando ativo; <div aria-disabled> quando desabilitado ou sem href. */
 export function ExpenseSectionCard(props: ExpenseSectionCardProps) {
   if (props.disabled || !props.href) return <div className={`${baseClass} border-dashed bg-base-100/70 opacity-65`} aria-disabled="true"><CardContent {...props} disabled/></div>;
   return <Link href={props.href} aria-label={`Acessar seção ${props.title}`} className={`${baseClass} group transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-px hover:border-primary/30 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}><CardContent {...props}/></Link>;

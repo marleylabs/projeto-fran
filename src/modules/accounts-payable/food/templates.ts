@@ -1,8 +1,14 @@
+// Máscaras oficiais (modelos XLSX vazios) de Alimentação para download (rota /api/accounts-payable/food/template).
+// MA: aba "ALIMENTAÇÃO MA" (tabela RateioMA) com DATA/NOME/SETOR. PA: aba "RATEIO 2.0" com a tabela "RateioOficial",
+// exatamente os nomes que pa-processing.ts exige na leitura — não renomeie um sem o outro.
+// Ambas trazem a aba "INSTRUÇÕES" com as regras de preenchimento.
 import ExcelJS from "exceljs";
 import { FOOD_MA_COLUMNS, FOOD_PA_COLUMNS } from "./columns";
 
+/** Localidade da máscara. */
 export type FoodTemplateLocality = "MA" | "PA";
 
+// Cores/formato próprios da máscara (diferentes do padrão de exportação em excel-style.ts).
 const HEADER_FILL = "FF720062";
 const HEADER_FONT = "FFFFFFFF";
 const BORDER_COLOR = "FFE6C7E3";
@@ -24,6 +30,7 @@ function styleHeader(row: ExcelJS.Row) {
   });
 }
 
+// Aba de instruções numeradas, específicas por localidade.
 function addInstructions(workbook: ExcelJS.Workbook, locality: FoodTemplateLocality) {
   const sheet = workbook.addWorksheet("INSTRUÇÕES", {
     views: [{ showGridLines: false }],
@@ -58,6 +65,7 @@ function addInstructions(workbook: ExcelJS.Workbook, locality: FoodTemplateLocal
   sheet.views = [{ state: "frozen", ySplit: 2, showGridLines: false }];
 }
 
+// Tabela do Excel com uma linha em branco para o preenchimento.
 function addMaSheet(workbook: ExcelJS.Workbook) {
   const sheet = workbook.addWorksheet("ALIMENTAÇÃO MA", {
     views: [{ state: "frozen", ySplit: 1 }],
@@ -77,6 +85,7 @@ function addMaSheet(workbook: ExcelJS.Workbook) {
   sheet.autoFilter = { from: "A1", to: "C1" };
 }
 
+// Colunas na ordem de FOOD_PA_COLUMNS; ANO/MÊS são auxiliares (opcionais na leitura).
 function addPaSheet(workbook: ExcelJS.Workbook) {
   const sheet = workbook.addWorksheet("RATEIO 2.0", {
     views: [{ state: "frozen", ySplit: 1 }],
@@ -107,6 +116,7 @@ function addPaSheet(workbook: ExcelJS.Workbook) {
   styleHeader(sheet.getRow(1));
 }
 
+/** Gera o buffer XLSX da máscara oficial da localidade. */
 export async function generateFoodTemplate(locality: FoodTemplateLocality) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Gestão Administrativa";

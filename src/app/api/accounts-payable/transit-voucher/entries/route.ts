@@ -1,9 +1,16 @@
+// POST /api/accounts-payable/transit-voucher/entries — grava o lançamento manual de Vale Transporte da competência
+// (alocações + obrigação financeira) via addTransitVoucherEntries; valores calculados e validados no servidor.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { addTransitVoucherEntries, type TransitVoucherEntryInput } from "@/modules/accounts-payable/transit-voucher/manual-server";
 import { TransitVoucherValidationError } from "@/modules/accounts-payable/transit-voucher/server";
 import { TransitVoucherCalculationError } from "@/modules/accounts-payable/transit-voucher/calculations";
 
+/**
+ * Permissão: FINANCIAL_RECORDS_CREATE; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Entrada (JSON): { year, month, administrativeEntityId (obrigatório), entries: TransitVoucherEntryInput[] }.
+ * Saída: 201 com o resultado. Erros: 400 TransitVoucherValidationError/TransitVoucherCalculationError.
+ */
 export async function POST(request: Request) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_CREATE);
   if (response || !user) return response;

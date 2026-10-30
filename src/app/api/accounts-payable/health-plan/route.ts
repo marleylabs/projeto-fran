@@ -1,10 +1,17 @@
+// /api/accounts-payable/health-plan — faturas do Plano de Saúde da competência e importação do PDF da operadora.
+// Lógica em modules/accounts-payable/health-plan/server.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { HealthPlanValidationError, MAX_HEALTH_PLAN_FILE_SIZE, getHealthPlanCompetence, importHealthPlanInvoice } from "@/modules/accounts-payable/health-plan/server";
 
 export const runtime = "nodejs";
+// Campo vazio/ausente vira null: sem competência informada, importHealthPlanInvoice usa o mês do vencimento.
 const optionalNumber = (value: FormDataEntryValue | null | undefined) => (value ? Number(value) : null);
 
+/**
+ * GET ?year=&month= — Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Saída: { invoices }. Erros: 400 HealthPlanValidationError.
+ */
 export async function GET(request: Request) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);
   if (response) return response;
@@ -14,6 +21,11 @@ export async function GET(request: Request) {
 }
 
 // Upload do PDF da operadora: extrai, confere Cobrado com o Valor Bruto e grava fatura + obrigação + rateio por titular.
+/**
+ * POST multipart: file (PDF, até MAX_HEALTH_PLAN_FILE_SIZE), administrativeEntityId, year?, month?.
+ * Permissão: FINANCIAL_RECORDS_CREATE; 401 sem sessão / 403 sem permissão (requirePermission). Saída: 201 { invoice }.
+ * Erros: 400 arquivo ausente/não PDF/HealthPlanValidationError; 413 arquivo grande; 500 genérico.
+ */
 export async function POST(request: Request) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_CREATE);
   if (response || !user) return response;

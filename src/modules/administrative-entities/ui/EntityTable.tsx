@@ -10,6 +10,7 @@ import type { AdministrativeEntityItem } from "./types";
 
 const yesNo = (value: boolean) => (value ? <StatusBadge tone="success">SIM</StatusBadge> : <StatusBadge tone="neutral">NÃO</StatusBadge>);
 
+// Tabela do cadastro; o esqueleto de carregamento só aparece quando ainda não há linhas. onEdit abre o diálogo da página.
 export function EntityTable({ rows, loading, onEdit }: { rows: AdministrativeEntityItem[]; loading: boolean; onEdit: (item: AdministrativeEntityItem) => void }) {
   const columns: DataTableColumn<AdministrativeEntityItem>[] = [
     { id: "name", header: "Razão social", rowHeader: true, sticky: "start", width: "17rem", cell: (item) => (

@@ -14,6 +14,7 @@ const tones: Record<StatusTone, { className: string; icon: LucideIcon }> = {
   info: { className: "border-info/30 bg-info-soft text-info-text", icon: Info },
 };
 
+/** Props do StatusBadge: `icon` substitui o ícone padrão do tom; `children` é o texto do status (obrigatório). */
 export type StatusBadgeProps = {
   tone?: StatusTone;
   children: ReactNode;
@@ -21,6 +22,7 @@ export type StatusBadgeProps = {
   className?: string;
 };
 
+/** Selo de status com ícone decorativo (aria-hidden) + texto; o texto é que carrega o significado para leitor de tela. */
 export function StatusBadge({ tone = "neutral", children, icon, className }: StatusBadgeProps) {
   const Icon = icon ?? tones[tone].icon;
   return (

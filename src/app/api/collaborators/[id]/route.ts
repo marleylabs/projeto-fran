@@ -1,9 +1,17 @@
+// /api/collaborators/[id] — edição e exclusão de um colaborador (modelo FoodEmployee) pela tela
+// src/app/cadastros/colaboradores/page.tsx. Regras de negócio em modules/collaborators/{schema,server}.
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { parseCollaboratorInput, type CollaboratorInput } from "@/modules/collaborators/schema";
 import { CollaboratorValidationError, CPF_IN_USE_MESSAGE, collaboratorWriteError, deleteCollaborator } from "@/modules/collaborators/server";
 
+/**
+ * PATCH: atualiza o colaborador. Permissão: MASTER_DATA_MANAGE — 401 sem sessão, 403 sem permissão.
+ * Corpo JSON validado por parseCollaboratorInput (CPF é normalizado para só dígitos e validado).
+ * Retorna { item } — sem CPF/admissão: o update não pede esses campos e o omit global (lib/db/prisma) os remove.
+ * Erros: 409 CPF já usado por outro colaborador; demais via collaboratorWriteError ou 400.
+ */
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { response } = await requirePermission(PERMISSIONS.MASTER_DATA_MANAGE); if (response) return response;
   try {
@@ -17,6 +25,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   catch (error) { const known = await collaboratorWriteError(error); return NextResponse.json({ error: known?.message ?? (error instanceof Error ? error.message : "Dados inválidos.") }, { status: known?.status ?? 400 }); }
 }
 
+/**
+ * DELETE: exclui o colaborador via deleteCollaborator (que decide se é possível conforme vínculos).
+ * Permissão: MASTER_DATA_MANAGE. Erros: 409 CollaboratorValidationError (ex.: possui lançamentos), 500 demais.
+ */
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { response } = await requirePermission(PERMISSIONS.MASTER_DATA_MANAGE); if (response) return response;
   try { const { id } = await context.params; return NextResponse.json(await deleteCollaborator(id)); }

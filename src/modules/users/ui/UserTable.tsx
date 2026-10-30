@@ -8,6 +8,7 @@ import type { UserRow } from "./types";
 
 const formatLastLogin = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "Nunca");
 
+// Tabela de contas. A linha do próprio usuário logado ganha o selo "Você" (currentUserId). Ações por linha vêm da página.
 export function UserTable({ rows, loading, currentUserId, renderActions }: { rows: UserRow[]; loading: boolean; currentUserId: string | null; renderActions: (user: UserRow) => ReactNode }) {
   const columns: DataTableColumn<UserRow>[] = [
     { id: "name", header: "Nome", rowHeader: true, sticky: "start", width: "15rem", cell: (user) => (

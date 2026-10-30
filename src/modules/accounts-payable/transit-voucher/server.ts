@@ -1,4 +1,11 @@
 import "server-only";
+// Servidor do Vale Transporte — fluxo de IMPORTAÇÃO por planilha (upload, correção de pendências, edição do
+// mapa) + leitura da competência + lançamento manual antigo (addManualTransitVoucher).
+// Situação atual: a tela /pagamentos/vale-transporte usa só getTransitVoucherCompetence (GET da rota raiz) e o
+// lançamento calculado de manual-server.ts. As rotas upload/, manual/, [mapId]/edit e [mapId]/issues/ ainda
+// existem e chamam as funções daqui, mas nenhuma tela as usa (legado; cuidado ao remover: há testes).
+// Regras comuns: competência = (ano, mês) válidos; dinheiro sempre em Prisma.Decimal; toda escrita roda em
+// transação Serializable; mapa READY gera/atualiza a obrigação (FinancialRecord) do fornecedor na mesma transação.
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
@@ -8,9 +15,25 @@ import { removePrivateFile, sanitizeOriginalName, storePrivateFile } from "@/mod
 import { normalizeTransitName, normalizeTransitVoucherCorrection, parseTransitVoucherCsv, parseTransitVoucherXlsx, type TransitVoucherRawRow } from "./processing";
 import { matchFoodEmployee } from "@/modules/accounts-payable/food/matching";
 import { normalizeFoodName } from "@/modules/accounts-payable/food/ma-processing";
+/**
+ * MAX_TRANSIT_VOUCHER_FILE_SIZE: limite do upload (10 MB).
+ * TransitVoucherValidationError: erro de negócio do VT; as rotas devolvem a mensagem com HTTP 400 (demais erros = 500).
+ */
 export const MAX_TRANSIT_VOUCHER_FILE_SIZE = 10 * 1024 * 1024; export class TransitVoucherValidationError extends Error {}
 function validateCompetence(year: number, month: number) { if (!Number.isInteger(year) || year < 2000 || year > 2200 || !Number.isInteger(month) || month < 1 || month > 12) throw new TransitVoucherValidationError("Competência inválida."); }
+/**
+ * Competência com os mapas VIGENTES (current e não cancelados) e suas alocações ativas (deletedAt null) e pendências.
+ * Só leitura; null se a competência nunca foi criada. Usada pela tela (abas Rateio/Resumo).
+ */
 export async function getTransitVoucherCompetence(year: number, month: number) { validateCompetence(year, month); return prisma.transitVoucherCompetence.findUnique({ where: { year_month: { year, month } }, include: { maps: { where: { current: true, cancelledAt: null }, include: { administrativeEntity: true, financialRecord: true, allocations: { where: { deletedAt: null }, orderBy: { sourceRow: "asc" } }, issues: { orderBy: { sourceRow: "asc" } } } } } }); }
+/**
+ * (Legado) Importa a planilha de VT de um fornecedor MA e cria uma NOVA versão do mapa da competência.
+ * Valida tamanho/extensão/assinatura do arquivo, fornecedor habilitado para MA, casa nomes com o Cadastro Mestre
+ * (sem match → pendência UNMATCHED_EMPLOYEE) e sugere dados de correção pelo histórico ou cadastro.
+ * Efeitos: grava o arquivo no storage privado; em transação, desativa a versão anterior e CANCELA a obrigação dela,
+ * cria o mapa (READY ou WITH_INCONSISTENCIES) e, se READY, cria a obrigação. Reenvio do mesmo arquivo (sha256)
+ * devolve o mapa existente. Lança TransitVoucherValidationError nas regras acima.
+ */
 export async function processTransitVoucherMap(input: { year: number; month: number; administrativeEntityId: string; userId: string; file: File }) {
   validateCompetence(input.year, input.month); if (input.file.size <= 0 || input.file.size > MAX_TRANSIT_VOUCHER_FILE_SIZE) throw new TransitVoucherValidationError("A planilha deve possuir até 10 MB."); const extension = input.file.name.toLowerCase().split(".").pop(); if (extension !== "csv" && extension !== "xlsx") throw new TransitVoucherValidationError("Envie um arquivo CSV ou XLSX.");
   const entity = await prisma.administrativeEntity.findUnique({ where: { id: input.administrativeEntityId } }); if (!entity) throw new TransitVoucherValidationError("Fornecedor não encontrado em Cadastros."); if (!localityAllows(entity.locality, "MA")) throw new TransitVoucherValidationError(`O cadastro ${entity.tradeName} não está habilitado para MA.`);
@@ -26,6 +49,8 @@ export async function processTransitVoucherMap(input: { year: number; month: num
   });
   const preparedAllocations = matchedAllocations.filter((row) => row.employeeId);
   const unmatchedIssues = matchedAllocations.filter((row) => !row.employeeId).map((row) => ({ sourceRow: row.sourceRow, employeeName: row.originalEmployeeName, code: "UNMATCHED_EMPLOYEE", message: "Colaborador não encontrado no Cadastro Mestre.", rawData: row as unknown as Record<string, unknown>, fieldErrors: [{ field: "employeeName", label: "NOME", reason: "unmatched", message: "Selecione um colaborador oficial." }], suggestedData: null }));
+  // Sugestão de correção para cada pendência: se o histórico desse nome tem UMA única combinação empresa/departamento/
+  // serviço/CC, sugere ela; senão, se há exatamente um colaborador oficial com o mesmo nome normalizado, sugere o cadastro.
   const pendingNames = result.issues.map((issue) => String(issue.rawData?.employeeName ?? "")).filter(Boolean);
   const history = pendingNames.length ? await prisma.transitVoucherAllocation.findMany({ where: { employeeName: { in: pendingNames } }, orderBy: { createdAt: "desc" } }) : [];
   const preparedIssues = [...result.issues.map((issue) => {
@@ -37,20 +62,31 @@ export async function processTransitVoucherMap(input: { year: number; month: num
     const suggestedData = historical ? { employeeId: historical.employeeId, employeeName: historical.employeeName, company: historical.company, department: historical.department, service: historical.service, costCenter: historical.costCenter, source: "Histórico anterior" } : official.length === 1 ? { employeeId: official[0].id, employeeName: official[0].officialName, department: official[0].department, source: "Cadastro oficial" } : null;
     return { ...issue, suggestedData };
   }), ...unmatchedIssues];
+  // Conferência de integridade (Decimal): soma por empresa e por empresa+departamento tem de bater com o total geral.
   const totalAmount = preparedAllocations.reduce((sum, row) => sum.add(new Prisma.Decimal(row.amount)), new Prisma.Decimal(0));
   const companyTotal = [...preparedAllocations.reduce((groups, row) => groups.set(row.company, (groups.get(row.company) ?? new Prisma.Decimal(0)).add(row.amount)), new Map<string, Prisma.Decimal>()).values()].reduce((sum, value) => sum.add(value), new Prisma.Decimal(0));
   const departmentTotal = [...preparedAllocations.reduce((groups, row) => { const key = `${row.company}\u0000${row.department}`; return groups.set(key, (groups.get(key) ?? new Prisma.Decimal(0)).add(row.amount)); }, new Map<string, Prisma.Decimal>()).values()].reduce((sum, value) => sum.add(value), new Prisma.Decimal(0));
   if (!companyTotal.equals(totalAmount) || !departmentTotal.equals(totalAmount)) throw new TransitVoucherValidationError("Erro de integridade no rateio: colaborador, departamento, empresa e total geral divergem.");
   if (!preparedAllocations.length && !preparedIssues.length) throw new TransitVoucherValidationError("Nenhuma linha foi encontrada no arquivo.");
   const stored = await storePrivateFile(buffer);
+  // Mesmo arquivo (sha256) já vigente para o fornecedor: devolve o mapa existente e descarta a cópia recém-gravada.
+  // A condição de rawData em todas as pendências exclui mapas antigos (sem rawData), que são reprocessados.
   const duplicate = await prisma.transitVoucherMap.findFirst({ where: { competence: { year: input.year, month: input.month }, administrativeEntityId: input.administrativeEntityId, current: true, sha256: stored.sha256 }, include: { administrativeEntity: true, financialRecord: true, allocations: { orderBy: { sourceRow: "asc" } }, issues: { orderBy: { sourceRow: "asc" } } } });
   if (duplicate && duplicate.issues.every((issue) => issue.rawData)) { await removePrivateFile(stored.storageKey); return duplicate; }
+  // Nova versão: a anterior deixa de ser current e sua obrigação é CANCELADA; se a transação falhar, o arquivo é removido.
   try { return await prisma.$transaction(async (tx) => { const competence = await tx.transitVoucherCompetence.upsert({ where: { year_month: { year: input.year, month: input.month } }, create: { year: input.year, month: input.month }, update: {} }); const scope = { competenceId: competence.id, administrativeEntityId: input.administrativeEntityId }; const previous = await tx.transitVoucherMap.findFirst({ where: { ...scope, current: true }, orderBy: { version: "desc" } }); if (previous) { await tx.transitVoucherMap.update({ where: { id: previous.id }, data: { current: false } }); if (previous.financialRecordId) await tx.financialRecord.update({ where: { id: previous.financialRecordId }, data: { lifecycleState: "CANCELLED", paymentState: "CANCELLED" } }); } const last = await tx.transitVoucherMap.findFirst({ where: scope, select: { version: true }, orderBy: { version: "desc" } }); const status = preparedIssues.length ? "WITH_INCONSISTENCIES" as const : "READY" as const;
     const map = await tx.transitVoucherMap.create({ data: { ...scope, uploadedByUserId: input.userId, locality: "MA", version: (last?.version ?? 0) + 1, status, originalName: sanitizeOriginalName(input.file.name), storageKey: stored.storageKey, mimeType: extension === "csv" ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", sizeBytes: input.file.size, sha256: stored.sha256, totalRows: result.totalRows, validRows: preparedAllocations.length, invalidRows: preparedIssues.length, totalAmount, allocations: { create: preparedAllocations.map((row) => ({ competenceId: competence.id, administrativeEntityId: input.administrativeEntityId, sourceRow: row.sourceRow, sourceIdentifier: row.identifier, employeeId: row.employeeId, company: row.company, employeeName: row.employeeName, originalEmployeeName: row.originalEmployeeName, department: row.department, serviceDate: row.serviceDate, service: row.service, costCenter: row.costCenter, dailyAmount: row.dailyAmount, previousMonthDifference: row.previousMonthDifference, occasionalDiscounts: row.occasionalDiscounts, days: row.days, locality: "MA", amount: row.amount })) }, issues: { create: preparedIssues.map((issue) => ({ sourceRow: issue.sourceRow, employeeName: issue.employeeName, code: issue.code, message: issue.message, rawData: issue.rawData as Prisma.InputJsonValue, fieldErrors: issue.fieldErrors as Prisma.InputJsonValue, suggestedData: issue.suggestedData as Prisma.InputJsonValue ?? undefined })) } } });
+    // Obrigação só nasce sem pendências; com pendências ela é criada depois, em resolveTransitVoucherIssue.
     if (status === "READY") { const record = await createFinancialRecordInTransaction(tx, { administrativeEntityId: input.administrativeEntityId, grossAmount: totalAmount, createdByUserId: input.userId }); await tx.transitVoucherMap.update({ where: { id: map.id }, data: { financialRecordId: record.id } }); }
     return tx.transitVoucherMap.findUniqueOrThrow({ where: { id: map.id }, include: { administrativeEntity: true, financialRecord: true, allocations: { orderBy: { sourceRow: "asc" } }, issues: { orderBy: { sourceRow: "asc" } } } }); }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }); } catch (error) { await removePrivateFile(stored.storageKey); throw error; }
 }
 
+/**
+ * (Legado) Edição direta de empresa/departamento/colaborador/valor das linhas IMPORTADAS do mapa vigente.
+ * Exige enviar exatamente o conjunto atual de linhas; recalcula o total do mapa e o grossAmount da obrigação.
+ * Recusa mapas com linhas calculadas pelo sistema (passagesToReceive preenchido): essas usam
+ * correctTransitVoucherEntry (manual-server.ts). Não verifica o estado financeiro da obrigação nem gera revisão.
+ */
 export async function editTransitVoucherMap(mapId: string, rows: Array<{ id: string; company: string; department: string; employeeName: string; amount: string }>) {
   if (!rows.length) throw new TransitVoucherValidationError("Informe ao menos um registro para salvar.");
   const normalized = rows.map((row) => ({ id: row.id, company: row.company.trim().replace(/\s+/g, " "), department: normalizeOrganizationalValue(row.department), employeeName: row.employeeName.trim().replace(/\s+/g, " "), amount: new Prisma.Decimal(row.amount.replace(",", ".")) }));
@@ -69,6 +105,11 @@ export async function editTransitVoucherMap(mapId: string, rows: Array<{ id: str
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+/**
+ * (Legado) Resolve UMA pendência da importação com os dados corrigidos pelo usuário: revalida a linha, exige match
+ * no Cadastro Mestre, grava alias do nome recebido (próximas importações casam sozinhas), cria a alocação e marca a
+ * pendência como resolvida. Recalcula status/totais do mapa; ao zerar pendências cria a obrigação, senão atualiza o valor.
+ */
 export async function resolveTransitVoucherIssue(input: { mapId: string; issueId: string; userId: string; data: TransitVoucherRawRow }) {
   const parsed = normalizeTransitVoucherCorrection(input.data);
   if (parsed.issues.length || !parsed.allocations[0]) throw new TransitVoucherValidationError(parsed.issues[0]?.message ?? "A correção ainda possui campos inválidos.");
@@ -97,6 +138,13 @@ type ManualTransitValues = { employeeId:string; dailyAmount?:string; previousMon
 type ManualTransitInput = { year:number; month:number; administrativeEntityId:string; company:string; serviceDate:string; service?:string; entries:ManualTransitValues[]; userId:string };
 const normalizedManualKey = (value?:string|null) => (value ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
 
+/**
+ * (Legado, rota /api/accounts-payable/transit-voucher/manual) Lançamento manual ANTIGO: diferente de
+ * addTransitVoucherEntries (manual-server.ts), aceita o VALOR TOTAL informado pelo cliente, sem recalcular
+ * passagens/tarifa. Duplicidade = mesmo colaborador + data + empresa + serviço (já lançados são ignorados e listados).
+ * Usa um mapa "Lançamentos manuais" por fornecedor/competência e cria/atualiza a obrigação com o novo total.
+ * Atenção: mapa e obrigação são compartilhados com o fluxo novo (mesmo originalName); não usar em telas novas.
+ */
 export async function addManualTransitVoucher(input: ManualTransitInput) {
   validateCompetence(input.year,input.month);
   const uniqueEntries=[...new Map((input.entries??[]).filter(entry=>entry.employeeId).map(entry=>[entry.employeeId,entry])).values()];

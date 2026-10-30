@@ -2,9 +2,10 @@
 // Prisma/server-only), usada pela tela (Resumo), pelo XLSX (aba Resumo) e pela checagem de
 // integridade do backend. O centro de custo é SEMPRE o snapshot salvo em BreakfastAllocation —
 // nunca o cadastro atual do colaborador — para o histórico da competência não mudar.
-// Departamento (TOPOGEO) continua sendo a regra operacional de elegibilidade; não é usado aqui.
+// Elegibilidade não é tratada aqui (servidor: colaborador ativo; a tela só oferece BREAKFAST_COST_CENTERS).
 import { comparePtBr } from "@/lib/sorting/ptBr";
 
+/** Rótulo de linhas sem centro de custo no snapshot. */
 export const BREAKFAST_EMPTY_COST_CENTER = "Sem centro de custo";
 
 export type BreakfastRateioRow = { company: string; costCenter: string | null; employeeId: string | null; employeeName: string; amount: { toString(): string } | string | number };
@@ -12,6 +13,8 @@ export type BreakfastCostCenterGroup<T> = { costCenter: string; people: number; 
 export type BreakfastCompanyGroup<T> = { company: string; people: number; totalCents: number; costCenters: BreakfastCostCenterGroup<T>[] };
 
 // Valor decimal (string/Decimal, até 4 casas no banco) → centavos inteiros, sem passar por float.
+// Arredonda pela 3ª casa (metade para cima, no valor absoluto). Também usado pela Cesta Básica e pelo XLSX.
+// Lança Error em texto não numérico.
 export function amountToCents(value: { toString(): string } | string | number) {
   const text = String(value).trim();
   const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text);
@@ -21,7 +24,9 @@ export function amountToCents(value: { toString(): string } | string | number) {
   return match[1] ? -cents : cents;
 }
 
+/** Centro de custo normalizado para agrupar (trim + espaços colapsados); vazio → BREAKFAST_EMPTY_COST_CENTER. */
 export const breakfastCostCenterLabel = (costCenter: string | null | undefined) => costCenter?.trim().replace(/\s+/g, " ") || BREAKFAST_EMPTY_COST_CENTER;
+// Pessoa distinta: employeeId; sem id, o nome normalizado.
 const personKey = (row: BreakfastRateioRow) => row.employeeId ?? row.employeeName.trim().toLocaleLowerCase("pt-BR");
 
 // Chave conceitual = empresa + centro de custo: o mesmo CC em empresas diferentes fica separado.

@@ -1,3 +1,4 @@
+// GET /api/accounts-payable/food/template?locality=MA|PA — máscara XLSX em branco para importação de Alimentação.
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import {
   generateFoodTemplate,
@@ -6,6 +7,11 @@ import {
 
 export const runtime = "nodejs";
 
+/**
+ * Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Saída: arquivo .xlsx como anexo (Content-Disposition). Sem cache (private, no-store).
+ * Erros: 400 se locality não for MA nem PA.
+ */
 export async function GET(request: Request) {
   const { response } = await requirePermission(
     PERMISSIONS.FINANCIAL_RECORDS_READ,

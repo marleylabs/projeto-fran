@@ -1,3 +1,8 @@
+// POST /api/accounts-payable/transit-voucher/upload — importação de mapa de Vale Transporte por arquivo
+// (processTransitVoucherMap). Sem chamador na UI atual (VT é lançado manualmente em /entries).
+// Permissão: FINANCIAL_RECORDS_CREATE; 401 sem sessão / 403 sem permissão (requirePermission).
+// Entrada multipart: file, year, month, administrativeEntityId. Saída: 201 { map }.
+// Erros: 400 arquivo inválido ou TransitVoucherValidationError.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { processTransitVoucherMap, TransitVoucherValidationError } from "@/modules/accounts-payable/transit-voucher/server";

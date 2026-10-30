@@ -1,3 +1,7 @@
+// Contrato compartilhado (cliente e servidor) do lançamento manual de refeições de Alimentação
+// (rota /api/accounts-payable/food/manual → manual-server.ts; tela /pagamentos/alimentacao).
+
+/** Resposta de sucesso: lote afetado, ocorrências criadas, refeições, duplicadas ignoradas e total. */
 export type ManualFoodSuccessResponse = {
   ok: true;
   batchId: string | null;
@@ -8,6 +12,7 @@ export type ManualFoodSuccessResponse = {
   duplicateDetails: Array<{ employeeId: string | null; name: string | null; date: string | null }>;
 };
 
+/** Resposta de erro (mensagem pronta para o usuário). */
 export type ManualFoodErrorResponse = { ok: false; error: string };
 export type ManualFoodResponse = ManualFoodSuccessResponse | ManualFoodErrorResponse;
 
@@ -16,6 +21,10 @@ export type ManualFoodResponse = ManualFoodSuccessResponse | ManualFoodErrorResp
 // ao valor configurado do fornecedor quando nada foi informado.
 export const manualFoodUsesSupplierPrice = (amount?: string | null) => !amount?.trim();
 
+/**
+ * Gera o produto cartesiano colaboradores × datas e separa as combinações que já existem
+ * (duplicateKeys no formato "employeeId:data") das que serão criadas.
+ */
 export function buildManualFoodCombinations(employeeIds: string[], dates: string[], duplicateKeys = new Set<string>()) {
   const combinations = employeeIds.flatMap((employeeId) => dates.map((date) => ({ employeeId, date })));
   return {
@@ -24,6 +33,10 @@ export function buildManualFoodCombinations(employeeIds: string[], dates: string
   };
 }
 
+/**
+ * Lê a resposta da API de lançamento manual no cliente. Tolera corpo vazio ou não-JSON; lança Error com a
+ * mensagem do servidor (ou uma genérica) se a resposta não for sucesso.
+ */
 export async function parseManualFoodResponse(response: Response): Promise<ManualFoodSuccessResponse> {
   const raw = await response.text();
   let body: ManualFoodResponse | null = null;

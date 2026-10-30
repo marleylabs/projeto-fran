@@ -1,9 +1,13 @@
+// Totais gerais do Extrato Mensal. Usado pelo parser (parsePayrollPdf.ts) e pela consolidação (combineExtratoMensal.ts).
+
 import type { Colaborador, TotaisGerais } from "@/lib/types/payroll";
 
+// Soma arredondada a centavos, evitando resíduo de ponto flutuante.
 function sum(values: number[]): number {
   return Math.round(values.reduce((a, b) => a + b, 0) * 100) / 100;
 }
 
+// Soma rubricas cuja descrição casa com o padrão (usado para INSS e IRRF).
 function sumRubricaByDescricao(colaboradores: Colaborador[], pattern: RegExp): number {
   let total = 0;
   for (const c of colaboradores) {
@@ -17,6 +21,7 @@ function sumRubricaByDescricao(colaboradores: Colaborador[], pattern: RegExp): n
 /** Rubricas de horas extras (50%, 60%, 100%) neste layout de folha. */
 const CODIGOS_HORAS_EXTRAS = ["150", "160", "200"];
 
+// Soma rubricas pelos códigos informados.
 function sumRubricaByCodigo(colaboradores: Colaborador[], codigos: string[]): number {
   let total = 0;
   for (const c of colaboradores) {

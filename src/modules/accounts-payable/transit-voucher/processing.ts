@@ -1,20 +1,37 @@
+// Leitura/validação da planilha de Vale Transporte (fluxo LEGADO de upload; a tela atual lança VT manualmente via
+// manual-server.ts). Funções puras: recebem CSV/XLSX, localizam colunas por nome/alias e separam cada linha em
+// "allocation" (válida) ou "issue" (pendência com rawData para correção). Chamado por server.ts
+// (processTransitVoucherMap e resolveTransitVoucherIssue). Nenhum acesso a banco aqui.
+// Valores monetários saem como TEXTO decimal (toFixed) para virar Prisma.Decimal no servidor, nunca float persistido.
+// A coluna identificadora pode ser CPF (alias "cpf"): é dado pessoal, só é gravada em sourceIdentifier.
 import { findHeader, normalizeCell, normalizeHeader, readCsvMatrix, readXlsxMatrix } from "@/modules/accounts-payable/shared/spreadsheet";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
 import { TRANSIT_VOUCHER_REQUIRED_COLUMNS, TRANSIT_VOUCHER_SHEET_NAME } from "./columns";
 
+/** Campos lógicos da planilha (independentes do nome da coluna no arquivo). */
 export type TransitVoucherField = "company" | "employeeName" | "serviceDate" | "department" | "service" | "costCenter" | "dailyAmount" | "previousMonthDifference" | "occasionalDiscounts" | "days" | "amount";
+/** Linha como veio do arquivo (sem normalização); é o que fica salvo em issue.rawData e volta na correção. */
 export type TransitVoucherRawRow = Record<TransitVoucherField, string | number | null>;
+/** Pendência por campo; "recommended" só é anexado a linhas já com erro (não bloqueia sozinho). */
 export type TransitVoucherFieldError = { field: TransitVoucherField; label: string; reason: "required" | "invalid" | "recommended"; message: string };
-export type TransitVoucherRow = { sourceRow: number; identifier: string | null; employeeName: string; originalEmployeeName: string; company: string; department: string; serviceDate: string | null; service: string | null; costCenter: string | null; dailyAmount: string | null; previousMonthDifference: string | null; occasionalDiscounts: string | null; days: string | null; amount: string };
+/** Linha válida normalizada; valores decimais em texto (4 casas; DIAS com 2). */
+export type TransitVoucherRow ={ sourceRow: number; identifier: string | null; employeeName: string; originalEmployeeName: string; company: string; department: string; serviceDate: string | null; service: string | null; costCenter: string | null; dailyAmount: string | null; previousMonthDifference: string | null; occasionalDiscounts: string | null; days: string | null; amount: string };
 export type TransitVoucherIssue = { sourceRow: number | null; employeeName: string | null; code: string; message: string; rawData?: TransitVoucherRawRow; fieldErrors?: TransitVoucherFieldError[] };
+/** blockingError = arquivo inteiro rejeitado (vazio ou sem coluna obrigatória); o servidor converte em erro 400. */
 export type TransitVoucherResult = { totalRows: number; allocations: TransitVoucherRow[]; issues: TransitVoucherIssue[]; blockingError?: string };
-const aliases = { company: ["empresa"], name: ["nome", "colaborador", "nome colaborador"], date: ["data"], department: ["departamento", "setor"], service: ["servico", "serviço"], costCenter: ["cc", "centro de custo"], dailyAmount: ["valor dia"], previousDifference: ["dif mes anterior", "dif mês anterior"], discounts: ["descontos eventuais"], days: ["dias"], total: ["valor total", "total"], identifier: ["matricula", "matrícula", "cpf", "id", "codigo", "código"] };
+// Nomes aceitos por coluna (comparados após normalizeHeader).
+const aliases ={ company: ["empresa"], name: ["nome", "colaborador", "nome colaborador"], date: ["data"], department: ["departamento", "setor"], service: ["servico", "serviço"], costCenter: ["cc", "centro de custo"], dailyAmount: ["valor dia"], previousDifference: ["dif mes anterior", "dif mês anterior"], discounts: ["descontos eventuais"], days: ["dias"], total: ["valor total", "total"], identifier: ["matricula", "matrícula", "cpf", "id", "codigo", "código"] };
+/** Nome em minúsculas e sem acentos, usado para casar nomes recebidos com histórico/cadastro. */
 export function normalizeTransitName(value: unknown) { return normalizeCell(value).toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
 function rawValue(value: unknown): string | number | null { if (value === null || value === undefined || value === "") return null; if (value instanceof Date) return value.toISOString(); return typeof value === "number" ? value : normalizeCell(value); }
+// Texto pt-BR ("1.234,56") ou en ("1234.56") → texto decimal com `scale` casas; null quando vazio/inválido.
 function decimalValue(value: unknown, scale = 4) { if (value === null || value === undefined || value === "") return null; if (typeof value === "number" && Number.isFinite(value)) return value.toFixed(scale); const cleaned = normalizeCell(value).replace(/[^\d.,-]/g, ""); if (!cleaned) return null; const normalized = cleaned.includes(",") ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned; const parsed = Number(normalized); return Number.isFinite(parsed) ? parsed.toFixed(scale) : null; }
+// Aceita Date, serial do Excel (dias desde 30/12/1899), "dd/mm/aaaa" ou texto ISO; devolve ISO em UTC ou null.
 function dateValue(value: unknown) { if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString(); if (typeof value === "number" && Number.isFinite(value)) { const date = new Date(Date.UTC(1899, 11, 30) + Math.round(value * 86400000)); return Number.isNaN(date.getTime()) ? null : date.toISOString(); } const text = normalizeCell(value); if (!text) return null; if (/^\d{4,5}(?:[.,]\d+)?$/.test(text)) { const serial = Number(text.replace(",", ".")); return new Date(Date.UTC(1899, 11, 30) + Math.round(serial * 86400000)).toISOString(); } const br = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); const date = br ? new Date(Date.UTC(Number(br[3]), Number(br[2]) - 1, Number(br[1]))) : new Date(text); return Number.isNaN(date.getTime()) ? null : date.toISOString(); }
 function messageFor(errors: TransitVoucherFieldError[]) { return `Pendências: ${errors.map((error) => error.message).join("; ")}.`; }
 
+// Linha 1 = cabeçalho; sourceRow é a linha do Excel (índice + 1). Linhas totalmente vazias são ignoradas.
+// Linha com qualquer erro vira issue (não entra no rateio); só linhas 100% válidas viram allocation.
 function processMatrix(matrix: unknown[][]): TransitVoucherResult {
   if (!matrix.length) return { totalRows: 0, allocations: [], issues: [], blockingError: "O arquivo está vazio." };
   const headers = matrix[0].map(normalizeHeader); const at = (key: keyof typeof aliases) => findHeader(headers, aliases[key]);
@@ -41,6 +58,9 @@ function processMatrix(matrix: unknown[][]): TransitVoucherResult {
   }
   return { totalRows: Math.max(0, matrix.length - 1), allocations, issues };
 }
+/** Lê CSV (texto UTF-8) e valida as linhas. */
 export function parseTransitVoucherCsv(text: string) { return processMatrix(readCsvMatrix(text)); }
+/** Lê a aba "VALE TRANSPORTE" do XLSX e valida as linhas. */
 export async function parseTransitVoucherXlsx(buffer: Buffer) { return processMatrix(await readXlsxMatrix(buffer, TRANSIT_VOUCHER_SHEET_NAME)); }
+/** Revalida UMA linha corrigida pelo usuário (pendência) montando uma matriz de cabeçalho + linha. */
 export function normalizeTransitVoucherCorrection(raw: TransitVoucherRawRow) { const matrix = [["EMPRESA", "NOME", "DATA", "DEPARTAMENTO", "SERVIÇO", "CC", "VALOR DIA", "DIF MÊS ANTERIOR", "DESCONTOS EVENTUAIS", "DIAS", "VALOR TOTAL"], [raw.company, raw.employeeName, raw.serviceDate, raw.department, raw.service, raw.costCenter, raw.dailyAmount, raw.previousMonthDifference, raw.occasionalDiscounts, raw.days, raw.amount]]; return processMatrix(matrix); }

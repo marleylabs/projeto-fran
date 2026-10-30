@@ -6,6 +6,9 @@ import { Eye, EyeOff } from "lucide-react";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { Button, FeedbackAlert, Field, TextInput } from "@/components/ui";
 
+/** Página pública /login (fora do App Shell). Envia e-mail/senha para /api/auth/login, que cria a sessão (cookie);
+ * em caso de sucesso vai para "/" e faz refresh. Mensagens de erro vêm do servidor (credencial inválida, usuário
+ * inativo). Não há cadastro nem "esqueci minha senha" público: a redefinição é gerada pelo administrador. */
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -14,6 +17,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Erro de rede (sem resposta) cai no catch; erro de negócio vem em body.error.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -73,6 +77,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 className="pr-11"
               />
+              {/* Mostrar/ocultar senha: aria-pressed indica o estado e aria-controls aponta para o campo. */}
               <button
                 type="button"
                 onClick={() => setShowPassword((current) => !current)}

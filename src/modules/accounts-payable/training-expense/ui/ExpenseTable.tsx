@@ -6,6 +6,7 @@ import { Button, DataTable, StatusBadge, type DataTableColumn } from "@/componen
 import { dateBr, money } from "@/modules/trainings/ui/format";
 import { EXPENSE_STATUS_LABEL, EXPENSE_STATUS_TONE, type ExpenseListItem } from "./types";
 
+/** Lista com ação "Visualizar" (onView abre o detalhe na página). Skeleton só no primeiro carregamento. */
 export function ExpenseTable({ rows, loading, onView }: { rows: ExpenseListItem[]; loading: boolean; onView: (id: string) => void }) {
   const columns: DataTableColumn<ExpenseListItem>[] = [
     { id: "training", header: "Treinamento", rowHeader: true, sticky: "start", width: "18rem", wrap: true, cell: (item) => item.training.description },

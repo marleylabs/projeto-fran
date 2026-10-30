@@ -8,9 +8,11 @@ import { Card, DataTable, EmptyState, type DataTableColumn } from "@/components/
 import { CompetenceSummary, type CompetenceSummaryItem } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
 import { moneyCents } from "./format";
 
-export type TransitSummaryGroup = { company: string; totalCents: number; departments: Array<{ department: string; records: number; totalCents: number }> };
+/** Grupo Empresa → departamentos, já agregado em centavos pela página. */
+export type TransitSummaryGroup ={ company: string; totalCents: number; departments: Array<{ department: string; records: number; totalCents: number }> };
 type SummaryRow = { id: string; kind: "company" | "department"; label: string; records: number | null; totalCents: number };
 
+/** difference ≠ 0 (centavos) mostra a inconsistência com role="alert"; indicators são os cards do topo. */
 export function TransitSummaryView({ groups, grandCents, difference, indicators }: { groups: TransitSummaryGroup[]; grandCents: number; difference: number; indicators: CompetenceSummaryItem[] }) {
   if (!groups.length) return <Card><EmptyState title="Nenhum lançamento nesta competência." /></Card>;
   const ok = difference === 0;

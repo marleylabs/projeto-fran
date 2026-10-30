@@ -4,8 +4,15 @@ import type { ChangeEvent, InputHTMLAttributes } from "react";
 import clsx from "clsx";
 import { AlertTriangle, Check, LoaderCircle } from "lucide-react";
 
+// Input de arquivo compacto (botão + nome do arquivo) para formulários. O <input type="file"> nativo fica invisível
+// por cima de todo o componente: clique e teclado continuam nativos. Para área de arrastar-e-soltar com validação
+// de tipo/tamanho use UploadDropzone.
+
+/** Estado visual: normal, processando, sucesso ou falha (o processamento é do consumidor). */
 export type FileInputStatus = "normal" | "loading" | "success" | "error";
 
+/** fileName: nome exibido (o componente não guarda o arquivo); loading: desabilita e mostra spinner;
+ * status: resultado do último processamento. Demais props vão para o <input> nativo (accept, name, required…). */
 export interface FileInputProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "className" | "onChange"> {
   fileName?: string | null;
@@ -15,6 +22,7 @@ export interface FileInputProps
   className?: string;
 }
 
+/** Seletor de arquivo com rótulo de ação que reflete o status (anunciado via aria-live). */
 export function FileInput({
   fileName,
   loading = false,

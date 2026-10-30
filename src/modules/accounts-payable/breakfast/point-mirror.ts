@@ -10,8 +10,11 @@
 import { isValidCpf, maskCpf, normalizeCpf } from "@/lib/cpf";
 import { findHeader, normalizeCell, normalizeHeader } from "@/modules/accounts-payable/shared/spreadsheet";
 
+/** Colunas obrigatórias (localizadas pelo cabeçalho normalizado). */
 export const POINT_MIRROR_REQUIRED_HEADERS = ["Nome", "CPF", "Data", "Dia", "Natureza Dia", "Jornada Considerada", "Horas Trabalhadas"] as const;
+/** Limite de upload (10 MB), conferido na rota e no UploadDropzone. */
 export const MAX_POINT_MIRROR_FILE_SIZE = 10 * 1024 * 1024;
+/** Erro de leitura/validação do arquivo: mensagem exibível, sem conteúdo do arquivo. */
 export class PointMirrorError extends Error {}
 
 const comparable = (value: unknown) => normalizeHeader(value); // trim + minúsculas + sem acento
@@ -43,12 +46,15 @@ export function normalizePointMirrorCpf(value: unknown): string | null {
   return isValidCpf(padded) ? padded : null;
 }
 
+/** Linha normalizada. cpf null = inválido; rawCpf só agrupa/mascara (dado pessoal, nunca persistido); date null = ilegível. */
 export type PointMirrorRow = { sourceRow: number; name: string; cpf: string | null; rawCpf: string; date: string | null; dayLabel: string; nature: string; journey: string; workedMinutes: number | null };
 export type PointMirrorDay = { saturday: boolean; sunday: boolean; holiday: boolean; qualifies: boolean; dayMismatch: boolean };
 
 const weekday = (iso: string) => new Date(`${iso}T00:00:00.000Z`).getUTCDay();
 const dayLabelWeekday = (label: string) => { const key = comparable(label).replace(/[^a-z]/g, "").slice(0, 3); return ({ dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 } as Record<string, number>)[key]; };
 
+// Classifica a data da linha: qualifies = trabalhou (> 00:00 e Jornada ≠ "Trabalho Esperado") em sábado, domingo ou
+// feriado; dayMismatch = coluna Dia diverge da Data (só aviso).
 export function isBreakfastExtraDay(row: Pick<PointMirrorRow, "date" | "dayLabel" | "nature" | "journey" | "workedMinutes">): PointMirrorDay {
   const day = row.date ? weekday(row.date) : -1;
   const saturday = day === 6, sunday = day === 0, holiday = comparable(row.nature) === HOLIDAY;
@@ -73,6 +79,7 @@ export function normalizePointMirrorMatrix(matrix: unknown[][]) {
   return rows;
 }
 
+/** Agregado por CPF: contagens por tipo de data e extraQuantity = datas distintas qualificadas. */
 export type PointMirrorPerson = { cpf: string | null; cpfMasked: string; name: string; rows: number; saturdays: number; sundays: number; holidays: number; extraQuantity: number; invalidCpf: boolean };
 
 // Agrega por colaborador (CPF) e conta DATAS distintas qualificadas (CPF + data): sábado que também é

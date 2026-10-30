@@ -1,4 +1,9 @@
 import "server-only";
+// Upload do XLSX de rateio de Alimentação PA (rota /api/accounts-payable/food/upload). Cria o lote em revisão
+// (UNDER_REVIEW); revisão, finalização e edição seguem as mesmas funções do MA em ma-server.ts.
+// Diferenças em relação ao MA: competência derivada das datas do arquivo (não da tela), sem ciclo, o
+// restaurante da planilha precisa corresponder ao fornecedor selecionado, e o valor de cada refeição é o
+// VALOR do Excel (divergência com o preço configurado só gera aviso PRICE_DIVERGENCE, não bloqueia).
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import {
@@ -16,11 +21,20 @@ import { matchFoodEmployee } from "./matching";
 import { normalizeFoodDepartment, normalizeFoodName } from "./ma-processing";
 import { parseFoodPaXlsx } from "./pa-processing";
 
+// Normaliza razão social/nome fantasia para comparar com a coluna RESTAURANTE (ignora LTDA/EIRELI/ME/SA).
 const normalizeEntityName = (value: string) =>
   normalizeFoodName(value)
     .replace(/\b(ltda|eireli|me|sa)\b/g, "")
     .replace(/\s+/g, " ")
     .trim();
+/**
+ * Processa o upload PA e cria o lote em revisão (sem obrigação financeira).
+ * Validações: competência informada, XLSX até MAX_FOOD_FILE_SIZE com assinatura ZIP, fornecedor habilitado para
+ * PA, ao menos uma ocorrência válida, todas as datas numa única competência e um único restaurante que
+ * corresponda ao fornecedor. Se não houver preço configurado, usa o VALOR da 1ª linha como preço de referência.
+ * Possível duplicidade: mesmo dia + colaborador/nome + restaurante. Efeitos e rollback do arquivo iguais ao MA.
+ * Lança FoodBatchValidationError nas validações.
+ */
 export async function processFoodPaDraft(input: {
   year: number;
   month: number;
@@ -63,6 +77,7 @@ export async function processFoodPaDraft(input: {
       parsed.issues[0]?.message ??
         "Nenhuma ocorrência válida encontrada na tabela RateioOficial.",
     );
+  // A competência efetiva vem das datas do arquivo; arquivo com mais de um mês é recusado.
   const fileCompetences = [
     ...new Set(
       parsed.occurrences.map(
@@ -76,6 +91,7 @@ export async function processFoodPaDraft(input: {
       `O arquivo possui registros de ${fileCompetences.length} competências diferentes (${fileCompetences.join(", ")}). Separe o rateio por competência antes do upload.`,
     );
   const [derivedYear, derivedMonth] = fileCompetences[0].split("-").map(Number);
+  // Proteção contra upload no fornecedor errado: o restaurante do arquivo precisa bater com o cadastro.
   const restaurantNames = [
     ...new Set(
       parsed.occurrences.map((row) => normalizeEntityName(row.restaurantName)),
@@ -88,6 +104,7 @@ export async function processFoodPaDraft(input: {
     throw new FoodBatchValidationError(
       `O restaurante ${parsed.occurrences[0].restaurantName} não corresponde com segurança ao fornecedor selecionado em Cadastros.`,
     );
+  // Preço configurado é opcional no PA: sem ele, não há conferência de divergência.
   let hasConfiguredPrice = true;
   let configuredPrice: Prisma.Decimal;
   try {
@@ -115,11 +132,13 @@ export async function processFoodPaDraft(input: {
       aliases,
     ),
   }));
+  // Contagem para detectar possível duplicidade (mesmo dia + colaborador/nome + restaurante).
   const counts = new Map<string, number>();
   for (const item of matches) {
     const key = `${item.occurrence.occurredOn.toISOString().slice(0, 10)}|${item.employee?.id ?? item.occurrence.normalizedReceivedName}|${normalizeEntityName(item.occurrence.restaurantName)}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
+  // Divergência de preço é só aviso: o valor cobrado no Excel é preservado em cada ocorrência.
   const priceDivergences = hasConfiguredPrice
     ? parsed.occurrences.filter(
         (row) => !new Prisma.Decimal(row.amount).equals(configuredPrice),
@@ -132,6 +151,7 @@ export async function processFoodPaDraft(input: {
       code: "PRICE_DIVERGENCE",
       message: `${priceDivergences.length} ocorrência(s) possuem VALOR diferente do valor configurado (${configuredPrice.toFixed(2)}). Os valores do Excel foram preservados para revisão.`,
     });
+  // Arquivo salvo antes da transação; removido no catch se a gravação falhar.
   const stored = await storePrivateFile(buffer);
   try {
     return await prisma.$transaction(

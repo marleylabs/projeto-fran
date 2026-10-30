@@ -2,6 +2,7 @@ import clsx from "clsx";
 
 // Marca Projeta em tratamento tipográfico (o projeto não possui arquivo de logo; nenhum SVG é inventado).
 // `markOnlyAtRail`: entre 1024 e 1279px (sidebar em trilho de ícones) mostra só o marcador.
+/** Logotipo textual (quadrado vermelho + "Projeta"). Usado no header do shell, sidebar e telas de acesso. */
 export function ProjetaWordmark({ className, markOnlyAtRail = false }: { className?: string; markOnlyAtRail?: boolean }) {
   return (
     <span className={clsx("inline-flex items-center gap-2.5", className)}>

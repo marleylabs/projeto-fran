@@ -1,31 +1,51 @@
 import "server-only";
 
+// Gestão de usuários e recuperação de acesso (server-only). Chamado pelas rotas /api/users/**,
+// /api/auth/login e /api/auth/password-reset. Regras de segurança aplicadas aqui (e não só na UI):
+// nunca deixar a plataforma sem Administrador ativo, ninguém tira o próprio acesso de ADMIN,
+// mudança de perfil/status derruba as sessões do alvo e toda alteração gera UserAccessAudit
+// (sem gravar senha/hash nos detalhes).
 import { createHash, randomBytes } from "node:crypto";
 import { Prisma } from "@/generated/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { prisma } from "./prisma";
 
+/** Campos seguros para devolver ao cliente: nunca inclui `passwordHash`. */
 export const USER_PUBLIC_SELECT = {
   id: true, email: true, name: true, active: true, lastLoginAt: true, createdAt: true,
   roles: { select: { role: { select: { id: true, key: true, name: true } } } },
 } as const;
 
+/** Erro de regra de negócio com status HTTP sugerido (400 padrão; 404/409 nos casos abaixo). As rotas devolvem `{ error: message }`. */
 export class UserAccessError extends Error {
   constructor(message: string, public readonly status = 400) { super(message); }
 }
 
+// E-mail é a chave de login: sempre minúsculo e sem espaços nas pontas.
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
+// Só o hash SHA-256 do token de redefinição vai para o banco; o valor em claro existe apenas no link enviado.
 const resetHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
+/** Cria usuário com senha já em hash e um único perfil (padrão "REQUESTER"). Lança erro do Prisma se o e-mail já existir ou o perfil não existir. */
 export async function createUser(email: string, password: string, name?: string, roleKey = "REQUESTER") {
   const passwordHash = await hashPassword(password);
   return prisma.user.create({ data: { email: normalizeEmail(email), passwordHash, name, roles: { create: { role: { connect: { key: roleKey } } } } }, select: USER_PUBLIC_SELECT });
 }
 
+/** Busca por e-mail normalizado; devolve a linha completa (inclui `passwordHash`, uso interno do login). */
 export function findUserByEmail(email: string) { return prisma.user.findUnique({ where: { email: normalizeEmail(email) } }); }
+/** Lista usuários com USER_PUBLIC_SELECT, por nome e e-mail. */
 export function listUsers() { return prisma.user.findMany({ orderBy: [{ name: "asc" }, { email: "asc" }], select: USER_PUBLIC_SELECT }); }
+/** Lista os perfis disponíveis para a tela de usuários. */
 export function listRoles() { return prisma.role.findMany({ orderBy: { name: "asc" }, select: { id: true, key: true, name: true, description: true } }); }
 
+/**
+ * Altera nome, perfil e/ou status (ativo) de um usuário, em transação Serializable para evitar que
+ * duas alterações simultâneas removam os dois últimos admins. Campos ausentes mantêm o valor atual.
+ * Lança UserAccessError: 404 (usuário não existe), 400 (perfil inválido), 409 (último Administrador
+ * ativo ou o próprio ator perdendo ADMIN/desativando-se). Efeitos: substitui os perfis por um único,
+ * apaga sessões do alvo se perfil/status mudou e grava auditoria. Retorna o usuário com USER_PUBLIC_SELECT.
+ */
 export async function updateUserAccess(input: { actorId: string; targetUserId: string; name?: string; roleKey?: string; active?: boolean }) {
   return prisma.$transaction(async (tx) => {
     const target = await tx.user.findUnique({ where: { id: input.targetUserId }, include: { roles: { include: { role: true } } } });
@@ -40,6 +60,7 @@ export async function updateUserAccess(input: { actorId: string; targetUserId: s
       if (activeAdmins <= 1) throw new UserAccessError("Não é possível alterar este usuário porque ele é o último Administrador ativo da plataforma.", 409);
     }
     if (input.actorId === target.id && (nextRole !== "ADMIN" || !nextActive)) throw new UserAccessError("Você não pode remover o próprio acesso administrativo ou desativar a própria conta.", 409);
+    // `roles.length !== 1` força normalizar usuários legados com zero ou vários perfis.
     const roleChanged = previousRole !== nextRole || target.roles.length !== 1;
     const statusChanged = target.active !== nextActive;
     if (roleChanged) {
@@ -54,6 +75,12 @@ export async function updateUserAccess(input: { actorId: string; targetUserId: s
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+/**
+ * Gera token de redefinição (32 bytes aleatórios, base64url, validade 1 hora) para usuário ativo,
+ * invalidando tokens pendentes anteriores. Retorna o token em claro para o chamador montar o e-mail
+ * (sendPasswordResetMail). Lança UserAccessError 404/409. `actorId` não é usado aqui: a auditoria
+ * PASSWORD_RESET_SENT é gravada pela rota após o envio do e-mail.
+ */
 export async function createPasswordReset(actorId: string, targetUserId: string) {
   const token = randomBytes(32).toString("base64url"), expiresAt = new Date(Date.now() + 60 * 60 * 1000);
   const user = await prisma.$transaction(async (tx) => {
@@ -67,6 +94,11 @@ export async function createPasswordReset(actorId: string, targetUserId: string)
   return { token, expiresAt, user };
 }
 
+/**
+ * Define senha temporária (mín. 8 caracteres) escolhida pelo administrador — alternativa quando o SMTP
+ * não está configurado. Derruba as sessões do alvo, invalida tokens pendentes e audita
+ * TEMPORARY_PASSWORD_SET. Lança UserAccessError 400/404/409.
+ */
 export async function setTemporaryPassword(actorId: string, targetUserId: string, password: string) {
   if (password.length < 8) throw new UserAccessError("A senha temporária deve possuir pelo menos 8 caracteres.");
   const passwordHash = await hashPassword(password);
@@ -82,6 +114,11 @@ export async function setTemporaryPassword(actorId: string, targetUserId: string
   });
 }
 
+/**
+ * Fluxo público de /redefinir-senha: valida o token (existe, não usado, não expirado), grava a nova
+ * senha (mín. 8), marca o token como usado e apaga as sessões do usuário. Mensagem de erro genérica
+ * para não revelar se o token existiu.
+ */
 export async function consumePasswordReset(token: string, password: string) {
   if (password.length < 8) throw new UserAccessError("A nova senha deve possuir pelo menos 8 caracteres.");
   const passwordHash = await hashPassword(password);

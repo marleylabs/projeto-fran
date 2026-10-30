@@ -1,6 +1,9 @@
 import "server-only";
+// Leitura do Café da Manhã e erro de validação compartilhado. A escrita (contexto, feriados, lançamentos, correção)
+// fica em manual-server.ts; o Espelho de Ponto em point-mirror-server.ts.
 import { prisma } from "@/lib/db/prisma";
 
+/** Erro de negócio com mensagem pronta para o usuário; as rotas respondem HTTP 400 com ela. */
 export class BreakfastValidationError extends Error {}
 
 function validateCompetence(year: number, month: number) {

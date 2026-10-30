@@ -2,6 +2,12 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { getSessionUser } from "./session";
 
+// RBAC: usuário → perfis (Role) → permissões (Permission.key). As chaves abaixo precisam existir na
+// tabela Permission (seed do Prisma). Toda rota de API protegida chama `requirePermission` no início;
+// a UI usa `permissionKeysOf`/`roleKeysOf` (via /api/auth/me) só para esconder botões — a checagem
+// que vale é sempre a do backend.
+
+/** Catálogo das chaves de permissão aceitas por `requirePermission`. */
 export const PERMISSIONS = {
   USERS_READ: "users.read",
   USERS_CREATE: "users.create",
@@ -21,8 +27,10 @@ export const PERMISSIONS = {
   TRAINING_MANAGE: "training.manage",
 } as const;
 
+/** União literal das chaves de `PERMISSIONS` (ex.: "users.read"). */
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
+/** Chaves de permissão efetivas do usuário (união sem repetição de todos os seus perfis). */
 export function permissionKeysOf(user: NonNullable<Awaited<ReturnType<typeof getSessionUser>>>): string[] {
   return [
     ...new Set(
@@ -31,10 +39,17 @@ export function permissionKeysOf(user: NonNullable<Awaited<ReturnType<typeof get
   ];
 }
 
+/** Chaves dos perfis do usuário (ex.: "ADMIN", "REQUESTER"). */
 export function roleKeysOf(user: NonNullable<Awaited<ReturnType<typeof getSessionUser>>>): string[] {
   return user.roles.map((assignment) => assignment.role.key);
 }
 
+/**
+ * Guarda de rota: resolve o usuário da sessão e confere a permissão.
+ * Retorna `{ user, response: null }` se autorizado; senão `{ user: null, response }` com JSON
+ * `{ error }` e status 401 (sem sessão válida) ou 403 (sem a permissão). Uso típico:
+ * `const { user, response } = await requirePermission(...); if (response) return response;`
+ */
 export async function requirePermission(permission: PermissionKey) {
   const user = await getSessionUser();
   if (!user) {

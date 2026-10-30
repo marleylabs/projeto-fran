@@ -35,11 +35,14 @@ export type FilterBarProps = Omit<HTMLAttributes<HTMLElement>, "children"> & {
   label?: string;
 };
 
+/** Barra de filtros padrão (busca, filtros inline, painel avançado, limpar e ações). Só layout: estado e
+ * aplicação dos filtros são do consumidor. O painel avançado é aberto/fechado aqui (estado local `open`). */
 export function FilterBar({ search, children, actions, onClear, activeCount, advanced, label = "Filtros", className, ...props }: FilterBarProps) {
   const [open, setOpen] = useState(false);
   const panelTitle = advanced?.title ?? "Filtros avançados";
   const advancedCount = advanced?.activeCount ?? 0;
   const close = () => setOpen(false);
+  // Rodapé do painel: com onApply vira Cancelar/Aplicar; sem ele, os campos aplicam na hora e só há Fechar.
   const footer = (
     <div className="flex flex-wrap justify-end gap-2">
       <Button variant="secondary" onClick={close}>{advanced?.onApply ? "Cancelar" : "Fechar"}</Button>

@@ -8,6 +8,7 @@ import { Disclosure } from "@/modules/accounts-payable/shared/ui/parts";
 import { dateBr, money } from "@/modules/trainings/ui/format";
 import type { RateioCardData, RateioRowData } from "./types";
 
+// Texto decimal → centavos inteiros, só para decidir se a diferença é zero (evita comparar float).
 const toCents = (value: string) => Math.round(Number(String(value).replace(",", ".")) * 100);
 
 /** Valor total × rateado × diferença; diferença ≠ 0 é destacada como inconsistência (role=alert). */
@@ -26,6 +27,7 @@ const rowColumns: DataTableColumn<RateioRowData>[] = [
   { id: "amount", header: "Valor", numeric: true, cell: (row) => money(row.amount) },
 ];
 
+/** Card de um fornecedor na competência: indicadores, setores recolhíveis com os participantes e totais. */
 export function TrainingRateioPanel({ card, actions }: { card: RateioCardData; actions?: ReactNode }) {
   const identifiers = card.expenses.map((expense) => expense.financialIdentifier).filter(Boolean) as string[];
   const indicators: [string, ReactNode][] = [

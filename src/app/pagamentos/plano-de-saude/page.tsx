@@ -1,3 +1,5 @@
+// Despesas → Plano de Saúde. Página só de moldura (Server Component): toda a lógica (upload do PDF da operadora,
+// valor por titular, rateio) fica em HealthPlanSection, no módulo health-plan.
 import { HealthPlanSection } from "@/modules/accounts-payable/health-plan/HealthPlanSection";
 
 export default function HealthPlanPage() {

@@ -13,6 +13,8 @@ import { moneyCents } from "./format";
 type Summary = ReturnType<typeof groupBreakfastByCompanyCostCenter>;
 type SummaryRow = { id: string; kind: "company" | "costCenter"; label: string; people: number; totalCents: number };
 
+/** summary = groupBreakfastByCompanyCostCenter(alocações); difference = soma das divergências calculada na seção
+ *  (centavos). Diferença ≠ 0 ou summary inconsistente → rodapé em alerta. */
 export function BreakfastSummaryView({ summary, difference, indicators }: { summary: Summary; difference: number; indicators: CompetenceSummaryItem[] }) {
   if (!summary.companies.length) return <Card><EmptyState title="Nenhum lançamento nesta competência." /></Card>;
   const ok = difference === 0 && summary.consistent;

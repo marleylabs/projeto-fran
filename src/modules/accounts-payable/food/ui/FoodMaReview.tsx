@@ -1,10 +1,19 @@
 "use client";
+// Revisão de colaboradores de um lote de Alimentação em UNDER_REVIEW (upload MA ou PA), aberta pela página
+// /pagamentos/alimentacao. As ocorrências são agrupadas pelo nome recebido normalizado; para cada grupo o usuário
+// escolhe o colaborador do Cadastro Mestre, confirma o setor, decide salvar alias e trata possível duplicidade.
+// Chamadas (via rotas, sem regra de cálculo aqui):
+//   POST   [batchId]/finalize     → finalizeFoodMaBatch (gera rateio e obrigação);
+//   DELETE [batchId]/review-group → removeFoodReviewGroup (tira um grupo do upload, sem mexer no cadastro);
+//   DELETE [batchId]/discard      → discardFoodImportReview (cancela a importação inteira).
+// A confirmação só é liberada sem pendências (todo grupo ativo com colaborador escolhido).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { Button, ConfirmModal, DeletionModal, FeedbackAlert, FloatingActionMenu, StatusBadge, useToast } from "@/components/ui";
 import { CollaboratorCombobox } from "@/components/CollaboratorCombobox";
 import { comparePtBr, sortedPtBr } from "@/lib/sorting/ptBr";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
+// Formas mínimas dos dados que a página já carregou (ocorrências do rascunho e colaboradores ativos).
 type Employee = { id: string; officialName: string; department: string };
 type Occurrence = {
   id: string;
@@ -25,6 +34,7 @@ type ReviewBatch = {
   mealOccurrences: Occurrence[];
   issues?: { id: string; sourceRow: number | null; message: string }[];
 };
+/** Painel-resumo da revisão + modal (dialog nativo) com os grupos de nomes a revisar. */
 export function FoodMaReview({
   batch,
   employees,
@@ -36,6 +46,7 @@ export function FoodMaReview({
   reload: () => Promise<void>;
   resetImport: () => void;
 }) {
+  // Agrupa por nome recebido normalizado (mesma chave usada pelo servidor nas resoluções).
   const groups = useMemo(() => {
     const map = new Map<string, Occurrence[]>();
     for (const row of batch.mealOccurrences)
@@ -56,6 +67,7 @@ export function FoodMaReview({
       );
     });
   }, [batch]);
+  // Estado local por grupo, pré-preenchido com o vínculo automático do upload (se houver).
   const [values, setValues] = useState<
     Record<
       string,
@@ -96,6 +108,7 @@ export function FoodMaReview({
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const toast = useToast();
+  // Sincroniza o estado reviewOpen com o <dialog> nativo (showModal/close).
   useEffect(()=>{const dialog=dialogRef.current;if(!dialog)return;if(reviewOpen&&!dialog.open)dialog.showModal();if(!reviewOpen&&dialog.open)dialog.close()},[reviewOpen]);
   async function cancelImport() {
     setCancelling(true);
@@ -127,6 +140,7 @@ export function FoodMaReview({
       ...current,
       [key]: { ...current[key], ...patch },
     }));
+  // Grupos removidos nesta sessão ficam fora da contagem e das resoluções enviadas.
   const activeGroups = groups.filter(([key]) => !excluded.includes(key));
   const activeOccurrenceCount = activeGroups.reduce((sum, [, rows]) => sum + rows.length, 0);
   const pendingCount = activeGroups.filter(([key]) => !values[key].employeeId).length;

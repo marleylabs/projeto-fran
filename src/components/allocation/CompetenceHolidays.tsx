@@ -12,9 +12,13 @@ import clsx from "clsx";
 import { Button, Dialog, Field, TextInput } from "@/components/ui";
 import { buildCompetenceCalendar } from "@/modules/shared/calendar";
 
+/** Feriado da competência como vem da API: NATIONAL (automático, editable=false) ou MANUAL. manualName: nome manual
+ * cadastrado na mesma data de um feriado nacional (a data conta uma vez só). */
 export type Holiday = { date: string; name: string; source: "NATIONAL" | "MANUAL"; editable: boolean; manualName: string | null };
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
+/** Grade do mês (year/month) com dias úteis, finais de semana e feriados; clicar num dia chama onSelect(data ISO)
+ * para o módulo abrir o HolidayModal. A grade e a contagem vêm de buildCompetenceCalendar (regra fica no módulo). */
 export function CompetenceCalendar({ year, month, holidays, onSelect }: { year: number; month: number; holidays: Holiday[]; onSelect: (date: string) => void }) {
   const days = useMemo(() => buildCompetenceCalendar(year, month, holidays.map((holiday) => holiday.date)), [year, month, holidays]);
   const names = new Map(holidays.map((holiday) => [holiday.date, holiday.name]));
@@ -54,12 +58,15 @@ export function CompetenceCalendar({ year, month, holidays, onSelect }: { year: 
   );
 }
 
+/** Modal do dia selecionado (`date` null = fechado). Nacional: só leitura. Manual/novo: nome editável, Salvar chama
+ * onSave(nome) e Remover chama onRemove() — persistência e recarga ficam com o módulo. */
 export function HolidayModal({ date, holiday, onClose, onSave, onRemove }: { date: string | null; holiday: Holiday | null; onClose: () => void; onSave: (name: string) => Promise<void>; onRemove: () => Promise<void> }) {
   const formId = `${useId()}-holiday`;
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- abrir o modal em outra data recarrega o nome do feriado
   useEffect(() => { setName(holiday?.name ?? ""); }, [date, holiday]);
+  // Executa a ação assíncrona travando o modal (busy) até terminar, com ou sem erro.
   const run = async (action: () => Promise<void>) => { setBusy(true); try { await action(); } finally { setBusy(false); } };
   const national = Boolean(holiday && !holiday.editable);
   return (

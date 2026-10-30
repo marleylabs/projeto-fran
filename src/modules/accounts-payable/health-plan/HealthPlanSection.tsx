@@ -16,6 +16,8 @@ import { normalizeAllocationRow, type AllocationViewId } from "@/modules/account
 import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
 import { BenefitCompetenceContext, BenefitHistory, BenefitWorkspace, type BenefitTab } from "@/modules/accounts-payable/shared/ui/BenefitWorkspace";
 
+// Formatos devolvidos por /api/accounts-payable/health-plan (HealthPlanInvoiceView): CPF já mascarado pelo servidor e
+// beneficiários sem dados pessoais.
 type Entity = { id: string; tradeName: string; activityArea: string };
 type Beneficiary = { credential: string; name: string; relationship: string; plan: string; contractCode: string; chargedCents: number };
 type Allocation = { id: string; holderName: string; holderCpf: string; employeeId: string | null; employeeName: string; company: string; companyId: string | null; department: string | null; costCenter: string | null; amount: string; beneficiaryCount: number; beneficiaries: Beneficiary[] };
@@ -28,12 +30,17 @@ type Invoice = {
   allocations: Allocation[];
 };
 
+// Mesmo limite de MAX_HEALTH_PLAN_FILE_SIZE (server.ts, que não pode ser importado no cliente por ser server-only).
 const MAX_FILE = 15 * 1024 * 1024;
 const normalize = (value: string) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("pt-BR");
+// Cadastros com área de atividade de saúde/plano são sugeridos; se não houver nenhum, a lista mostra todos.
 const isHealthPlan = (entity: Entity) => /saude|plano/.test(normalize(entity.activityArea));
 const dateBr = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "—");
+// Titulares sem colaborador com o mesmo CPF (entram no rateio sem empresa/CC/departamento).
 const notFound = (invoices: Invoice[]) => invoices.flatMap((invoice) => invoice.allocations.filter((row) => !row.employeeId).map((row) => ({ ...row, obligation: invoice.obligation })));
 
+/** Página /pagamentos/plano-de-saude: abas Operação (fila de PDFs + não localizados), Rateio (um card por fornecedor)
+ *  e Histórico (uma linha por fatura, com cancelamento). */
 export function HealthPlanSection() {
   const toast = useToast();
   const now = new Date();
@@ -66,6 +73,8 @@ export function HealthPlanSection() {
     }).catch(() => undefined);
   }, []);
 
+  // Ignora o mesmo arquivo (nome + tamanho) ainda não importado; arquivos já importados podem ser reenfileirados
+  // (o servidor recusa a obrigação duplicada).
   const enqueue = (file: File) => setQueue((current) => current.some((item) => item.status !== "done" && item.file.name === file.name && item.file.size === file.size) ? current : [...current, { id: `${Date.now()}-${Math.random()}`, file, status: "pending" }]);
   const patchItem = (id: string, patch: Partial<QueueItem>) => setQueue((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
 
@@ -98,6 +107,7 @@ export function HealthPlanSection() {
     if (failed) toast.error(`${imported} de ${pending.length} PDF(s) importado(s); ${failed} com erro. Veja a fila.`, "Fila de importação");
     else toast.success(`${imported} PDF(s) importado(s).`);
   }
+  // Cancelamento da fatura (cancelHealthPlanInvoice no servidor): exige motivo e a confirmação "EXCLUIR"; a obrigação é cancelada.
   async function confirmCancel(reason: string) {
     if (!cancelTarget) return; setCancelling(true); setCancelError(null);
     try {
@@ -174,6 +184,7 @@ export function HealthPlanSection() {
   </>;
 }
 
+// Item da fila local (não persistida): "error" volta a ser processado no próximo envio.
 type QueueItem = { id: string; file: File; status: "pending" | "processing" | "done" | "error"; message?: string; invoice?: Invoice };
 const QUEUE_STATUS = { pending: { tone: "neutral", label: "Na fila" }, processing: { tone: "info", label: "Processando" }, done: { tone: "success", label: "Importado" }, error: { tone: "danger", label: "Erro" } } as const;
 
@@ -196,6 +207,7 @@ function ImportQueue({ items, busy, onRemove, onClearDone }: { items: QueueItem[
   );
 }
 
+// Aviso dos titulares não localizados por CPF (CPF exibido já mascarado pelo servidor).
 function MissingHolders({ rows }: { rows: ReturnType<typeof notFound> }) {
   if (!rows.length) return null;
   const columns: DataTableColumn<(typeof rows)[number]>[] = [
@@ -221,6 +233,7 @@ function HealthPlanAllocationView({ invoices, monthLabel, onCancel }: { invoices
   return <div className="grid gap-4">{[...suppliers.values()].map((group) => <SupplierAllocation key={group.map((invoice) => invoice.id).join("-")} invoices={group} monthLabel={monthLabel} onCancel={onCancel} />)}</div>;
 }
 
+// Card de um fornecedor: conferência Valor bruto (Σ PDFs) × Rateado (Σ titulares), diferença em centavos deve ser zero.
 function SupplierAllocation({ invoices, monthLabel, onCancel }: { invoices: Invoice[]; monthLabel: string; onCancel: (invoiceId: string) => void }) {
   const [view, setView] = useState<AllocationViewId>("companyCostCenterDepartment");
   const [first] = invoices;

@@ -1,10 +1,17 @@
+// Proxy do Next.js 16 (substitui o antigo middleware.ts; a função exportada se chama `proxy`). Roda antes de cada
+// requisição de PÁGINA e faz o controle de acesso grosso: sem sessão válida → /login; logado acessando /login → /.
+// Não verifica permissões (RBAC): isso é feito nas APIs (requireUser/requirePermission) e o menu só esconde itens.
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 
+// Rotas acessíveis sem sessão (comparação exata do pathname).
 const PUBLIC_ROUTES = ["/login", "/redefinir-senha"];
+// Cookie com o id da sessão (criado por /api/auth/login).
 const COOKIE_NAME = "session";
 
+// Sessão válida = existe no banco, não expirou e o usuário continua ATIVO (desativar um usuário corta o acesso às
+// páginas imediatamente, mesmo com cookie ainda presente).
 async function isAuthenticated(req: NextRequest): Promise<boolean> {
   const sessionId = req.cookies.get(COOKIE_NAME)?.value;
   if (!sessionId) return false;
@@ -13,6 +20,7 @@ async function isAuthenticated(req: NextRequest): Promise<boolean> {
   return !!session && session.user.active && session.expiresAt > new Date();
 }
 
+/** Redireciona conforme autenticação; demais casos seguem normalmente (NextResponse.next()). */
 export async function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
   const isPublicRoute = PUBLIC_ROUTES.includes(path);

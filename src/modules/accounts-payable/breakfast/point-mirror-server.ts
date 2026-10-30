@@ -8,6 +8,7 @@ import { buildBreakfastExtraSuggestions, normalizePointMirrorMatrix, PointMirror
 // usado como fallback); depois valida se o colaborador está ativo e a seleção atual do formulário.
 export type PointMirrorStatus = "APPLY" | "NOT_SELECTED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "INVALID_CPF" | "NOT_IN_FILE";
 
+// CSV: UTF-8 estrito; se inválido, Windows-1252 (exportação comum do Excel/sistema de ponto).
 function decodeCsv(buffer: Buffer) {
   try { return new TextDecoder("utf-8", { fatal: true }).decode(buffer); } // BOM removido por readCsvMatrix
   catch { return new TextDecoder("windows-1252").decode(buffer); }
@@ -24,6 +25,8 @@ async function readMatrix(buffer: Buffer, fileName: string) {
   throw new PointMirrorError("Formato não suportado. Envie o Espelho de Ponto em .csv ou .xlsx.");
 }
 
+/** Chamado por POST /api/accounts-payable/breakfast/point-mirror. Somente leitura no banco (busca por CPF);
+ *  devolve sugestão de extras por pessoa com CPF mascarado. Lança PointMirrorError. */
 export async function previewBreakfastPointMirror(input: { buffer: Buffer; fileName: string; selectedIds: string[] }) {
   const parsed = buildBreakfastExtraSuggestions(normalizePointMirrorMatrix(await readMatrix(input.buffer, input.fileName)));
   if (!parsed.totals.rows) throw new PointMirrorError("O Espelho de Ponto não possui linhas de colaboradores.");

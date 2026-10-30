@@ -1,3 +1,6 @@
+// /api/financial-records/[id]/files — arquivos (versões) anexados a um registro financeiro.
+// Chamado por src/app/pagamentos/[id]/page.tsx. Cada upload cria nova versão por tipo documental, inativa a
+// anterior e enfileira a extração (DocumentExtractionJob, processado por scripts/document-worker.ts).
 import { NextResponse } from "next/server";
 import { FinancialFileKind, Prisma } from "@/generated/prisma";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
@@ -7,6 +10,10 @@ import { MAX_FINANCIAL_FILE_SIZE, removePrivateFile, sanitizeOriginalName, store
 export const runtime = "nodejs";
 type Context = { params: Promise<{ id: string }> };
 
+/**
+ * GET: lista arquivos do registro (todas as versões) com o último job e a última extração de cada um.
+ * Permissão: FINANCIAL_RECORDS_READ — 401 sem sessão, 403 sem permissão. storageKey não é exposto (select explícito).
+ */
 export async function GET(_request: Request, context: Context) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ); if (response) return response;
   const { id } = await context.params;
@@ -14,6 +21,12 @@ export async function GET(_request: Request, context: Context) {
   return NextResponse.json({ items });
 }
 
+/**
+ * POST: multipart/form-data { file, kind (FinancialFileKind) }. Permissão: FINANCIAL_RECORDS_UPDATE.
+ * Valida tamanho (MAX_FINANCIAL_FILE_SIZE) e assinatura binária (magic bytes) do arquivo.
+ * Retorna 201 { item (sem storageKey), duplicateWarning } — duplicateWarning aponta outro arquivo com o mesmo SHA-256.
+ * Erros: 400 arquivo/tipo inválido, 404 registro inexistente, 415 assinatura não permitida.
+ */
 export async function POST(request: Request, context: Context) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_UPDATE); if (response || !user) return response;
   const { id } = await context.params;
@@ -25,8 +38,10 @@ export async function POST(request: Request, context: Context) {
   if (!validateFileSignature(buffer, file.type)) return NextResponse.json({ error: "Tipo ou assinatura do arquivo não permitido." }, { status: 415 });
   const exists = await prisma.financialRecord.findUnique({ where: { id }, select: { id: true } });
   if (!exists) return NextResponse.json({ error: "Registro financeiro não encontrado." }, { status: 404 });
+  // Grava no storage antes da transação; se a transação falhar, o arquivo é removido (evita órfão no disco).
   const stored = await storePrivateFile(buffer);
   try {
+    // Serializable: evita duas versões ativas/mesmo número de versão em uploads concorrentes do mesmo tipo.
     const item = await prisma.$transaction(async (tx) => {
       const previous = await tx.financialDocumentFile.findFirst({ where: { financialRecordId: id, kind: rawKind as FinancialFileKind, active: true }, orderBy: { version: "desc" } });
       const version = (previous?.version ?? 0) + 1;

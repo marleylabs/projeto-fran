@@ -7,6 +7,8 @@ import { CurrencyInput, Field, TextInput } from "@/components/ui";
 import { currencyText, currencyValue } from "./format";
 import type { TrainingForm } from "./types";
 
+// Genérico em F para servir aos formulários de edição (TrainingForm) e de criação (NewTrainingForm). `before` insere
+// campos extras no topo (ex.: fornecedor/proposta na criação). `required` liga a obrigatoriedade visual dos campos.
 export function TrainingFormFields<F extends TrainingForm>({ form, onChange, required = false, before }: { form: F; onChange: (patch: Partial<F>) => void; required?: boolean; before?: ReactNode }) {
   const set = (patch: Partial<TrainingForm>) => onChange(patch as Partial<F>);
   const currency = (key: "additionalStudentPrice" | "unitPrice" | "totalPrice", label: string) => (

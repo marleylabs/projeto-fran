@@ -9,6 +9,7 @@ import { moneyToCents, type HealthPlanBeneficiary } from "./parser";
 // arquivo. Base do rateio = Cobrado por titular (snapshot de empresa/CC/departamento gravado no upload). Sem CPF nem
 // nome da mãe no arquivo.
 type Money = { toString(): string };
+/** Fatura com alocações como lida do banco (getHealthPlanSupplierInvoices); contracts/plans/beneficiaries são JSON. */
 export type HealthPlanWorkbookInvoice = {
   id: string; fileName: string; provider: string; obligation: string; control: string; dueDate: Date | null; contracts: unknown; plans: unknown; grossAmount: Money; totalAmount: Money; createdAt: Date;
   competence: { year: number; month: number };
@@ -17,10 +18,14 @@ export type HealthPlanWorkbookInvoice = {
   allocations: { id: string; holderName: string; employeeId: string | null; employeeName: string; company: string; companyId: string | null; department: string | null; costCenter: string | null; amount: Money; beneficiaryCount: number; beneficiaries: unknown }[];
 };
 
+// Formato de moeda do Excel; somas e conferências em centavos, reais só na célula.
 const MONEY = 'R$ #,##0.00';
 function header(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAF1B1B" } }; }
 function total(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF000000" } }; }
 
+/** Abas: Rateio Plano de Saúde (por titular), Faturas, perspectivas de rateio e Beneficiários. Espera ≥ 1 fatura do
+ *  MESMO fornecedor e competência (usa a primeira para rótulos). Lança Error se Σ total ≠ Σ bruto, se a aba por titular
+ *  ou a de Beneficiários não fecharem com o total — nunca gera arquivo inconsistente. */
 export function buildHealthPlanWorkbook(invoices: readonly HealthPlanWorkbookInvoice[]) {
   const workbook = new ExcelJS.Workbook(); workbook.creator = "Gestão Administrativa";
   const [first] = invoices;

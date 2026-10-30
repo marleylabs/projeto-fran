@@ -4,6 +4,10 @@
 // CurrencyInput, CalculatedValue, Dialog, AllocationViews), no mesmo padrão da Cesta e do Café. Estado, chamadas de API,
 // prévia de cálculo (calculatePassagesToReceive / calculateTransitVoucherEmployeeTotal) e save continuam AQUI; os
 // componentes em transit-voucher/ui só exibem. O servidor recalcula tudo ao salvar.
+// APIs (todas em /api/accounts-payable/transit-voucher): context (GET/PUT tarifa), holidays (POST/DELETE),
+// employee-config (padrões), entries (POST lançamento), [mapId]/entries/[allocationId] (PATCH correção),
+// [mapId]/records e [mapId] (DELETE com motivo) e a raiz (GET mapas vigentes). Regras de servidor: manual-server.ts.
+// Dinheiro na tela: centavos inteiros (cents/moneyCents); os payloads só levam quantidades inteiras e ids.
 import { FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { CalendarDays } from "lucide-react";
 import { CompetenceCalendar, HolidayModal } from "@/components/allocation/CompetenceHolidays";
@@ -24,9 +28,11 @@ import { dayMonth, money, moneyCents, people } from "@/modules/accounts-payable/
 import type { TransitAllocationRow as Allocation, TransitContext as Context, TransitEntity as Entity, TransitEntryValue as EntryValue, TransitMapData as MapData } from "@/modules/accounts-payable/transit-voucher/ui/types";
 
 const STAGES = [{ value: "preenchimento", label: "Preenchimento" }, { value: "rateio", label: "Rateio" }, { value: "resumo", label: "Resumo" }];
+// Decimal em texto → centavos inteiros (2 casas; Math.round absorve o erro do float) para somar sem acumular erro.
 const cents = (value: string | number) => Math.round(Number(value) * 100);
 // O mapa é a fonte histórica: tarifa e dias úteis vêm dos registros do próprio mapa, nunca da competência atual.
 const mapBase = (map: MapData | undefined) => { const row = map?.allocations.find((item) => item.workingDays !== null && item.fareUnitPrice !== null); return row ? { workingDays: row.workingDays as number, fareUnitPrice: Number(row.fareUnitPrice).toFixed(2) } : null; };
+// Localidade do cadastro pode ser lista ("MA/PA", "MA, PA"); VT só lista fornecedores que atendem MA.
 const acceptsMA = (value: string) => value.toUpperCase().split(/[\/,;]/).map((part) => part.trim()).includes("MA");
 const isInt = (value: string) => /^-?\d+$/.test(value.trim());
 // CurrencyInput ↔ texto da tarifa guardado pela tela (o mesmo texto "4.20" de antes vai para o servidor, que valida com
@@ -34,6 +40,8 @@ const isInt = (value: string) => /^-?\d+$/.test(value.trim());
 const fareValue = (text: string) => { const normalized = text.trim().replace(",", "."); return /^\d+(\.\d{1,2})?$/.test(normalized) ? Number(normalized) : null; };
 const fareText = (value: number | null) => (value === null ? "" : value.toFixed(2));
 
+// Modal "Corrigir lançamento": envia só insumos (empresa, quantidades, observação) + motivo obrigatório via PATCH; o
+// servidor cancela logicamente o registro e cria o substituto com os snapshots do original (correctTransitVoucherEntry).
 function CorrectionModal({ target, companies, onClose, onSaved }: { target: { mapId: string; row: Allocation } | null; companies: Company[]; onClose: () => void; onSaved: () => Promise<void> }) {
   const formId = `${useId()}-correction`;
   const [form, setForm] = useState({ companyText: "", qty: "", diff: "0", discount: "0", obsType: "" as "" | TransitObservationKind, obsDetails: "", reason: "" });
@@ -91,6 +99,7 @@ function CorrectionModal({ target, companies, onClose, onSaved }: { target: { ma
   );
 }
 
+/** Página do Vale Transporte (MA): abas Preenchimento, Rateio e Resumo da competência selecionada. */
 export default function TransitVoucherPage() {
   const toast = useToast();
   const now = new Date();
@@ -141,6 +150,7 @@ export default function TransitVoucherPage() {
 
   const holidayByDate = useMemo(() => new Map((ctx?.holidays ?? []).map((holiday) => [holiday.date, holiday])), [ctx]);
   const companyByText = useCallback((text: string) => companies.find((company) => normalize(companyLabel(company)) === normalize(text) || normalize(company.legalName) === normalize(text)), [companies]);
+  // Tarifa digitada e não salva bloqueia o lançamento (a prévia usaria um valor diferente do que o servidor usará).
   const fareDirty = Boolean(ctx) && fareInput.trim().replace(",", ".") !== Number(ctx?.fareUnitPrice).toFixed(2);
 
   async function post(url: string, method: string, payload: unknown) {
@@ -154,6 +164,8 @@ export default function TransitVoucherPage() {
   async function saveHoliday(name: string) { try { setCtx(await post("/api/accounts-payable/transit-voucher/holidays", "POST", { year, month, date: holidayDate, name })); setHolidayDate(null); } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Falha ao salvar o feriado."); } }
   async function removeHoliday() { try { setCtx(await post("/api/accounts-payable/transit-voucher/holidays", "DELETE", { year, month, date: holidayDate })); setHolidayDate(null); } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Falha ao remover o feriado."); } }
 
+  // Novos selecionados começam com o padrão do colaborador (empresa ativa e passagens/dia); quem sai da seleção
+  // mantém o que foi digitado em `values` (volta igual se for selecionado de novo).
   function changeSelection(ids: string[]) {
     setSelectedIds(ids);
     setValues((current) => { const next = { ...current }; for (const id of ids) if (!next[id]) { const preset = companies.find((company) => company.id === configs[id]?.companyId); next[id] = { companyText: preset ? companyLabel(preset) : "", companyId: preset?.id ?? "", qty: configs[id] ? String(configs[id].qty) : "", diff: "0", discount: "0", obsType: "", obsDetails: "" }; } return next; });
@@ -161,10 +173,14 @@ export default function TransitVoucherPage() {
   const patchValue = (id: string, patch: Partial<EntryValue>) => setValues((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
   function applyCompany(text: string) { setBulkCompany(text); const company = companyByText(text); if (company) setValues((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, selectedIds.includes(id) ? { ...value, companyText: companyLabel(company), companyId: company.id } : value]))); }
 
+  // Base da prévia: se o fornecedor já tem mapa na competência, usa tarifa/dias úteis dele (mesma regra do servidor);
+  // senão, a configuração atual da competência.
   const entityBase = useMemo(() => mapBase(maps.find((map) => map.administrativeEntity.id === entityId)), [maps, entityId]);
   const baseFare = entityBase?.fareUnitPrice ?? ctx?.fareUnitPrice;
   const baseDays = entityBase?.workingDays ?? ctx?.workingDays ?? 0;
   const fareCents = useMemo(() => { try { return baseFare ? parseFareToCents(baseFare) : 0; } catch { return 0; } }, [baseFare]);
+  // Prévia por linha (mesmas funções puras do servidor, em centavos). Só orienta o usuário e habilita o botão; o valor
+  // gravado é o recalculado no servidor.
   const preview = selectedIds.map((id) => {
     const value = values[id]; const employee = collaborators.find((item) => item.id === id);
     if (!value || !ctx) return { id, employee, error: "Carregando…", passages: 0, total: 0 };
@@ -194,6 +210,8 @@ export default function TransitVoucherPage() {
       await reload(); setTab("rateio");
     } catch (cause) { const message = cause instanceof Error ? cause.message : "Falha ao salvar lançamentos."; setError(message); toast.error(message, "Não foi possível salvar"); } finally { setBusy(false); }
   }
+  // Exclusão é cancelamento lógico com motivo: "map" cancela o lançamento inteiro e a obrigação (exige digitar EXCLUIR);
+  // ids cancela registros e o servidor recalcula totais e obrigação.
   async function confirmDelete(reason: string) {
     if (!deleteTarget) return; setDeleting(true); setDeleteError(null);
     try {
@@ -214,6 +232,8 @@ export default function TransitVoucherPage() {
   const grand = sum(all);
   const byCompanySum = [...tree.values()].reduce((total, departments) => total + [...departments.values()].reduce((inner, rows) => inner + sum(rows), 0), 0);
   const mapsTotal = maps.reduce((total, map) => total + cents(map.totalAmount), 0);
+  // Conferência do Resumo (centavos): soma por empresa e total dos mapas contra a soma das alocações; deve ser 0.
+  // Obs.: byCompanySum é derivado das mesmas linhas de `grand`, então na prática a diferença é grand − mapsTotal.
   const difference = grand - byCompanySum + (grand - mapsTotal);
   const uniquePeople = new Set(all.map((row) => row.employeeId ?? normalize(row.employeeName))).size;
   const summaryGroups: TransitSummaryGroup[] = [...tree].sort(([a], [b]) => comparePtBr(a, b)).map(([company, departments]) => ({

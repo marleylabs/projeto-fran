@@ -8,4 +8,5 @@ export type BasicBasketAllocationRow = {
   // Fase 7E.3: Férias manuais informadas no lançamento (null = Espelho) e Férias aprovadas do Espelho antes do override.
   manualVacationDays: number | null; importedVacationDays: number | null;
 };
+/** Lançamento (mapa) como devolvido por GET /api/accounts-payable/basic-basket (competence.maps). */
 export type BasicBasketMapData = { id: string; version: number; previousPaymentDate: string; paymentDate: string; daysInMonth: number; totalAmount: string; administrativeEntity: BasicBasketEntity; financialRecord: { identifier: string; grossAmount: string } | null; allocations: BasicBasketAllocationRow[] };

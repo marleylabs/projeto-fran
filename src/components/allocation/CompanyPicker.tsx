@@ -9,15 +9,21 @@ import { FormEvent, useEffect, useId, useState } from "react";
 import { Button, Dialog, FeedbackAlert, Field, TextInput } from "@/components/ui";
 import { formatCnpj, isValidCnpj } from "@/modules/administrative-entities/schema";
 
+/** Empresa do rateio (Company), no formato devolvido pela API de cadastro mestre. */
 export type Company = { id: string; legalName: string; tradeName: string | null; active: boolean };
+/** Nome exibido da empresa: nome fantasia quando houver, senão a razão social. */
 export const companyLabel = (company: Company) => company.tradeName?.trim() || company.legalName;
+/** Normaliza texto para busca/comparação (minúsculas, sem acentos, sem espaços nas pontas). */
 export const normalizeText = (value: string) => value.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
 
+/** Modal de cadastro rápido de empresa. Valida CNPJ no cliente (o servidor valida de novo), chama onCreated com a
+ * empresa criada e fecha. Erros da API aparecem no próprio modal. O formulário é zerado a cada abertura. */
 export function CompanyModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (company: Company) => void }) {
   const formId = `${useId()}-company`;
   const [legalName, setLegalName] = useState(""); const [tradeName, setTradeName] = useState(""); const [taxId, setTaxId] = useState("");
   const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
   useEffect(() => { if (open) { setLegalName(""); setTradeName(""); setTaxId(""); setError(null); } }, [open]);
+  // Envia só dígitos do CNPJ; o campo exibe formatado quando completo (14 dígitos).
   async function submit(event: FormEvent) {
     event.preventDefault(); const digits = taxId.replace(/\D/g, "");
     if (!isValidCnpj(digits)) return setError("Informe um CNPJ válido.");

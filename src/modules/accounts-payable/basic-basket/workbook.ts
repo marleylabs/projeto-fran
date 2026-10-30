@@ -10,6 +10,7 @@ import { BASIC_BASKET_CALCULATION_DAYS, basicBasketContextFromPayments } from ".
 // XLSX da Cesta Básica (montagem pura; o download só serializa): Detalhado, Resumo (Empresa → Centro de
 // Custo) e Auditoria. Valores monetários numéricos; Data de Admissão como célula de data real.
 type Numeric = { toString(): string } | string | number;
+/** Mapa salvo com as alocações (snapshots), como a rota [mapId]/download lê do banco. */
 export type BasicBasketWorkbookMap = {
   version: number; createdAt: Date; previousPaymentDate: Date | string; paymentDate: Date | string; daysInMonth: number; totalAmount: Numeric;
   competence: { year: number; month: number };
@@ -21,6 +22,7 @@ export type BasicBasketWorkbookMap = {
     manualVacationDays?: number | null; importedVacationDays?: number | null }>;
 };
 
+// Formato de moeda do Excel. As células recebem reais (centavos / 100) só na serialização; somas sempre em centavos.
 const MONEY = 'R$ #,##0.00';
 function header(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAF1B1B" } }; }
 function total(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF000000" } }; }
@@ -28,6 +30,8 @@ const money = (cents: number) => cents / 100;
 // Origem das Férias da competência, lida do snapshot: manual (override do lançamento) ou importada do Espelho.
 const vacationOrigin = (row: { manualVacationDays?: number | null; importedVacationDays?: number | null }) => (row.manualVacationDays != null ? "Manual" : row.importedVacationDays != null ? "Espelho" : "Sem importação");
 
+/** Monta o XLSX do lançamento. Lança Error se Σ linhas ≠ total do mapa ≠ valor bruto da obrigação, ou se o Resumo
+ *  não fechar — nunca gera arquivo inconsistente. */
 export function buildBasicBasketWorkbook(map: BasicBasketWorkbookMap, generatedBy?: string) {
   const workbook = new ExcelJS.Workbook(); workbook.creator = "Gestão Administrativa";
   const supplier = map.administrativeEntity.tradeName;
@@ -42,6 +46,7 @@ export function buildBasicBasketWorkbook(map: BasicBasketWorkbookMap, generatedB
   detail.addRow(["Empresa", "Departamento", "Centro de Custo", "Colaborador", "Data de Admissão", "Pagamento Anterior", "Pagamento Atual", "Valor Mensal da Cesta", "Base de Cálculo da Cesta", "Dias de Direito por Admissão", "Dias de Férias", "Falta Injustificada no Mês de Apuração", "Dias Finais da Cesta", "Mês de Referência Retroativo", "Base de Cálculo Retroativo", "Dias Retroativos Originais", "Dias de Férias no Retroativo", "Falta Injustificada no Mês do Retroativo", "Dias Retroativos Finais", "Bonificação Condutor", "Acordo", "Cesta Paga", "Retroativo", "Total", "Observação", "Fornecedor"]); header(detail.getRow(1));
   const yesNo = (value: boolean) => (value ? "Sim" : "Não");
   const previousPayment = dateOnlyToDb(dateOnlyFromDb(map.previousPaymentDate)!), currentPayment = dateOnlyToDb(dateOnlyFromDb(map.paymentDate)!);
+  // Ciclo reconstruído das datas GRAVADAS no mapa (snapshot), não da regra atual.
   const reference = basicBasketContextFromPayments(dateOnlyFromDb(map.previousPaymentDate)!, dateOnlyFromDb(map.paymentDate)!);
   const referenceLabel = `${String(reference.referenceMonth).padStart(2, "0")}/${reference.referenceYear}`;
   for (const row of rows) {

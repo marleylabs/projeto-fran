@@ -9,10 +9,16 @@ import { Button, Dialog, FeedbackAlert, Field, FilterBar, FloatingActionMenu, Pa
 import { UserTable } from "@/modules/users/ui/UserTable";
 import type { Role, UserRow } from "@/modules/users/ui/types";
 
+// Busca sem acento/caixa por nome ou e-mail.
 const normalize = (value: string) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+// Classe dos itens do FloatingActionMenu de cada linha.
 const menuItem = "block w-full cursor-pointer rounded-control px-3 py-2 text-left text-body hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50";
+// fetch + JSON; lança Error com a mensagem do servidor (body.error) quando a resposta não é ok.
 async function request(url: string, init?: RequestInit) { const response = await fetch(url, init); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error ?? "Não foi possível concluir a operação."); return body; }
 
+/** Tela /usuarios: lista, filtros (perfil/status, padrão só ativos), criar, editar (nome/perfil/ativo) e redefinir
+ * senha (link por e-mail, só se SMTP configurado, ou senha temporária). As APIs exigem a permissão de gestão de
+ * perfis no servidor; a tela só esconde/desabilita o que não faz sentido (ex.: desativar a si mesmo). */
 export default function UsuariosPage() {
   const toast = useToast();
   const [users, setUsers] = useState<UserRow[]>([]), [roles, setRoles] = useState<Role[]>([]);
@@ -25,21 +31,27 @@ export default function UsuariosPage() {
   const [recoveryEmailConfigured, setRecoveryEmailConfigured] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false), [email, setEmail] = useState(""), [name, setName] = useState(""), [password, setPassword] = useState(""), [newRole, setNewRole] = useState("REQUESTER");
 
+  // Recarrega usuários, perfis e se o e-mail de recuperação está configurado (após criar).
   async function load() { const body = await request("/api/users"); setUsers(body.users ?? []); setRoles(body.roles ?? []); setRecoveryEmailConfigured(Boolean(body.recoveryEmailConfigured)); }
+  // Carga inicial + id do usuário logado (usado para bloquear autodesativação na interface).
   useEffect(() => {
     void request("/api/users").then((body) => { setUsers(body.users ?? []); setRoles(body.roles ?? []); setRecoveryEmailConfigured(Boolean(body.recoveryEmailConfigured)); setLoadError(null); })
       .catch((cause) => setLoadError(cause instanceof Error ? cause.message : "Não foi possível carregar os usuários.")).finally(() => setLoading(false));
     void fetch("/api/auth/me").then((r) => r.json()).then((me) => { setCurrentUserId(me.id); }).catch(() => {});
   }, []);
   const filtered = useMemo(() => users.filter((user) => (!query || normalize(`${user.name ?? ""} ${user.email}`).includes(normalize(query))) && (!roleFilter || user.roles.some((item) => item.role.key === roleFilter)) && (statusFilter === "all" || user.active === (statusFilter === "active"))), [users, query, roleFilter, statusFilter]);
+  // Fecha editar/redefinir e limpa erro e campos de senha temporária.
   const closeDialogs = () => { setEditing(null); setResetting(null); setError(null); setTempPassword(""); setTempConfirmation(""); };
   function openEdit(user: UserRow) { setOpenMenu(null); setEditing(user); setEditName(user.name ?? ""); setEditRole(user.roles[0]?.role.key ?? ""); setEditActive(user.active); setError(null); }
 
+  // Ações (criar, salvar edição, enviar link, senha temporária): mesmo padrão busy → request → toast → fecha/atualiza;
+  // o erro fica dentro do diálogo aberto.
   async function create(event: React.FormEvent) { event.preventDefault(); setBusy(true); setError(null); try { await request("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, name, password, roleKey: newRole }) }); toast.success("Usuário criado com sucesso."); setCreateOpen(false); setEmail(""); setName(""); setPassword(""); await load(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível criar o usuário."); } finally { setBusy(false); } }
   async function saveEdit() { if (!editing) return; setBusy(true); setError(null); try { const body = await request(`/api/users/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: editName, roleKey: editRole, active: editActive }) }); setUsers((current) => current.map((item) => (item.id === editing.id ? body.user : item))); toast.success(`Acesso de ${body.user.name || body.user.email} atualizado.`); closeDialogs(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível alterar o usuário."); } finally { setBusy(false); } }
   async function sendReset() { if (!resetting) return; setBusy(true); setError(null); try { await request(`/api/users/${resetting.id}/password-reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ strategy: "email" }) }); toast.success(`Link de redefinição enviado para ${resetting.email}.`); closeDialogs(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível enviar a redefinição."); } finally { setBusy(false); } }
   async function setTemporary() { if (!resetting) return; setBusy(true); setError(null); try { await request(`/api/users/${resetting.id}/password-reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ strategy: "temporary", password: tempPassword, confirmation: tempConfirmation }) }); toast.success(`Senha temporária de ${resetting.name || resetting.email} atualizada.`); closeDialogs(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível redefinir a senha."); } finally { setBusy(false); } }
 
+  // Filtros ativos para o FilterBar (status "active" é o padrão, então não conta).
   const activeFilters = [query.trim(), roleFilter, statusFilter !== "active" ? statusFilter : ""].filter(Boolean).length;
   const confirmationMismatch = tempConfirmation.length > 0 && tempPassword !== tempConfirmation;
   const roleOptions = roles.map((role) => <option key={role.key} value={role.key}>{role.name}</option>);
@@ -67,6 +79,7 @@ export default function UsuariosPage() {
       )} />
     </main>
 
+    {/* Diálogos: criar usuário, gerenciar (editar/ativar) e redefinir senha. Não fecham enquanto `busy`. */}
     <Dialog
       open={createOpen}
       onClose={() => { if (!busy) setCreateOpen(false); }}

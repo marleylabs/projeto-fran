@@ -9,10 +9,12 @@
 // Validação defensiva: Σ Detalhado = V1 = V2 = V3 = V4 = total da fonte; qualquer divergência FALHA a geração.
 // Nomes das abas (limite de 31 caracteres do Excel): "Rateio - Departamento", "Rateio - Centro de Custo",
 // "Rateio - Empresa Departamento", "Rateio - Empresa CC Depto" e "Detalhado - Colaborador".
+// Usado por food/rateio-export.ts, breakfast, basic-basket, health-plan e transit-voucher (workbook.ts de cada módulo).
 import type ExcelJS from "exceljs";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 import { ALLOCATION_LEVEL_LABEL, ALLOCATION_VIEWS, assertAllocationViews, buildAllocationViews, type AllocationNode, type AllocationViewId, type AllocationViewRow } from "./allocation-views";
 
+/** Nomes fixos das abas das perspectivas (≤31 caracteres, limite do Excel). */
 export const ALLOCATION_VIEW_SHEET_NAMES: Record<AllocationViewId, string> = {
   department: "Rateio - Departamento",
   costCenter: "Rateio - Centro de Custo",
@@ -21,15 +23,24 @@ export const ALLOCATION_VIEW_SHEET_NAMES: Record<AllocationViewId, string> = {
 };
 export const ALLOCATION_DETAIL_SHEET_NAME = "Detalhado - Colaborador";
 
+/** Estilo do módulo chamador (cabeçalho, total e formato monetário), para manter a identidade visual de cada planilha. */
 export type AllocationSheetStyle = { header: (row: ExcelJS.Row) => void; total: (row: ExcelJS.Row) => void; moneyFormat: string };
 /** Coluna específica do módulo na aba detalhada: lê só a alocação persistida (row.source), nunca recalcula. */
 export type AllocationDetailColumn<T> = { header: string; width?: number; numFmt?: string; wrap?: boolean; value: (row: AllocationViewRow<T>) => ExcelJS.CellValue };
+/** Competência exibida na aba detalhada e colunas específicas do módulo (inseridas antes de "Valor"). */
 export type AllocationDetailOptions<T> = { competence: string; columns?: readonly AllocationDetailColumn<T>[] };
 
+// Destaque da linha de grupo de 1º nível.
 const GROUP_FILL = "FFF2F2F2";
 const GROUP_BORDER = "FFBFBFBF";
+// Célula vazia: undefined/"" viram null para o Excel não gravar texto vazio.
 const cell = (value: ExcelJS.CellValue | undefined) => (value === undefined || value === "" ? null : value);
 
+/**
+ * Adiciona as 4 abas de perspectiva e a aba detalhada ao workbook. Valida antes (assertAllocationViews) e
+ * depois de escrever (soma das linhas de colaborador = expectedCents); lança Error em qualquer divergência.
+ * Retorna as árvores calculadas.
+ */
 export function addAllocationViewSheets<T>(workbook: ExcelJS.Workbook, rows: readonly AllocationViewRow<T>[], options: { expectedCents: number; context: string; style: AllocationSheetStyle; views?: readonly AllocationViewId[]; detail: AllocationDetailOptions<T> }) {
   const views = buildAllocationViews(rows, options.views);
   assertAllocationViews(views, options.expectedCents, options.context);
@@ -67,6 +78,7 @@ export function addAllocationViewSheets<T>(workbook: ExcelJS.Workbook, rows: rea
   return views;
 }
 
+// Aba "Detalhado - Colaborador": uma linha por alocação, ordenada por colaborador/empresa/CC/departamento.
 function addAllocationDetailSheet<T>(workbook: ExcelJS.Workbook, rows: readonly AllocationViewRow<T>[], options: { expectedCents: number; context: string; style: AllocationSheetStyle; detail: AllocationDetailOptions<T> }) {
   const columns: AllocationDetailColumn<T>[] = [
     { header: "Colaborador", width: 36, wrap: true, value: (row) => row.employeeName },

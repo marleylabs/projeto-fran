@@ -1,3 +1,5 @@
+// Utilitários de leitura de pares rótulo/valor em linhas do PDF (Extrato Mensal).
+
 import type { PdfRow, PdfTextItem } from "@/lib/pdf/extractRows";
 
 /**
@@ -39,6 +41,7 @@ export function extractLabelValues(row: PdfRow, knownLabels: string[]): Record<s
   return result;
 }
 
+/** Item imediatamente após o primeiro que satisfaz `predicate` (undefined se não houver). Sem uso atual no projeto. */
 export function findItemAfter(items: PdfTextItem[], predicate: (t: string) => boolean): PdfTextItem | undefined {
   const idx = items.findIndex((i) => predicate(i.text));
   if (idx === -1) return undefined;

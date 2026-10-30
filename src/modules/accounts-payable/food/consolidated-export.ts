@@ -1,9 +1,17 @@
+// Exportação XLSX consolidada de vários lotes de Alimentação (rota /api/accounts-payable/food/consolidated/download,
+// via food/export.ts). Gera: aba "Resumo Geral" (um lote por linha) e, para cada contexto (localidade, ou MA-ciclo),
+// abas "Colaboradores <ctx>" e "Setores <ctx>".
+// Antes de escrever cada contexto confere que a soma por colaborador e a soma por setor batem com o total dos
+// lotes (assertMoneyEqual); se não baterem, lança Error e o download falha em vez de gerar planilha errada.
+// Valores entram como Number apenas para a célula do Excel; a fonte da verdade é o Decimal do banco.
 import ExcelJS from "exceljs";
 import { comparePtBr } from "@/lib/sorting/ptBr";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
 import { configureFoodExcelSheet, FOOD_EXCEL_MONEY_FORMAT, styleFoodExcelHeader, styleFoodExcelTotal } from "./excel-style";
 
+// Decimal do Prisma chega como objeto com toString(); aceita também number/string (testes).
 type NumericValue = number | string | { toString(): string };
+/** Lote no formato esperado pelo consolidado (FoodBatch com competência, fornecedor e alocações). */
 export type ConsolidatedFoodBatch = {
   id: string;
   locality: string;
@@ -23,18 +31,25 @@ export type ConsolidatedFoodBatch = {
   }>;
 };
 
+// Identidade do colaborador para contagem distinta: id de origem ou, na falta, o nome sem acento/caixa/espaços extras.
 function employeeIdentity(row: ConsolidatedFoodBatch["allocations"][number]) {
   return row.sourceIdentifier || row.employeeName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleUpperCase("pt-BR").replace(/\s+/g, " ").trim();
 }
 
+// Nome do contexto/aba: lotes MA com ciclo viram "MA-1"/"MA-2"; demais usam a localidade.
 function contextName(batch: ConsolidatedFoodBatch) {
   return batch.locality === "MA" && batch.cycle ? `MA-${batch.cycle}` : batch.locality;
 }
 
+// Tolerância de meio centavo para comparar somas feitas em float na conferência de total.
 function assertMoneyEqual(label: string, actual: number, expected: number) {
   if (Math.abs(actual - expected) > 0.005) throw new Error(`Inconsistência no consolidado (${label}): ${actual.toFixed(2)} ≠ ${expected.toFixed(2)}.`);
 }
 
+/**
+ * Monta o workbook consolidado (sem escrever em disco). Ordena lotes por localidade, ciclo, fornecedor e id.
+ * Lança Error se a conferência de total por colaborador ou por setor divergir do total dos lotes.
+ */
 export function buildFoodConsolidatedWorkbook(batches: ConsolidatedFoodBatch[]) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Gestão Administrativa";
@@ -53,6 +68,7 @@ export function buildFoodConsolidatedWorkbook(batches: ConsolidatedFoodBatch[]) 
   configureFoodExcelSheet(general, "E", general.rowCount);
   styleFoodExcelTotal(generalTotal);
 
+  // Agrupa lotes por contexto (localidade/ciclo); cada contexto gera suas abas e sua própria conferência.
   const contexts = new Map<string, ConsolidatedFoodBatch[]>();
   for (const batch of ordered) contexts.set(contextName(batch), [...(contexts.get(contextName(batch)) ?? []), batch]);
   for (const [context, contextBatches] of contexts) {
@@ -69,6 +85,7 @@ export function buildFoodConsolidatedWorkbook(batches: ConsolidatedFoodBatch[]) 
     configureFoodExcelSheet(people, "G", people.rowCount);
     for (let row=2;row<=people.rowCount;row++) { people.getCell(row,1).alignment={horizontal:"left",vertical:"middle"}; for(let column=2;column<=5;column++)people.getCell(row,column).alignment={horizontal:"center",vertical:"middle"}; people.getCell(row,6).alignment={horizontal:"right",vertical:"middle"};people.getCell(row,7).alignment={horizontal:"right",vertical:"middle"}; }
 
+    // Contagem distinta de colaboradores por setor e no total (um colaborador pode estar em vários setores).
     const grouped = new Map<string,{employees:Set<string>;amount:number}>();
     const allEmployees = new Set<string>();
     for (const { allocation, sector } of allocations) { const identity=employeeIdentity(allocation);allEmployees.add(identity);const value=grouped.get(sector)??{employees:new Set<string>(),amount:0};value.employees.add(identity);value.amount+=Number(allocation.amount);grouped.set(sector,value); }
@@ -85,6 +102,7 @@ export function buildFoodConsolidatedWorkbook(batches: ConsolidatedFoodBatch[]) 
   return workbook;
 }
 
+/** Gera o buffer XLSX do consolidado. */
 export async function exportFoodConsolidated(batches: ConsolidatedFoodBatch[]) {
   return buildFoodConsolidatedWorkbook(batches).xlsx.writeBuffer();
 }

@@ -6,6 +6,8 @@
 import { Button } from "./Button";
 import { Dialog } from "./Dialog";
 
+// destructive: botão de confirmar no tom de erro (ação perigosa que não é exclusão com motivo).
+// busy: confirmação em andamento — botão com loading e modal não dispensável.
 type ConfirmModalProps = {
   open: boolean;
   title: string;
@@ -18,6 +20,7 @@ type ConfirmModalProps = {
   onClose: () => void;
 };
 
+/** Diálogo sim/não sobre o Dialog. O pai controla `open` e executa a ação em onConfirm (o modal não fecha sozinho). */
 export function ConfirmModal({
   busy = false,
   cancelLabel = "Cancelar",

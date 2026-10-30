@@ -8,6 +8,7 @@ import { brl } from "./format";
 
 const formatDate = (iso: string) => new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 
+// Aberto quando `existing` não é null (dados do upload anterior: arquivo, data, colaboradores, líquido).
 export function PayrollDuplicateDialog({ existing, onReplace, onKeepBoth, onCancel }: { existing: DuplicateExisting | null; onReplace: () => void; onKeepBoth: () => void; onCancel: () => void }) {
   return (
     <Dialog

@@ -1,22 +1,38 @@
+// Importação de colaboradores por planilha XLSX (máscara oficial) e geração da própria máscara. Funções puras
+// sobre dados já carregados (sem Prisma): o server.ts lê a base e grava; a rota /api/collaborators/import
+// chama a prévia/confirmação. Também usado por scripts/audit-collaborator-duplicates.ts (classifyCollaborator).
+// Dados pessoais: CPF só aparece mascarado (maskCpf) nas respostas sobre cadastros existentes.
 import ExcelJS from "exceljs";
 import { findHeader, normalizeCell, readXlsxMatrix } from "@/modules/accounts-payable/shared/spreadsheet";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
 import { formatCpf, isValidCpf, maskCpf, normalizeCpf } from "@/lib/cpf";
 import { dateOnlyFromDb, dateOnlyToDb, formatDateOnlyBR, parseSpreadsheetDate } from "@/lib/date-only";
 
+/** Erro de linha quando a célula de admissão é fórmula sem valor salvo (o exceljs não recalcula fórmulas). */
 export const ADMISSION_FORMULA_WITHOUT_RESULT_MESSAGE = "A Data de Admissão contém uma fórmula sem resultado calculado. Abra o arquivo no Excel, atualize os vínculos e salve novamente ou converta a fórmula em valor.";
 import { normalizeCollaboratorSearch, normalizeCollaboratorText } from "./schema";
 
+/** Campos comparáveis de um colaborador (planilha ou banco). normalizedName = chave sem acentos/minúsculas. */
 export type CollaboratorRow = { officialName: string; normalizedName: string; jobTitle: string; department: string; costCenter: string };
 export type ExistingCollaborator = CollaboratorRow & { id: string; active: boolean };
+/** Classificação simples usada na detecção de duplicados (não no plano de importação com CPF/ID). */
 export type ImportClassification = "NEW" | "EXISTING" | "UPDATE_AVAILABLE" | "POSSIBLE_DUPLICATE";
 
+// Palavras do nome normalizado com mais de 1 letra (descarta iniciais e partículas de uma letra).
 function tokens(value: string) { return new Set(normalizeCollaboratorSearch(value).split(" ").filter(token => token.length > 1)); }
+/**
+ * Score 0..1 de semelhança: 80% vem da fração de palavras do nome em comum (sobre o nome mais curto) e +10%
+ * para cada campo igual entre departamento, centro de custo e função. Limitado a 1.
+ */
 export function collaboratorSimilarity(a: Pick<CollaboratorRow,"officialName"|"department"|"jobTitle"|"costCenter">, b: Pick<CollaboratorRow,"officialName"|"department"|"jobTitle"|"costCenter">) {
   const left=tokens(a.officialName),right=tokens(b.officialName); const intersection=[...left].filter(token=>right.has(token)).length; const nameScore=intersection/Math.max(Math.min(left.size,right.size),1);
   const fieldScore=[a.department&&b.department&&normalizeCollaboratorSearch(a.department)===normalizeCollaboratorSearch(b.department),a.costCenter&&b.costCenter&&normalizeCollaboratorSearch(a.costCenter)===normalizeCollaboratorSearch(b.costCenter),a.jobTitle&&b.jobTitle&&normalizeCollaboratorSearch(a.jobTitle)===normalizeCollaboratorSearch(b.jobTitle)].filter(Boolean).length;
   return Math.min(1,nameScore*0.8+fieldScore*0.1);
 }
+/**
+ * Nome normalizado igual → EXISTING (ou UPDATE_AVAILABLE se algum campo difere). Senão, o mais parecido com
+ * score ≥ 0,72 → POSSIBLE_DUPLICATE; abaixo disso → NEW. O limiar 0,72 é o mesmo do plano de importação.
+ */
 export function classifyCollaborator(row: CollaboratorRow, existing: ExistingCollaborator[]) {
   const exact=existing.find(item=>item.normalizedName===row.normalizedName);
   if(exact){const fields: Array<keyof Pick<CollaboratorRow,"officialName"|"jobTitle"|"department"|"costCenter">>=["officialName","jobTitle","department","costCenter"];const changed=fields.some(field=>normalizeCollaboratorSearch(row[field])!==normalizeCollaboratorSearch(exact[field]));return{classification:(changed?"UPDATE_AVAILABLE":"EXISTING") as ImportClassification,match:exact,score:1};}
@@ -36,12 +52,22 @@ export function classifyCollaborator(row: CollaboratorRow, existing: ExistingCol
 // apaga dado existente (inclusive CPF). CPF diferente do cadastrado só é corrigido via ID.
 // Qualquer ERRO bloqueia a importação inteira: nada é gravado parcialmente.
 // ---------------------------------------------------------------------------------------------
+/** Linha lida da planilha. sourceRow = número da linha no Excel (cabeçalho é a 1). errors = erros de leitura. */
 export type CollaboratorSheetRow = { sourceRow: number; id?: string; officialName: string; jobTitle?: string; department?: string; costCenter?: string; cpf?: string; admissionDate?: string; errors: string[] };
+/** Colaborador existente como o plano precisa (inclui CPF completo; nunca vai para a resposta sem máscara). */
 export type ImportCandidate = CollaboratorRow & { id: string; cpf: string | null; admissionDate?: Date | null; active: boolean; mergedIntoId: string | null };
+/** Nome alternativo (FoodEmployeeAlias) que aponta para um cadastro, criado em mesclas. */
 export type ImportAlias = { normalizedAlias: string; employeeId: string };
+/** Decisão do usuário para uma linha em REVISÃO, indexada por sourceRow. */
 export type ImportOverride = "SKIP" | "CREATE" | "UPDATE";
+/** Resultado do plano por linha. REVIEW = aguardando decisão; SKIP = usuário decidiu ignorar. */
 export type ImportRowStatus = "CREATE" | "UPDATE" | "UNCHANGED" | "REVIEW" | "SKIP" | "ERROR";
+/** Como o cadastro existente foi encontrado; REVISAO = atualização confirmada pelo usuário em uma linha de revisão. */
 export type ImportMatchedBy = "ID" | "CPF" | "NOME" | "ALIAS" | "SIMILAR" | "REVISAO";
+/**
+ * Linha planejada. `create`/`update` são os dados de escrita (só no servidor; a prévia os remove antes de
+ * responder). `file` é o que veio da planilha, formatado para exibição.
+ */
 export type PlannedImportRow = {
   sourceRow: number;
   file: { id?: string; officialName: string; jobTitle?: string; department?: string; costCenter?: string; cpf?: string; admissionDate?: string };
@@ -52,9 +78,15 @@ export type PlannedImportRow = {
   update?: { id: string; data: Partial<CollaboratorRow & { cpf: string; admissionDate: Date }> };
 };
 
+// Rótulos das colunas usados na lista de "campos alterados" mostrada na prévia.
 const FIELD_LABELS = { officialName: "Nome", jobTitle: "Função", department: "Departamento", costCenter: "Centro de Custo", cpf: "CPF", admissionDate: "Data de Admissão" } as const;
 const optional = (value: string | undefined) => (value ? value : undefined);
 
+/**
+ * Lê a primeira aba do XLSX. Colunas obrigatórias: NOME e DEPARTAMENTO; opcionais: FUNÇÃO, CENTRO DE CUSTO,
+ * CPF, DATA DE ADMISSÃO e ID. Linhas totalmente vazias são ignoradas. Erros por linha (nome ausente, CPF
+ * inválido, data inválida) vão em `errors`; lança Error só se a planilha estiver vazia ou sem as colunas obrigatórias.
+ */
 export async function parseCollaboratorWorkbook(buffer: Buffer): Promise<CollaboratorSheetRow[]> {
   const matrix = await readXlsxMatrix(buffer); if (!matrix.length) throw new Error("A planilha está vazia.");
   const headers = matrix[0].map(normalizeCell);
@@ -86,12 +118,19 @@ export async function parseCollaboratorWorkbook(buffer: Buffer): Promise<Collabo
   });
 }
 
+/**
+ * Monta o plano de importação (sem gravar): para cada linha decide CREATE, UPDATE, UNCHANGED, REVIEW, SKIP ou
+ * ERROR, seguindo a ordem de localização descrita no bloco acima. Depois valida o arquivo inteiro (CPF,
+ * colaborador ou nome final repetidos entre linhas). `blocked` = existe ao menos uma linha em ERRO.
+ */
 export function planCollaboratorImport(rows: CollaboratorSheetRow[], existing: ImportCandidate[], aliases: ImportAlias[] = [], overrides: Record<number, ImportOverride> = {}) {
   const byId = new Map(existing.map((item) => [item.id, item]));
   const byCpf = new Map(existing.filter((item) => item.cpf).map((item) => [item.cpf!, item]));
   const byName = new Map(existing.map((item) => [item.normalizedName, item]));
   const active = existing.filter((item) => !item.mergedIntoId);
+  // Cadastro mesclado → devolve o principal (para onde a linha deve ir, se o usuário confirmar).
   const primaryOf = (item: ImportCandidate) => (item.mergedIntoId ? byId.get(item.mergedIntoId) ?? null : item);
+  // Resumo do cadastro encontrado para a prévia: CPF sempre mascarado.
   const summary = (item: ImportCandidate | null) => (item ? { id: item.id, officialName: item.officialName, department: item.department, costCenter: item.costCenter, cpf: item.cpf ? maskCpf(item.cpf) : null } : null);
 
   const planned = rows.map((row): PlannedImportRow & { target: ImportCandidate | null; finalName?: string } => {
@@ -132,6 +171,8 @@ export function planCollaboratorImport(rows: CollaboratorSheetRow[], existing: I
       else return { sourceRow: row.sourceRow, file, status: errors.length ? "ERROR" : overrides[row.sourceRow] ? "SKIP" : "REVIEW", matchedBy, match: summary(review), changes: [], errors, target: null };
     }
 
+    // Atualização: grava só campos preenchidos e diferentes. CPF de outro cadastro ou CPF divergente (sem ID)
+    // é erro, para não trocar CPF por engano em um match por nome.
     if (target) {
       if (cpf) {
         const owner = byCpf.get(cpf);
@@ -154,6 +195,7 @@ export function planCollaboratorImport(rows: CollaboratorSheetRow[], existing: I
       return { sourceRow: row.sourceRow, file, status: errors.length ? "ERROR" : changes.length ? "UPDATE" : "UNCHANGED", matchedBy, match: summary(target), changes, errors, target, finalName: data.normalizedName ?? target.normalizedName, ...(changes.length ? { update: { id: target.id, data } } : {}) };
     }
 
+    // Criação: exige departamento e confere nome e CPF únicos contra a base.
     if (creating) {
       if (!row.department) errors.push("Departamento é obrigatório para novo colaborador.");
       if (normalizedName && byName.has(normalizedName)) errors.push("Já existe um colaborador com este nome.");
@@ -174,6 +216,7 @@ export function planCollaboratorImport(rows: CollaboratorSheetRow[], existing: I
   conflict((row) => row.target?.id, (lines) => `Linhas ${lines} correspondem ao mesmo colaborador.`);
   conflict((row) => (row.status === "CREATE" || row.status === "UPDATE" || row.status === "UNCHANGED" ? row.finalName : undefined), (lines) => `Linhas ${lines} resultariam no mesmo nome de colaborador.`);
 
+  // Remove campos internos e garante que linha com erro não carregue dados de escrita.
   const result: PlannedImportRow[] = planned.map(({ target: _target, finalName: _finalName, ...row }) => {
     void _target; void _finalName;
     if (!row.errors.length) return row;
@@ -186,6 +229,7 @@ export function planCollaboratorImport(rows: CollaboratorSheetRow[], existing: I
 // Máscara oficial: as colunas de sempre + CPF + DATA DE ADMISSÃO + ID, pré-preenchida com a base atual
 // para que a reimportação localize cada colaborador pelo ID (sem depender do nome). Linha nova = sem ID.
 // DATA DE ADMISSÃO vai como célula de DATA real (dd/mm/yyyy), não texto — edição e reimportação diretas.
+/** Gera o XLSX (abas COLABORADORES e INSTRUÇÕES) e devolve o Buffer para download. Colunas CPF e ID como texto. */
 export async function generateCollaboratorTemplate(collaborators: Array<{ id: string; officialName: string; jobTitle: string; department: string; costCenter: string; cpf: string | null; admissionDate?: Date | null }> = []) {
   const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet("COLABORADORES");
   sheet.addRow(["NOME", "FUNÇÃO", "DEPARTAMENTO", "CENTRO DE CUSTO", "CPF", "DATA DE ADMISSÃO", "ID"]);

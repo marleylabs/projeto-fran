@@ -14,8 +14,12 @@ import { resolveRouteMeta, roleLabel, visibleNavigationGroups } from "@/modules/
 // - Telas públicas (/login, /redefinir-senha) não usam o shell.
 // - O conteúdo NÃO é envolvido em um elemento main: cada página já renderiza o próprio (evita landmark duplicado).
 // Registro central da navegação: NAVIGATION_GROUPS (e NAVIGATION_MODULES) em moduleRegistry.
+// Formato da resposta de /api/auth/me usado aqui (permissões filtram o menu; o 1º papel vira o rótulo do perfil).
 type SessionUser = { email: string; name: string | null; roles: string[]; permissions: string[] };
 
+/** Moldura das páginas autenticadas. Montado uma vez em app/layout.tsx em volta de todas as rotas; nas telas
+ * públicas só define o título da aba. Busca o usuário da sessão, monta sidebar/drawer/header e o link "Pular para o
+ * conteúdo". A proteção de rota não é feita aqui (ver src/proxy.ts e as APIs). */
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -25,6 +29,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const publicAuthPage = pathname === "/login" || pathname === "/redefinir-senha";
   const meta = resolveRouteMeta(pathname);
 
+  // Sessão: falha de /api/auth/me é ignorada (o proxy já redireciona quem não está logado).
   useEffect(() => {
     if (publicAuthPage) return;
     fetch("/api/auth/me")
@@ -35,6 +40,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const groups = useMemo(() => visibleNavigationGroups(user?.permissions ?? []), [user]);
 
+  // Sair: invalida a sessão no servidor, vai para /login e força refresh dos componentes de servidor.
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
@@ -47,6 +53,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (publicAuthPage) return <>{documentTitle}{children}</>;
 
   const shellUser = user ? { email: user.email, name: user.name, roleLabel: roleLabel(user.roles?.[0]) } : null;
+  // Enquanto o usuário não chega, sidebar e perfil mostram placeholders.
   const loading = !user;
 
   return (

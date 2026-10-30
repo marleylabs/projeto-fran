@@ -1,12 +1,18 @@
+// Rótulos e leitores das 5 linhas fixas do bloco de colaborador no Extrato Mensal:
+// Row1 (matrícula/nome, situação, CPF, admissão), Row2 (vínculo, CC, depto, horas/mês),
+// Row3 (cargo, CBO, filial, salário), ND (totais do colaborador) e NF (bases INSS/FGTS/IRRF).
+
 import type { PdfRow } from "@/lib/pdf/extractRows";
 import { extractLabelValues } from "./rowHelpers";
 
+/** Rótulos esperados em cada linha, com o texto exato do PDF (inclusive o ":"). */
 export const ROW1_LABELS = ["Empr.:", "Situação:", "CPF:", "Adm:"];
 export const ROW2_LABELS = ["Vínculo:", "CC:", "Depto:", "Horas Mês:"];
 export const ROW3_LABELS = ["Cargo:", "C.B.O:", "Filial:", "Salário:"];
 export const ND_LABELS = ["ND:", "Proventos:", "Descontos:", "Informativa:", "Informativa Dedutora:", "Líquido:"];
 export const NF_LABELS = ["NF:", "Base INSS:", "Excedente INSS:", "Base FGTS:", "Valor FGTS:", "Base IRRF:"];
 
+/** isRow*: identificam o tipo de linha pela presença do rótulo-chave como item de texto isolado. */
 export function isRow1(row: PdfRow) {
   return row.items.some((i) => i.text.trim() === "Empr.:");
 }
@@ -23,6 +29,7 @@ export function isNFRow(row: PdfRow) {
   return row.items.some((i) => i.text.trim() === "NF:");
 }
 
+/** parse*Row: mapa rótulo->valor da linha (ver extractLabelValues); rótulos ausentes não aparecem. */
 export function parseRow1(row: PdfRow) {
   return extractLabelValues(row, ROW1_LABELS);
 }

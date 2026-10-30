@@ -24,8 +24,10 @@ export function LowConfidence({ fields, generic = false }: { fields?: string[]; 
   );
 }
 
+// Valor vazio → travessão esmaecido.
 const dash = (value: string | undefined | null) => value || <span className="text-foreground-muted">—</span>;
 
+// Tabela do Extrato Mensal (ordenação inicial por nome). "Ver detalhes" abre o drawer do colaborador pelo id.
 export function PayrollEmployeeTable({ colaboradores, onVerDetalhes }: { colaboradores: Colaborador[]; onVerDetalhes: (id: string) => void }) {
   const [sort, setSort] = useState<DataTableSort | null>({ key: "nome", direction: "asc" });
   const rows = useMemo(() => sortRows(colaboradores, sort, (c, key) => (key === "liquido" ? c.liquido : String((c as unknown as Record<string, unknown>)[key] ?? ""))), [colaboradores, sort]);
@@ -60,12 +62,14 @@ export function PayrollEmployeeTable({ colaboradores, onVerDetalhes }: { colabor
   );
 }
 
+// Colunas monetárias do Relatório Sintético: [campo da linha, cabeçalho].
 const SINTETICO_MONEY: [keyof LinhaSintetico, string][] = [
   ["salario", "Salário"], ["he", "H.E"], ["dsr", "DSR"], ["totalHE", "Total H.E"], ["salFamilia", "Sal. família"], ["adcNoturno", "Adc. noturno"],
   ["periculosidade", "Periculosidade"], ["total", "Total"], ["inss", "INSS"], ["vt", "VT"], ["descAut", "Desc. aut."], ["ir", "IR"], ["outros", "Outros"],
   ["totalDesc", "Total desc."], ["liquido", "Líquido"],
 ];
 
+// Tabela do Relatório Sintético (formato experimental), com ordenação de exibição por coluna.
 export function PayrollSinteticoTable({ linhas }: { linhas: LinhaSintetico[] }) {
   const [sort, setSort] = useState<DataTableSort | null>({ key: "nome", direction: "asc" });
   const rows = useMemo(() => sortRows(linhas, sort, (l, key) => { const value = (l as unknown as Record<string, unknown>)[key]; return typeof value === "number" ? value : String(value ?? ""); }), [linhas, sort]);

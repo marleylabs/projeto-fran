@@ -1,3 +1,6 @@
+// /api/financial-records/[id]/validation — validação humana dos dados extraídos do documento
+// (tela src/app/pagamentos/[id]/validacao/page.tsx). Cada decisão gera um DocumentValidationReview auditável,
+// com snapshot do extraído, dado corrigido e um registro por campo indicando se foi alterado.
 import { NextResponse } from "next/server";
 import { Prisma, ValidationDecision } from "@/generated/prisma";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
@@ -5,6 +8,11 @@ import { prisma } from "@/lib/db/prisma";
 
 type Context = { params: Promise<{ id: string }> };
 
+/**
+ * GET: registro com arquivos ativos (última extração de cada) e histórico de revisões.
+ * Permissão: DOCUMENT_VALIDATION_READ — 401 sem sessão, 403 sem permissão.
+ * Retorna { record, current } — current é o arquivo ativo mais recente que já possui extração (ou null).
+ */
 export async function GET(_request: Request, context: Context) {
   const { response } = await requirePermission(PERMISSIONS.DOCUMENT_VALIDATION_READ); if (response) return response;
   const { id } = await context.params;
@@ -14,11 +22,19 @@ export async function GET(_request: Request, context: Context) {
   return NextResponse.json({ record, current: file ? { file: { id: file.id, originalName: file.originalName, mimeType: file.mimeType }, extraction: file.extractions[0] } : null });
 }
 
+/**
+ * POST: corpo JSON { extractionId, decision (ValidationDecision), correctedData, lowConfidenceAcknowledged?, notes? }.
+ * Permissão: DOCUMENT_VALIDATION_MANAGE. Retorna 201 { review }.
+ * Erros: 400 corpo/decisão/valor monetário inválido; 404 extração não pertence ao registro;
+ * 409 validação com confiança geral < 0,8 sem confirmação explícita do usuário.
+ * Só a decisão VALIDATED copia número do documento, vencimento e valores corrigidos para o registro.
+ */
 export async function POST(request: Request, context: Context) {
   const { user, response } = await requirePermission(PERMISSIONS.DOCUMENT_VALIDATION_MANAGE); if (response || !user) return response;
   const { id } = await context.params; const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   if (!body || typeof body.extractionId !== "string" || typeof body.correctedData !== "object" || !body.correctedData) return NextResponse.json({ error: "Dados de validação inválidos." }, { status: 400 });
   if (typeof body.decision !== "string" || !Object.values(ValidationDecision).includes(body.decision as ValidationDecision)) return NextResponse.json({ error: "Decisão inválida." }, { status: 400 });
+  // Filtra pelo registro da URL: impede validar extração de outro registro passando um extractionId alheio.
   const extraction = await prisma.documentExtraction.findFirst({ where: { id: body.extractionId, file: { financialRecordId: id } } });
   if (!extraction) return NextResponse.json({ error: "Extração não encontrada para este registro." }, { status: 404 });
   const decision = body.decision as ValidationDecision; const corrected = body.correctedData as Record<string, unknown>; const confidence = Number(extraction.overallConfidence ?? 0);

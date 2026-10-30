@@ -6,11 +6,13 @@ import clsx from "clsx";
 type CardPadding = "none" | "sm" | "md" | "lg";
 const paddings: Record<CardPadding, string> = { none: "", sm: "p-3", md: "p-4 sm:p-5", lg: "p-6 sm:p-8" };
 
+/** `as` escolhe a tag semântica (section por padrão); `padding` usa a escala de `paddings`. */
 export type CardProps = HTMLAttributes<HTMLElement> & {
   as?: "section" | "div" | "article" | "aside";
   padding?: CardPadding;
 };
 
+/** Contêiner de superfície do DS. Repassa atributos HTML (aria-labelledby, id…) para a tag. */
 export function Card({ as: Tag = "section", padding = "md", className, children, ...props }: CardProps) {
   return (
     <Tag className={clsx("rounded-card border border-border bg-surface text-foreground shadow-elevation-sm", paddings[padding], className)} {...props}>
@@ -19,6 +21,7 @@ export function Card({ as: Tag = "section", padding = "md", className, children,
   );
 }
 
+/** Cabeçalho de Card: título (nível configurável por `titleAs`), descrição e ações à direita. */
 export type CardHeaderProps = {
   title: ReactNode;
   description?: ReactNode;
@@ -27,6 +30,7 @@ export type CardHeaderProps = {
   className?: string;
 };
 
+/** Linha de título + ações; quebra em telas estreitas (flex-wrap). */
 export function CardHeader({ title, description, actions, titleAs: Title = "h2", className }: CardHeaderProps) {
   return (
     <div className={clsx("flex flex-wrap items-start justify-between gap-3", className)}>

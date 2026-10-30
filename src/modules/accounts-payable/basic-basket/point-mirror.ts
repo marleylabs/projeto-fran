@@ -12,14 +12,19 @@ import { normalizePointMirrorCpf, parsePointMirrorDate } from "@/modules/account
 import { findHeader, normalizeCell, normalizeHeader } from "@/modules/accounts-payable/shared/spreadsheet";
 import type { BasicBasketContext, BasicBasketOccurrences } from "./calculations";
 
+/** Colunas obrigatórias (localizadas pelo cabeçalho normalizado, em qualquer posição). */
 export const BASIC_BASKET_POINT_MIRROR_HEADERS = ["Nome", "CPF", "Data", "Jornada Considerada", "Eventos"] as const;
+/** Erro de leitura/validação do arquivo: mensagem exibível, sem conteúdo do arquivo. */
 export class BasicBasketPointMirrorError extends Error {}
 
 const ABSENCE_JOURNEY = normalizeHeader("Falta");
 const ABSENCE_EVENT = normalizeHeader("FALTA INJUSTIFICADA");
 const VACATION_EVENT = normalizeHeader("Férias");
+// Célula de Eventos → lista de eventos normalizados (cada um comparado por igualdade exata).
 const eventTokens = (value: string) => value.split(/[,;|\n]/).map(normalizeHeader).filter(Boolean);
 
+/** absence = Falta Injustificada válida (Jornada + Evento); vacation = Férias; absenceEventWithoutJourney = evento
+ *  de Falta sem Jornada "Falta" — só gera aviso na prévia, NÃO corta a Cesta. */
 export type BasicBasketPointMirrorRowKind = { absence: boolean; vacation: boolean; absenceEventWithoutJourney: boolean };
 export function classifyBasicBasketPointMirrorRow(row: { journey: string; events: string }): BasicBasketPointMirrorRowKind {
   const tokens = eventTokens(row.events); const hasAbsenceEvent = tokens.includes(ABSENCE_EVENT);
@@ -30,7 +35,11 @@ export function classifyBasicBasketPointMirrorRow(row: { journey: string; events
 // Célula XLSX com fórmula → só o resultado já salvo (nunca avalia a fórmula).
 const cellValue = (value: unknown) => (value && typeof value === "object" && !(value instanceof Date) && "result" in value ? (value as { result: unknown }).result : value);
 
+/** Linha normalizada. cpf null = CPF inválido; rawCpf só agrupa/mascara na prévia (dado pessoal: nunca persistido);
+ *  date null = data ilegível; sourceRow = número da linha na planilha (cabeçalho = 1). */
 export type BasicBasketPointMirrorRow = { sourceRow: number; name: string; cpf: string | null; rawCpf: string; date: string | null; journey: string; events: string };
+/** Matriz crua (1ª linha = cabeçalho) → linhas normalizadas; linhas vazias são puladas.
+ *  Lança BasicBasketPointMirrorError se o arquivo estiver vazio ou faltar coluna obrigatória. */
 export function normalizeBasicBasketPointMirrorMatrix(matrix: unknown[][]) {
   if (!matrix.length) throw new BasicBasketPointMirrorError("O arquivo está vazio.");
   const headers = matrix[0].map((value) => normalizeCell(cellValue(value)));
@@ -46,6 +55,7 @@ export function normalizeBasicBasketPointMirrorMatrix(matrix: unknown[][]) {
   return rows;
 }
 
+/** Agregado por pessoa (CPF): datas aproveitadas por tipo + contadores usados nos avisos da prévia. */
 export type BasicBasketPointMirrorPerson = BasicBasketOccurrences & {
   cpf: string | null; cpfMasked: string; name: string; rows: number; invalidCpf: boolean;
   absenceRows: number; vacationRows: number; duplicateVacationRows: number; absenceEventWithoutJourney: number; outOfPeriodRows: number;
@@ -100,6 +110,7 @@ export const splitAbsenceDates = (dates: readonly string[], context: BasicBasket
   };
 };
 
+// Só as datas (formato gravado na importação), sem nome, CPF ou contadores.
 export const occurrencesOf = (person: BasicBasketOccurrences): BasicBasketOccurrences => ({ absenceDates: person.absenceDates, currentVacationDates: person.currentVacationDates, referenceVacationDates: person.referenceVacationDates });
 export const hasOccurrences = (person: BasicBasketOccurrences) => Boolean(person.absenceDates.length || person.currentVacationDates.length || person.referenceVacationDates.length);
 

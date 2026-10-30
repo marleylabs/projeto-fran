@@ -17,9 +17,12 @@ import { SkeletonTableRows } from "./Skeleton";
 // - Sticky opcional: cabeçalho (com maxHeight), primeira coluna (sticky: "start") e ações (stickyActions).
 //   Células fixas têm fundo opaco e z-index acima das rolantes; scroll-padding evita que o foco fique escondido
 //   atrás delas (WCAG 2.4.11).
+/** Direção de ordenação (ascendente/descendente). */
 export type SortDirection = "asc" | "desc";
+/** Ordenação atual: `key` é o id da coluna. O consumidor aplica a ordem nos dados (ou no servidor). */
 export type DataTableSort = { key: string; direction: SortDirection };
 
+/** Definição de coluna: `id` único (também chave de ordenação), cabeçalho e renderizador `cell`. */
 export type DataTableColumn<Row> = {
   id: string;
   header: ReactNode;
@@ -41,6 +44,8 @@ export type DataTableColumn<Row> = {
   className?: string;
 };
 
+/** Seleção controlada por ids (getRowId). `isRowSelectable` desabilita o checkbox de linhas não selecionáveis;
+ * a seleção pode conter ids de outras páginas (o consumidor decide quando limpar). */
 export type DataTableSelection<Row> = {
   selectedIds: readonly string[];
   onChange: (ids: string[]) => void;
@@ -49,6 +54,8 @@ export type DataTableSelection<Row> = {
   isRowSelectable?: (row: Row) => boolean;
 };
 
+/** Props da tabela. Prioridade do corpo: loading (skeleton) > error (alerta + Tentar novamente) > vazio (EmptyState)
+ * > linhas. caption é obrigatório (nome acessível da tabela e da região rolável). */
 export type DataTableProps<Row> = {
   caption: ReactNode;
   captionVisible?: boolean;
@@ -106,6 +113,7 @@ const alignClass = (column: { numeric?: boolean; align?: "left" | "center" | "ri
 // Fundo das células fixas acompanha hover/seleção da linha (células rolantes passam por baixo).
 const stickyCell = "bg-surface group-hover/row:bg-surface-muted group-data-[selected=true]/row:bg-primary-soft";
 
+/** Faixa "N selecionados" + Limpar seleção + ações em lote. Usada pelo DataTable, mas exportada para listas próprias. */
 export function BulkActionBar({ count, onClear, children, className }: { count: number; onClear?: () => void; children?: ReactNode; className?: string }) {
   return (
     <div role="region" aria-label="Ações em lote" className={clsx("flex flex-wrap items-center gap-2 border-b border-border bg-primary-soft px-3 py-2", className)}>
@@ -120,6 +128,7 @@ export function BulkActionBar({ count, onClear, children, className }: { count: 
   );
 }
 
+// Checkbox do cabeçalho; `indeterminate` só existe como propriedade DOM (não há atributo), por isso o useEffect.
 function SelectAllCheckbox({ state, onToggle, disabled }: { state: "none" | "some" | "all"; onToggle: () => void; disabled: boolean }) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { if (ref.current) ref.current.indeterminate = state === "some"; }, [state]);
@@ -129,6 +138,8 @@ function SelectAllCheckbox({ state, onToggle, disabled }: { state: "none" | "som
   );
 }
 
+/** Tabela de dados genérica e controlada. Não ordena, não pagina nem filtra: só renderiza `rows` na ordem recebida e
+ * avisa o consumidor via onSortChange / selection.onChange. */
 export function DataTable<Row>({
   caption, captionVisible = false, columns, rows, getRowId, density = "default", loading = false, loadingRows = 5,
   error, onRetry, empty, selection, bulkActions, sort, onSortChange, rowActions, actionsLabel = "Ações", stickyActions = false,

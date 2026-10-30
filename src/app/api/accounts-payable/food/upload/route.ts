@@ -1,3 +1,6 @@
+// POST /api/accounts-payable/food/upload — importação do arquivo de Alimentação (multipart/form-data).
+// MA e PA geram rascunho para revisão (processFoodMaDraft/processFoodPaDraft). O ramo final (processFoodBatch)
+// é inalcançável hoje, pois FOOD_LOCALITIES = ["MA", "PA"].
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import {
@@ -11,6 +14,7 @@ import { processFoodPaDraft } from "@/modules/accounts-payable/food/pa-server";
 import { isFoodMaCycle } from "@/modules/accounts-payable/food/cycles";
 
 export const runtime = "nodejs";
+// Checagem estrutural do arquivo do FormData (em vez de instanceof File).
 function isUploadedFile(
   value: FormDataEntryValue | null | undefined,
 ): value is File {
@@ -23,6 +27,11 @@ function isUploadedFile(
     typeof value.arrayBuffer === "function"
   );
 }
+/**
+ * Permissão: FINANCIAL_RECORDS_CREATE; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Entrada: file, locality, year, month, administrativeEntityId e cycle (obrigatório e válido para MA).
+ * Saída: 201 { batch }. Erros: 400 arquivo/localidade inválidos, ciclo de MA ausente ou FoodBatchValidationError.
+ */
 export async function POST(request: Request) {
   const { user, response } = await requirePermission(
     PERMISSIONS.FINANCIAL_RECORDS_CREATE,

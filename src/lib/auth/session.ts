@@ -3,6 +3,10 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 
+// Sessão baseada em banco: o cookie httpOnly "session" guarda só o id da linha `Session`; usuário,
+// perfis e permissões são relidos do banco a cada requisição. Por isso desativar um usuário ou apagar
+// suas sessões (ver src/lib/db/users.ts) derruba o acesso imediatamente. Usado pelas rotas
+// /api/auth/* (login/logout/me), por requirePermission (./permissions) e por src/proxy.ts.
 const COOKIE_NAME = "session";
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -18,6 +22,7 @@ function resolveSecureCookieFlag(): boolean {
   return process.env.NODE_ENV === "production";
 }
 
+/** Cria a linha `Session` (validade de 7 dias) e grava o cookie. Chamado pelo login após validar a senha. */
 export async function createSession(userId: string): Promise<void> {
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
   const session = await prisma.session.create({ data: { userId, expiresAt } });
@@ -56,11 +61,13 @@ export async function getSessionUser() {
       },
     },
   });
+  // Sessão expirada ou usuário desativado = sem login (a linha expirada não é apagada aqui).
   if (!session || session.expiresAt < new Date() || !session.user.active) return null;
 
   return session.user;
 }
 
+/** Logout: apaga a sessão no banco (ignora se já não existir) e remove o cookie. */
 export async function destroySession(): Promise<void> {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(COOKIE_NAME)?.value;
@@ -75,6 +82,7 @@ type RequireUserResult =
   | { user: Awaited<ReturnType<typeof getSessionUser>> & object; response: null }
   | { user: null; response: NextResponse };
 
+// Só exige sessão válida; para checar permissão específica use `requirePermission` (./permissions). 401 se não houver sessão.
 /** Usado no início de toda rota de API que precisa de login. */
 export async function requireUser(): Promise<RequireUserResult> {
   const user = await getSessionUser();

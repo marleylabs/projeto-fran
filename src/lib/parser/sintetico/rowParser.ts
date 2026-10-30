@@ -1,3 +1,5 @@
+// Leitura das linhas de dados do Relatório Sintético usando as âncoras de coluna do cabeçalho.
+
 import type { PdfRow } from "@/lib/pdf/extractRows";
 import { rowText } from "@/lib/pdf/extractRows";
 import { parseBRNumber } from "@/lib/normalize/money";
@@ -5,6 +7,7 @@ import type { LinhaSintetico } from "@/lib/types/sintetico";
 import { buildColumnAnchors, isHeaderRow, nearestField, type ColumnAnchor } from "./columnAnchors";
 import { SINTETICO_NUMERIC_FIELDS, type SinteticoFieldKey } from "./fieldSequence";
 
+// Linha de dados começa pela matrícula (4 a 8 dígitos).
 const CODIGO_REGEX = /^\d{4,8}$/;
 
 function isDataRowStart(row: PdfRow): boolean {
@@ -12,6 +15,7 @@ function isDataRowStart(row: PdfRow): boolean {
   return !!first && CODIGO_REGEX.test(first);
 }
 
+// Linha "TOTAL GERAL" do rodapé (devolvida, mas hoje não usada para conferência).
 function isTotalGeralRow(row: PdfRow): boolean {
   const first = row.items[0]?.text.trim().toUpperCase();
   const second = row.items[1]?.text.trim().toUpperCase();
@@ -20,6 +24,7 @@ function isTotalGeralRow(row: PdfRow): boolean {
 
 type FieldMap = Partial<Record<SinteticoFieldKey, string>>;
 
+// Atribui cada item ao campo da coluna mais próxima em X; itens no mesmo campo são concatenados.
 function assignRowToFields(row: PdfRow, anchors: ColumnAnchor[]): FieldMap {
   const map: FieldMap = {};
   for (const item of row.items) {
@@ -31,12 +36,14 @@ function assignRowToFields(row: PdfRow, anchors: ColumnAnchor[]): FieldMap {
   return map;
 }
 
+// Matrícula e nome sem nenhum valor: os números provavelmente caíram na linha seguinte.
 function looksIncomplete(map: FieldMap): boolean {
   const hasIdentity = !!map.mat && !!map.nome;
   const hasAnyNumber = SINTETICO_NUMERIC_FIELDS.some((f) => map[f] !== undefined);
   return hasIdentity && !hasAnyNumber;
 }
 
+// Campo numérico ausente ou ilegível vira 0 e é marcado como baixa confiança.
 function readNumber(map: FieldMap, field: SinteticoFieldKey, camposBaixaConfianca: string[]): number {
   const raw = map[field];
   if (raw === undefined) {
@@ -51,6 +58,7 @@ function readNumber(map: FieldMap, field: SinteticoFieldKey, camposBaixaConfianc
   return value;
 }
 
+/** Saída de parseSinteticoRows. */
 export interface SinteticoRowParseOutcome {
   linhas: LinhaSintetico[];
   totalGeralRow: PdfRow | null;
@@ -59,6 +67,10 @@ export interface SinteticoRowParseOutcome {
   anchorsFound: boolean;
 }
 
+/**
+ * Percorre as linhas em ordem. Cada cabeçalho encontrado (repete por página) redefine as âncoras;
+ * linhas de dados antes do 1º cabeçalho vão para otherRows. Nunca lança.
+ */
 export function parseSinteticoRows(allRows: PdfRow[]): SinteticoRowParseOutcome {
   let anchors: ColumnAnchor[] | null = null;
   let anchorsFound = false;
@@ -90,6 +102,7 @@ export function parseSinteticoRows(allRows: PdfRow[]): SinteticoRowParseOutcome 
       const map = assignRowToFields(row, anchors);
       let mergedRow: PdfRow | null = null;
 
+      // Linha quebrada: completa com a seguinte se ela não for cabeçalho, dado nem total.
       if (looksIncomplete(map) && i + 1 < allRows.length) {
         const next = allRows[i + 1];
         if (!isHeaderRow(next) && !isDataRowStart(next) && !isTotalGeralRow(next)) {

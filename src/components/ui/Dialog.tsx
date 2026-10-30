@@ -24,6 +24,8 @@ export type DialogProps = {
   className?: string;
 };
 
+/** Modal genérico com cabeçalho (título/descrição/Fechar), corpo rolável e rodapé de ações (`footer`).
+ * Base de ConfirmModal e dos formulários em modal dos módulos. */
 export function Dialog({ open, onClose, title, description, children, footer, size = "md", dismissible = true, closeLabel = "Fechar", className }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -31,6 +33,7 @@ export function Dialog({ open, onClose, title, description, children, footer, si
   const titleId = `${baseId}-title`;
   const descriptionId = description ? `${baseId}-description` : undefined;
 
+  // Sincroniza o <dialog> nativo com `open`; guarda o elemento focado ao abrir para devolver o foco ao fechar.
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
@@ -43,6 +46,8 @@ export function Dialog({ open, onClose, title, description, children, footer, si
     }
   }, [open]);
 
+  // Esc (onCancel) cancela o fechamento nativo e chama onClose: o pai segue como fonte da verdade de `open`.
+  // Clique no próprio <dialog> (fora do conteúdo interno) equivale a clicar no backdrop; ambos respeitam `dismissible`.
   return (
     <dialog
       ref={ref}

@@ -10,8 +10,10 @@ const variants: Record<SkeletonVariant, string> = {
   circle: "size-9 rounded-full",
 };
 
+/** Props do Skeleton: atributos de <span> + variante (linha de texto, bloco ou círculo/avatar). */
 export type SkeletonProps = HTMLAttributes<HTMLSpanElement> & { variant?: SkeletonVariant };
 
+/** Peça de placeholder; ajuste largura/altura via className. */
 export function Skeleton({ variant = "text", className, ...props }: SkeletonProps) {
   return <span aria-hidden="true" className={clsx("block animate-pulse bg-border/70 motion-reduce:animate-none", variants[variant], className)} {...props} />;
 }

@@ -1,3 +1,6 @@
+// Classificadores de linhas repetidas (cabeçalho, rodapé, assinatura) e marcos do Extrato Mensal.
+// Usados por segmentEmployees.ts para descartar ruído e delimitar os blocos de colaborador.
+
 import type { PdfRow } from "@/lib/pdf/extractRows";
 import { rowText } from "@/lib/pdf/extractRows";
 
@@ -19,7 +22,7 @@ export function isPageHeaderRow(row: PdfRow): boolean {
     /^Folha Mensal/.test(t) ||
     /^\d{2}\/\d{4}$/.test(t) || // competência solta, ex.: "06/2026"
     /^\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}$/.test(t) || // CNPJ solto
-    /^\d+ - .+ (LTDA|COMERCIO|INDUSTRIA|EIRELI|S\/A|E)$/.test(t)
+    /^\d+ - .+ (LTDA|COMERCIO|INDUSTRIA|EIRELI|S\/A|E)$/.test(t) // razão social solta, ex.: "12 - EMPRESA X LTDA"
   );
 }
 
@@ -40,14 +43,17 @@ export function isEmployeeStartRow(row: PdfRow): boolean {
   return labels.includes("Empr.:") && labels.includes("CPF:");
 }
 
+/** Início do "Resumo por Rubrica" (fim do relatório); dali em diante nada é colaborador. */
 export function isResumoRubricaHeaderRow(row: PdfRow): boolean {
   return /^Resumo por Rubrica/.test(rowText(row));
 }
 
+/** Linha de totais impressos ("Total Geral Proventos: ... Total Geral Descontos: ..."). */
 export function isTotalGeralRow(row: PdfRow): boolean {
   return /Total Geral Proventos:/.test(rowText(row));
 }
 
+/** Linha "Líquido Geral:". Sem uso atual (segmentEmployees testa o texto diretamente). */
 export function isLiquidoGeralRow(row: PdfRow): boolean {
   return /^Líquido Geral:/.test(rowText(row));
 }

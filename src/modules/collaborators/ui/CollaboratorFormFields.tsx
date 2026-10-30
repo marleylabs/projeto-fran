@@ -7,6 +7,7 @@ import type { FormEvent, ReactNode } from "react";
 import { Field, Switch, TextInput } from "@/components/ui";
 import type { CollaboratorForm } from "./types";
 
+// formId liga o form aos botões do Dialog. onCpfChange/onCpfBlur: máscara e validação do CPF feitas pela página.
 type Props = {
   formId: string;
   form: CollaboratorForm;
@@ -17,6 +18,7 @@ type Props = {
   onSubmit: (event: FormEvent) => void;
 };
 
+// Agrupamento visual (fieldset + legenda) em duas colunas.
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <fieldset className="grid gap-3 sm:grid-cols-2">
@@ -26,6 +28,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+// Formulário controlado: cada campo devolve um patch parcial em onChange.
 export function CollaboratorFormFields({ formId, form, cpfError, onChange, onCpfChange, onCpfBlur, onSubmit }: Props) {
   return (
     <form id={formId} onSubmit={onSubmit} className="grid gap-5">

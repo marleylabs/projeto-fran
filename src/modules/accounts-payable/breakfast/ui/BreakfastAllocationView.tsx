@@ -21,11 +21,13 @@ const leafPath = (view: AllocationViewId, row: { company: string; costCenter: st
 
 type ViewProps ={ monthLabel: string; baseOf: (map: BreakfastMapData) => BreakfastBase; onCorrect: (mapId: string, row: BreakfastAllocationRow) => void; onCancel: (mapId: string) => void; onFlash: (mapId: string) => void; flashBusy: string | null };
 
+/** Um cartão por lançamento (mapa). Corrigir, cancelar e Máscara Flash são callbacks da seção. */
 export function BreakfastAllocationView({ maps, ...props }: ViewProps & { maps: BreakfastMapData[] }) {
   if (!maps.length) return <Card><EmptyState title="Nenhum lançamento nesta competência." description="Preencha o Preenchimento para gerar o rateio." /></Card>;
   return <div className="grid gap-4">{maps.map((map) => <MapAllocation key={map.id} map={map} {...props} />)}</div>;
 }
 
+// Cartão de um mapa com conferência Valor total × Rateado (diferença em centavos deve ser zero).
 function MapAllocation({ map, monthLabel, baseOf, onCorrect, onCancel, onFlash, flashBusy }: ViewProps & { map: BreakfastMapData }) {
   // Perspectiva local por lançamento; padrão = Empresa → Departamento (a visão que já existia).
   const [view, setView] = useState<AllocationViewId>("companyDepartment");

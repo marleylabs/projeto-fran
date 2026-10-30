@@ -1,8 +1,13 @@
 "use client";
+// Validação documental de uma obrigação (/pagamentos/[id]/validacao): mostra o documento atual ao lado dos dados
+// extraídos pelo OCR e registra a decisão humana (VALIDATED, REJECTED ou CORRECTION_REQUESTED).
+// API: GET/POST /api/financial-records/[id]/validation. Os campos editados vão em correctedData (sobre o
+// structuredData extraído); o servidor preserva o original no histórico.
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Badge, Button, EmptyState, PageHeader } from "@/components/ui";
 
+// Resposta do GET: dados do registro + extração vigente (null se o OCR ainda não concluiu).
 type Payload = {
   record: {
     identifier: string;
@@ -25,6 +30,7 @@ type Payload = {
   };
 };
 
+/** Página de validação; após decidir, volta ao detalhe da obrigação. */
 export default function ValidationPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -100,6 +106,7 @@ export default function ValidationPage() {
       setSaving(false);
     }
   }
+  // Confiança geral < 80%: a confirmação exige marcar o aceite explícito (lowConfidenceAcknowledged vai ao servidor).
   const confidence = Number(data?.current?.extraction.overallConfidence ?? 0);
   const low = confidence < 0.8;
   return (

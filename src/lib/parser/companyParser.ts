@@ -1,3 +1,5 @@
+// Cabeçalho da empresa no Extrato Mensal (Empresa, CNPJ, Competência, Emissão, Horas). Usado por parsePayrollPdf.ts.
+
 import type { PdfRow } from "@/lib/pdf/extractRows";
 import { extractLabelValues } from "./rowHelpers";
 import type { Empresa } from "@/lib/types/payroll";
@@ -12,6 +14,7 @@ export function parseCompanyInfo(headerRows: PdfRow[]): Empresa {
   }
 
   const empresaRaw = fields["Empresa:"] ?? "";
+  // "Empresa:" vem como "123 - RAZÃO SOCIAL"; descarta o código numérico.
   const nome = empresaRaw.replace(/^\d+\s*-\s*/, "").trim();
 
   return {

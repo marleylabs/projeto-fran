@@ -12,6 +12,7 @@ import clsx from "clsx";
 // - O gatilho deve ser um elemento focável (button, link, input) que aceite aria-describedby.
 export type TooltipSide = "top" | "bottom";
 
+// Subconjunto de DOMRect usado no cálculo (facilita testar tooltipPosition sem DOM).
 type Rect = { top: number; left: number; bottom: number; width: number };
 
 /** Posição do balão: centralizado no gatilho, preso à viewport (margem 8px); inverte o lado se não couber. */
@@ -25,6 +26,7 @@ export function tooltipPosition(trigger: Rect, bubble: { width: number; height: 
   return { top: Math.round(top), left: Math.round(left), placement };
 }
 
+/** children: UM elemento focável (recebe aria-describedby via cloneElement); content: texto do balão. */
 export type TooltipProps = {
   content: ReactNode;
   children: ReactElement<{ "aria-describedby"?: string }>;
@@ -34,6 +36,8 @@ export type TooltipProps = {
   className?: string;
 };
 
+/** Envolve o gatilho num <span> que escuta ponteiro/foco. Toque (pointerType touch) não abre por hover; use o foco.
+ * Timers de abrir/fechar evitam piscar; Esc fecha. */
 export function Tooltip({ content, children, side = "top", delay = 300, className }: TooltipProps) {
   const id = `${useId()}-tooltip`;
   const wrapper = useRef<HTMLSpanElement>(null);

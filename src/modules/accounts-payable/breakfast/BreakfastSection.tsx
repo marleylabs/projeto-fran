@@ -28,6 +28,8 @@ import { BreakfastSummaryView } from "./ui/BreakfastSummaryView";
 import { dayMonth, money, moneyCents, people } from "./ui/format";
 import type { BreakfastAllocationRow as Allocation, BreakfastContext as Context, BreakfastEntity as Entity, BreakfastEntryValue as EntryValue, BreakfastMapData as MapData } from "./ui/types";
 
+// Reais (texto da API) → centavos. Usa float + arredondamento: aceitável só porque é exibição/conferência na tela;
+// o valor autoritativo é sempre o do servidor.
 const cents = (value: string | number) => Math.round(Number(value) * 100);
 // O mapa é a fonte histórica: valor unitário e dias úteis vêm dos registros do próprio mapa, nunca da competência atual.
 const mapBase = (map: MapData | undefined) => { const row = map?.allocations.find((item) => item.workingDays !== null && item.unitPrice !== null); return row ? { workingDays: row.workingDays as number, unitPrice: Number(row.unitPrice).toFixed(2) } : null; };
@@ -35,6 +37,8 @@ const isInt = (value: string) => /^-?\d+$/.test(value.trim());
 // Cadastros compatíveis com Alimentação ou Café da Manhã (nunca nome de fornecedor fixo no componente).
 const matchesActivity = (activityArea: string) => { const value = normalize(activityArea); return value.includes("alimenta") || value.includes("cafe"); };
 
+// Modal de correção: envia PATCH com insumos + motivo; o servidor preserva os snapshots (valor unitário, dias úteis,
+// departamento, centro de custo), cancela a linha original (soft delete) e cria a substituta.
 function CorrectionModal({ target, companies, onClose, onSaved }: { target: { mapId: string; row: Allocation } | null; companies: Company[]; onClose: () => void; onSaved: () => Promise<void> }) {
   const formId = `${useId()}-correction`;
   const [form, setForm] = useState({ companyText: "", extra: "0", discount: "0", obsType: "" as "" | BreakfastObservationKind, obsDetails: "", reason: "" });
@@ -92,6 +96,8 @@ function CorrectionModal({ target, companies, onClose, onSaved }: { target: { ma
   );
 }
 
+/** Aba "Café" de /pagamentos/alimentacao. Dona de todo o estado (competência, valor unitário, feriados, seleção,
+ *  insumos, Espelho de Ponto, prévia) e das chamadas às APIs /api/accounts-payable/breakfast/*. */
 export function BreakfastSection() {
   const toast = useToast();
   const now = new Date();
@@ -143,6 +149,7 @@ export function BreakfastSection() {
 
   const holidayByDate = useMemo(() => new Map((ctx?.holidays ?? []).map((holiday) => [holiday.date, holiday])), [ctx]);
   const companyByText = useCallback((text: string) => companies.find((company) => normalize(companyLabel(company)) === normalize(text) || normalize(company.legalName) === normalize(text)), [companies]);
+  // Valor unitário digitado e ainda não salvo bloqueia o lançamento (o servidor usaria o valor gravado).
   const priceDirty = Boolean(ctx) && priceInput.trim().replace(",", ".") !== Number(ctx?.unitPrice).toFixed(2);
 
   async function post(url: string, method: string, payload: unknown) {
@@ -203,6 +210,8 @@ export function BreakfastSection() {
   const resetPointMirror = () => { setPointFile(null); setPointMirror(null); setPointApplied(null); };
   function applyCompany(text: string) { setBulkCompany(text); const company = companyByText(text); if (company) setValues((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, selectedIds.includes(id) ? { ...value, companyText: companyLabel(company), companyId: company.id } : value]))); }
 
+  // Base da prévia: se o fornecedor já tem mapa na competência, valor unitário e dias úteis do MAPA (snapshot);
+  // senão, os da competência atual — mesma regra de addBreakfastEntries.
   const entityBase = useMemo(() => mapBase(maps.find((map) => map.administrativeEntity.id === entityId)), [maps, entityId]);
   const basePrice = entityBase?.unitPrice ?? ctx?.unitPrice;
   const baseDays = entityBase?.workingDays ?? ctx?.workingDays ?? 0;
@@ -234,6 +243,7 @@ export function BreakfastSection() {
       await reload(); setTab("rateio");
     } catch (cause) { const message = cause instanceof Error ? cause.message : "Falha ao salvar lançamentos."; setError(message); toast.error(message, "Não foi possível salvar"); } finally { setBusy(false); }
   }
+  // Cancelamento do lançamento (soft cancel no servidor): exige motivo e a confirmação "EXCLUIR".
   async function confirmDelete(reason: string) {
     if (!deleteTarget) return; setDeleting(true); setDeleteError(null);
     try { await post(`/api/accounts-payable/breakfast/${deleteTarget.mapId}`, "DELETE", { reason, confirmation: "EXCLUIR" }); setDeleteTarget(null); await reload(); }
@@ -247,6 +257,7 @@ export function BreakfastSection() {
   const sum = (rows: Allocation[]) => rows.reduce((total, row) => total + cents(row.amount), 0);
   const grand = sum(all);
   const mapsTotal = maps.reduce((total, map) => total + cents(map.totalAmount), 0);
+  // Soma das divergências (total × empresas, total × centros de custo, total × mapas); deve ser zero.
   const difference = (grand - rateio.companiesCents) + (grand - rateio.costCentersCents) + (grand - mapsTotal);
   const uniquePeople = new Set(all.map((row) => row.employeeId ?? normalize(row.employeeName))).size;
   const totalMeals = all.reduce((total, row) => total + (row.finalQuantity ?? 0), 0);

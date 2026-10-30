@@ -8,6 +8,7 @@
 import { comparePtBr } from "@/lib/sorting/ptBr";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
 
+/** Tabela única NF → empresa. Alterar aqui muda tela, servidor e XLSX ao mesmo tempo. */
 export const FOOD_PA_INVOICES = {
   NF_01: { label: "NF 01", company: "BOINGA" },
   NF_02: { label: "NF 02", company: "PROJETA" },
@@ -30,13 +31,16 @@ export function parseFoodPaInvoice(value: string | null | undefined): FoodPaInvo
   return match ? (`NF_0${match[1]}` as FoodPaInvoiceCode) : null;
 }
 
+/** Rótulo de exibição da NF ("NF 01"/"NF 02"); também é o valor gravado pelo lançamento manual. */
 export const foodPaInvoiceLabel = (code: FoodPaInvoiceCode) => FOOD_PA_INVOICES[code].label;
 
+/** Empresa derivada da NF persistida; null se a NF não for reconhecida. */
 export function foodInvoiceEmissionToCompany(value: string | null | undefined): FoodPaCompany | null {
   const code = parseFoodPaInvoice(value);
   return code ? FOOD_PA_INVOICES[code].company : null;
 }
 
+/** Linha de ocorrência PA (subconjunto de FoodMealOccurrence) usada no rateio por empresa. */
 type Numeric = number | string | { toString(): string };
 export type FoodPaRateioRow = {
   employeeId: string | null; officialName: string | null; receivedName: string; normalizedReceivedName?: string;
@@ -46,10 +50,13 @@ export type FoodPaRateioRow = {
 export type FoodPaRateioPerson = { key: string; name: string; department: string; invoiceEmission: string; meals: number; amountCents: number };
 export type FoodPaRateioCompany = { company: string; people: FoodPaRateioPerson[]; collaborators: number; meals: number; amountCents: number };
 
+// Converte para centavos inteiros (arredondamento) para somar sem erro de float.
 const toCents = (value: Numeric) => Math.round(Number(String(value)) * 100);
 
 // Rateio PA por Empresa → Colaborador. A chave da pessoa inclui a NF: o mesmo colaborador com NF 01
 // e NF 02 no mesmo lote aparece nas duas empresas (cada parcela na sua). Valores em centavos.
+// Linhas sem NF reconhecida vão para "Empresa não identificada" (sempre por último). `consistent` confere
+// que a soma das empresas é igual à soma das ocorrências incluídas.
 export function buildFoodPaCompanyRateio(rows: readonly FoodPaRateioRow[]) {
   const people = new Map<string, FoodPaRateioPerson & { company: string }>();
   for (const row of rows.filter((item) => item.included)) {

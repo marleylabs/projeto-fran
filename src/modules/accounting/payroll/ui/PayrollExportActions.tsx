@@ -12,6 +12,7 @@ import { exportJson } from "@/lib/export/json";
 import { exportSinteticoExcel, exportSinteticoCsv, exportSinteticoJson } from "@/lib/export/sinteticoExport";
 import { Button } from "@/components/ui";
 
+// Botões Excel/CSV/JSON; escolhe o exportador pelo formato da extração. Os arquivos são gerados no navegador.
 export function PayrollExportActions({ result }: { result: ExtractionResult | SinteticoResult }) {
   const [exportingExcel, setExportingExcel] = useState(false);
   const isSintetico = result.formato === "relatorio-sintetico";

@@ -1,7 +1,9 @@
+// /api/financial-records/[id] — detalhe de um registro financeiro (Contas a Pagar) com suas relações.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/db/prisma";
 
+/** GET: retorna { item } com empresa, cadastro administrativo, fornecedor, projeto e contrato. Permissão: FINANCIAL_RECORDS_READ; 404 se não existe. */
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);
   if (response) return response;

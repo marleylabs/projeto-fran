@@ -1,3 +1,5 @@
+// /api/auth/login — autenticação por e-mail e senha (tela src/app/login/page.tsx).
+// Cria a sessão (cookie httpOnly) via lib/auth/session e registra lastLoginAt.
 import { NextResponse } from "next/server";
 import { findUserByEmail } from "@/lib/db/users";
 import { verifyPassword } from "@/lib/auth/password";
@@ -5,6 +7,12 @@ import { createSession } from "@/lib/auth/session";
 
 export const runtime = "nodejs";
 
+/**
+ * POST: corpo JSON { email, password }. Rota pública (não exige sessão).
+ * Retorna { ok, user: { id, email, name } } e define o cookie de sessão.
+ * Erros: 400 campos vazios; 401 credenciais inválidas (mensagem única para usuário inexistente ou senha errada,
+ * para não revelar quais e-mails existem); 403 usuário inativo — checado só após validar a senha.
+ */
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const email = typeof body?.email === "string" ? body.email.trim() : "";

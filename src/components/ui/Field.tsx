@@ -6,6 +6,7 @@ import clsx from "clsx";
 
 // Campo de formulário acessível: rótulo REAL (label/for) + controle + texto de ajuda + mensagem de erro.
 // O controle recebe por render-prop o id, aria-describedby (ajuda/erro) e aria-invalid — nunca só cor.
+/** Props injetadas pelo Field no controle (espalhe com {...control} no input/select/textarea). */
 export type FieldControlProps = {
   id: string;
   "aria-describedby"?: string;
@@ -13,6 +14,8 @@ export type FieldControlProps = {
   required?: boolean;
 };
 
+/** `children` é render-prop que recebe FieldControlProps; `error` tem prioridade visual sobre `helper`
+ * (a ajuda continua lida por leitor de tela, em sr-only). `id` opcional; sem ele é gerado por useId. */
 export type FieldProps = {
   label: ReactNode;
   children: (control: FieldControlProps) => ReactNode;
@@ -23,11 +26,13 @@ export type FieldProps = {
   className?: string;
 };
 
+/** Rótulo + controle + ajuda/erro com ids ligados por aria-describedby; marca obrigatório com * e texto sr-only. */
 export function Field({ label, children, helper, error, required, id, className }: FieldProps) {
   const generated = useId();
   const controlId = id ?? `field-${generated}`;
   const helperId = helper ? `${controlId}-helper` : undefined;
   const errorId = error ? `${controlId}-error` : undefined;
+  // Erro antes da ajuda: leitores de tela leem o erro primeiro.
   const describedBy = [errorId, helperId].filter(Boolean).join(" ") || undefined;
   return (
     <div className={clsx("grid gap-1.5", className)}>
@@ -56,9 +61,11 @@ export function Field({ label, children, helper, error, required, id, className 
 // Input padrão do Design System (altura 40px, raio 8px). Somente leitura = valor calculado (fundo calc-surface).
 export type TextInputProps = InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> };
 
+/** Classes do input padrão; reutilize em <select>/<textarea> para manter o mesmo visual. */
 export const textInputClassName =
   "h-10 w-full rounded-control border border-border-strong bg-surface px-3 text-body text-foreground transition-[border-color,box-shadow] duration-150 placeholder:text-foreground-muted hover:border-neutral-medium focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring aria-[invalid=true]:border-danger read-only:border-border read-only:bg-calc-surface disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-muted disabled:text-foreground-muted motion-reduce:transition-none";
 
+/** <input> com o visual do DS; aceita `ref` como prop (React 19). */
 export function TextInput({ className, ref, ...props }: TextInputProps) {
   return <input ref={ref} className={clsx(textInputClassName, className)} {...props} />;
 }

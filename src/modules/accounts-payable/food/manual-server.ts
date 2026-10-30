@@ -1,4 +1,11 @@
 import "server-only";
+// Lançamento manual de refeições de Alimentação (rota POST /api/accounts-payable/food/manual; tela
+// /pagamentos/alimentacao). Diferente do upload, NÃO passa por revisão: as ocorrências entram já confirmadas
+// num lote próprio "Lançamentos manuais" (status READY) por competência + localidade + fornecedor + ciclo,
+// e a obrigação financeira do lote é criada/atualizada na mesma transação.
+//   - MA: colaboradores × datas (1 refeição por combinação), datas devem estar na competência e no ciclo.
+//   - PA: quantidade de refeições por colaborador (sem data) + Emissão NF individual (define a empresa do rateio).
+// Duplicidades já lançadas são ignoradas (não geram erro) e devolvidas em duplicateDetails.
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { createFinancialRecordInTransaction } from "@/modules/accounts-payable/server/financialRecords";
@@ -9,6 +16,8 @@ import { buildManualFoodCombinations, manualFoodUsesSupplierPrice } from "./manu
 import { FOOD_PA_INVOICE_REQUIRED_MESSAGE, foodPaInvoiceLabel, isFoodPaInvoiceCode } from "./invoice-company";
 import { loadFoodRateioSnapshots } from "./rateio-snapshot";
 
+// Payload já validado em formato pela rota. MA usa employeeIds/dates (ou occurredOn legado); PA usa collaborators.
+// amount vazio → usa o preço configurado do fornecedor (manualFoodUsesSupplierPrice).
 type ManualFoodInput = {
   year: number;
   month: number;
@@ -24,6 +33,15 @@ type ManualFoodInput = {
   userId: string;
 };
 
+/**
+ * Cria ocorrências manuais e atualiza o lote/obrigação correspondentes.
+ * Validações (todas antes de abrir a transação): colaboradores selecionados e ativos, quantidade inteira ≥1 e
+ * NF_01/NF_02 no PA, datas da competência e do ciclo no MA, fornecedor existente e valor unitário > 0.
+ * Efeitos: cria o lote manual se ainda não existir, insere as ocorrências com snapshot do rateio, reconstrói
+ * FoodAllocation do lote, atualiza grossAmount da obrigação existente ou cria uma nova.
+ * Retorna contagens de criados/duplicados, total criado (Decimal) e detalhes das duplicidades.
+ * Lança FoodBatchValidationError em qualquer violação.
+ */
 export async function addManualFoodOccurrences(input: ManualFoodInput) {
   const paItems = input.locality === "PA" ? (input.collaborators ?? []) : [];
   const ids = [
@@ -109,6 +127,7 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
       "Um ou mais colaboradores não estão ativos ou não foram encontrados.",
     );
   if (!entity) throw new FoodBatchValidationError("Fornecedor não encontrado.");
+  // Valor informado pelo usuário (aceita vírgula decimal) ou o configurado; sempre Decimal, nunca float.
   let unitPrice: Prisma.Decimal;
   try {
     unitPrice =
@@ -132,6 +151,8 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
       });
       // MA não usa Emissão NF por colaborador; no PA ela é individual (paInvoiceById).
       const maInvoice = input.locality === "MA" ? input.invoiceEmission?.trim() || null : null;
+      // Busca lançamentos vigentes que colidem: no MA mesmo colaborador + data no ciclo; no PA lançamentos
+      // MANUAIS do colaborador no lote vigente (filtrados abaixo pela NF).
       const duplicateRows =
         input.locality === "PA"
           ? await tx.foodMealOccurrence.findMany({
@@ -219,6 +240,7 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
         name: row.officialName,
         date: row.occurredOn?.toISOString().slice(0, 10) ?? null,
       }));
+      // Tudo duplicado: nada é gravado e a obrigação não muda.
       if (!accepted.length)
         return {
           batchId: duplicateRows[0]?.batchId ?? null,
@@ -230,6 +252,8 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
           duplicateDetails,
         };
 
+      // Lote manual vigente do escopo; se não houver, cria nova versão. storageKey/sha256 são sintéticos
+      // (não há arquivo), mas únicos por versão.
       let batch = await tx.foodBatch.findFirst({
         where: {
           competenceId: competence.id,
@@ -274,6 +298,7 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
           },
         });
       }
+      // sourceRow continua a numeração existente do lote.
       const source =
         (
           await tx.foodMealOccurrence.aggregate({
@@ -308,6 +333,7 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
         })),
       });
 
+      // Recalcula o rateio do lote inteiro (não só das linhas novas) por colaborador.
       const occurrences = await tx.foodMealOccurrence.findMany({
         where: { batchId: batch.id, included: true, deletedAt: null },
       });
@@ -358,6 +384,7 @@ export async function addManualFoodOccurrences(input: ManualFoodInput) {
         (sum, row) => sum + row.mealQuantity,
         0,
       );
+      // Primeira inclusão no lote cria a obrigação; as seguintes só atualizam o valor bruto.
       let financialRecordId = batch.financialRecordId;
       if (financialRecordId)
         await tx.financialRecord.update({

@@ -14,6 +14,7 @@ import { pointMirrorReviewState, type PointMirrorCandidate, type PointMirrorDeci
 import { moneyCents } from "./format";
 import { CompetenceSummary } from "@/modules/accounts-payable/shared/ui/CompetenceSummary";
 
+/** Impacto previsto por colaborador (calculado na seção): dias pagos e total antes → depois. */
 export type PointMirrorImpact = { employeeId: string; name: string; manual: boolean; beforeDays: number; afterDays: number; beforeCents: number; afterCents: number; error?: string | null };
 type Reference = { current: string; previous: string; absence: string };
 type Filter = "ALL" | "PENDING" | "APPROVED" | "REJECTED" | "VACATION" | "ABSENCE";
@@ -28,6 +29,7 @@ const STATE: Record<PointMirrorReviewState, { tone: StatusTone; label: string }>
 const EVENT = { ABSENCE: "Falta Injustificada", VACATION_CURRENT: "Férias", VACATION_REFERENCE: "Férias (mês anterior)" } as const;
 const FILTERS: Array<{ id: Filter; label: string }> = [{ id: "ALL", label: "Todos" }, { id: "PENDING", label: "Pendentes" }, { id: "APPROVED", label: "Aprovados" }, { id: "REJECTED", label: "Rejeitados" }, { id: "VACATION", label: "Férias" }, { id: "ABSENCE", label: "Faltas" }];
 
+/** Tabela de candidatos com filtro e decisão individual ou em lote (só pendentes visíveis); onDecide atualiza a seção. */
 export function BasicBasketPointMirrorReview({ candidates, decisions, manualByEmployee, employeeName, reference, impacts, onDecide }: {
   candidates: readonly PointMirrorCandidate[];
   decisions: Readonly<Record<string, PointMirrorDecision>>;

@@ -7,6 +7,9 @@
 // mesmos payloads (valores como texto decimal com ponto). O servidor recalcula e valida tudo.
 // O rateio de treinamento é um sistema próprio (Fornecedor → Departamento), sem Empresa/4 perspectivas; o XLSX dele
 // continua o mesmo (rota rateio/download).
+// APIs: /api/accounts-payable/training-expense (GET lista, POST rascunho), [id] (GET, PATCH ajuste), [id]/complete,
+// [id]/cancel, [id]/allocation (PUT), rateio, rateio/download e summary. Regras de servidor: training-expense/server.ts.
+// Permissão: ações de escrita só aparecem com financial-records.create ou .update (o servidor valida de novo por rota).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRight, Download, PencilLine, Plus } from "lucide-react";
 import { CollaboratorMultiCombobox } from "@/components/CollaboratorMultiCombobox";
@@ -18,6 +21,8 @@ import { RateioTotals, TrainingRateioPanel } from "@/modules/accounts-payable/tr
 import { TrainingSummaryPanel } from "@/modules/accounts-payable/training-expense/ui/TrainingSummaryPanel";
 import { EXPENSE_STATUS_LABEL, EXPENSE_STATUS_TONE, type ExpenseDetail, type ExpenseListItem, type Participant, type RateioCardData, type RateioData, type RateioRowData, type SummaryData, type Supplier, type TrainingOption } from "@/modules/accounts-payable/training-expense/ui/types";
 
+// Prévia em Number (float) só para exibição: base cobre até `quantity` alunos; cada aluno excedente soma o valor
+// adicional. A fonte da verdade é calculateTrainingExpenseAmount (Decimal) no servidor.
 function calculatePreview(training: TrainingOption | null, participantCount: number) {
   if (!training || participantCount < 1) return null;
   const unit = Number(training.unitPrice);
@@ -27,6 +32,7 @@ function calculatePreview(training: TrainingOption | null, participantCount: num
   return { unit, additional, extra, total };
 }
 
+// Registro de treinamento realizado (cria RASCUNHO). Fornecedor filtra os treinamentos ativos do catálogo.
 function NewExpenseDialog({ open, year, month, onClose, onCreated }: { open: boolean; year: number; month: number; onClose: () => void; onCreated: () => void }) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [trainings, setTrainings] = useState<TrainingOption[]>([]);
@@ -63,8 +69,11 @@ function NewExpenseDialog({ open, year, month, onClose, onCreated }: { open: boo
   const preview = calculatePreview(selectedTraining, employeeIds.length);
   const calculatedAmount = preview?.total ?? 0;
   const finalAmount = finalAmountOverride ? Number(finalAmountOverride.replace(",", ".")) : calculatedAmount;
+  // Tolerância de 0,001 só compensa o float da prévia; o servidor compara em Decimal e também exige a justificativa.
   const diverges = Boolean(finalAmountOverride) && Math.abs(finalAmount - calculatedAmount) > 0.001;
 
+  // Duas chamadas, não atômicas: POST cria o rascunho com o valor calculado; se houver ajuste, PATCH grava valor final
+  // + justificativa. Se o PATCH falhar, o rascunho fica com o valor calculado (e o PATCH exige financial-records.update).
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (diverges && !adjustmentReason.trim()) { setReasonError("Informe a justificativa do ajuste quando o valor final divergir do valor calculado."); return; }
@@ -154,6 +163,7 @@ const participantColumns = [
   { id: "amount", header: "Valor", numeric: true, cell: (p: Participant) => money(p.allocatedAmount) },
 ];
 
+// Detalhe do lançamento: concluir (DRAFT gera a obrigação) e cancelar com motivo (soft cancel; cancela a obrigação).
 function ExpenseDetailDialog({ id, canManage, onClose, onChanged }: { id: string | null; canManage: boolean; onClose: () => void; onChanged: () => void }) {
   const [detail, setDetail] = useState<ExpenseDetail | null>(null);
   const [busy, setBusy] = useState(false);
@@ -237,9 +247,13 @@ function ExpenseDetailDialog({ id, canManage, onClose, onChanged }: { id: string
   );
 }
 
+// Comparações do editor de rateio em centavos inteiros (nunca soma de float).
 const toCents = (value: string) => Math.round(Number(String(value).replace(",", ".")) * 100);
 const fromCents = (value: number) => money(value / 100);
 
+// Editor do rateio de um fornecedor: redistribui o MESMO valor final de cada lançamento entre os participantes.
+// Salvar só é possível com todas as somas batendo; envia um PUT por lançamento alterado, em sequência (não atômico
+// entre lançamentos: se um falhar, os anteriores já ficaram salvos).
 function AllocationEditorDialog({ card, onClose, onSaved }: { card: RateioCardData; onClose: () => void; onSaved: () => void }) {
   const initial = useMemo(() => {
     const values: Record<string, string> = {};
@@ -311,6 +325,7 @@ function AllocationEditorDialog({ card, onClose, onSaved }: { card: RateioCardDa
   );
 }
 
+// Aba Rateio: um painel por fornecedor (só lançamentos concluídos) e totais da competência quando há mais de um.
 function RateioTab({ year, month, canManage }: { year: number; month: number; canManage: boolean }) {
   const [data, setData] = useState<RateioData | null>(null);
   const [editing, setEditing] = useState<RateioCardData | null>(null);
@@ -348,6 +363,7 @@ function ResumoTab({ year, month }: { year: number; month: number }) {
 
 const TABS = [{ value: "lancamentos", label: "Lançamentos" }, { value: "rateio", label: "Rateio" }, { value: "resumo", label: "Resumo" }];
 
+/** Página de Despesas de Treinamento: competência + abas Lançamentos, Rateio e Resumo. */
 export default function TrainingExpensePage() {
   const now = new Date();
   const [competence, setCompetence] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);

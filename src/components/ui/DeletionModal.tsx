@@ -1,14 +1,24 @@
 "use client";
+// Modal de confirmação de EXCLUSÃO (registros, lotes, importações) baseado no <dialog> nativo.
+// - Exclusão simples: só confirma.
+// - Exclusão múltipla (count>1) ou crítica (requireKeyword): mostra o select de motivo; com requireKeyword o motivo
+//   passa a ser obrigatório e é preciso digitar EXCLUIR para habilitar o botão.
+// O motivo escolhido é devolvido em onConfirm(reason) para o chamador registrar (auditoria); a exclusão em si é feita
+// pelo módulo. Para confirmações que não são exclusão use ConfirmModal.
 import { useEffect,useRef,useState,type ReactNode } from "react";
 import { X } from "lucide-react";
 import { Button } from "./Button";
 import { Field, TextInput, textInputClassName } from "./Field";
 
+// Motivos sugeridos de exclusão (texto livre não é aceito; "Outro" cobre o restante).
 const reasons=["Arquivo incorreto","Lançamento duplicado","Colaborador lançado incorretamente","Competência incorreta","Outro"];
 // Devolve o foco a quem abriu o modal, só se o elemento ainda estiver na página (após uma exclusão bem-sucedida o
 // gatilho pode ter sido removido: nesse caso o fluxo normal segue, sem focar elemento inexistente).
 export function restoreDeletionFocus(opener:{isConnected:boolean;focus:()=>void}|null|undefined){if(opener?.isConnected)opener.focus();}
+// busy: operação em andamento (trava fechar/cancelar e mostra loading no botão).
+// actionLabel: rótulo do botão; sem ele, deriva de count/requireKeyword.
 type DeletionModalProps={open:boolean;title:string;description:ReactNode;count?:number;requireKeyword?:boolean;busy?:boolean;actionLabel?:string;onClose:()=>void;onConfirm:(reason:string)=>void};
+// Corpo do modal; só é montado enquanto aberto (ver DeletionModal), o que zera motivo/confirmação a cada abertura.
 function OpenDeletionModal({open,title,description,count=1,requireKeyword=false,busy=false,actionLabel,onClose,onConfirm}:DeletionModalProps){
   const ref=useRef<HTMLDialogElement>(null);const opener=useRef<HTMLElement|null>(null);const[reason,setReason]=useState("");const[confirmation,setConfirmation]=useState("");
   // Foco: guarda o gatilho ao montar (o modal só existe enquanto aberto) e o devolve ao fechar — Cancelar/Esc/conclusão
@@ -27,4 +37,5 @@ function OpenDeletionModal({open,title,description,count=1,requireKeyword=false,
     <footer className="flex flex-wrap justify-end gap-2 border-t border-border px-5 py-3"><Button variant="secondary" disabled={busy} onClick={onClose}>Cancelar</Button><Button variant="error" disabled={!ready} loading={busy} onClick={()=>onConfirm(reason)}>{actionLabel??(count>1?`Excluir ${count} registros`:requireKeyword?"Excluir lote":"Excluir")}</Button></footer>
   </div></dialog>;
 }
+/** Modal de exclusão com motivo opcional/obrigatório e palavra-chave EXCLUIR. Não renderiza nada quando fechado. */
 export function DeletionModal(props:DeletionModalProps){return props.open?<OpenDeletionModal {...props}/>:null;}

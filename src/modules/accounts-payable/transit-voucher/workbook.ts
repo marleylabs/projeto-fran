@@ -8,12 +8,21 @@ import { addAllocationViewSheets } from "@/modules/accounts-payable/shared/alloc
 
 // Montagem pura do XLSX do Mapa de Vale Transporte (sem server-only) — o download (export.ts) só serializa.
 
-export type TransitVoucherWorkbookMap = Prisma.TransitVoucherMapGetPayload<{ include: { competence: true; administrativeEntity: true; allocations: true; issues: true } }>;
+// Abas: Resumo, Rateio por Colaborador, Auditoria, Pendências (se houver) e, ao final, as perspectivas de rateio
+// compartilhadas. Somas em Prisma.Decimal; Number(...) só na hora de escrever a célula (o Excel guarda double).
+
+/** Mapa com competência, fornecedor, alocações e pendências — a rota de download pode juntar vários mapas num só. */
+export type TransitVoucherWorkbookMap =Prisma.TransitVoucherMapGetPayload<{ include: { competence: true; administrativeEntity: true; allocations: true; issues: true } }>;
 const MONEY = 'R$ #,##0.00';
 function header(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAF1B1B" } }; }
 function total(row: ExcelJS.Row) { row.font = { bold: true, color: { argb: "FFFFFFFF" } }; row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF000000" } }; }
 const dept = (row: TransitVoucherWorkbookMap["allocations"][number]) => row.department ?? "Não informado";
 
+/**
+ * Monta o workbook (não serializa). Linhas ordenadas por empresa → departamento → colaborador → id (ordem estável).
+ * Lança Error se a soma por empresa divergir do total geral, ou (dentro de addAllocationViewSheets) se as
+ * perspectivas não fecharem com map.totalAmount — o download falha em vez de entregar planilha inconsistente.
+ */
 export function buildTransitVoucherWorkbook(map: TransitVoucherWorkbookMap) {
   const workbook = new ExcelJS.Workbook(); workbook.creator = "Gestão Administrativa";
   const rows = [...map.allocations].sort((a, b) => comparePtBr(a.company, b.company) || comparePtBr(dept(a), dept(b)) || comparePtBr(a.employeeName, b.employeeName) || comparePtBr(a.id, b.id));
@@ -40,12 +49,15 @@ export function buildTransitVoucherWorkbook(map: TransitVoucherWorkbookMap) {
   total(summary.addRow(["Total Geral", new Set(rows.map((row) => row.employeeId ?? row.employeeName)).size, Number(grand)]));
   summary.columns = [{ width: 42 }, { width: 16 }, { width: 20 }]; summary.getColumn(3).numFmt = MONEY;
 
+  // Detalhe por colaborador com os snapshots gravados na alocação. Linhas importadas (legado) não têm passagens
+  // calculadas: "Passagens a Receber" cai para a coluna DIAS da planilha.
   const detail = workbook.addWorksheet("Rateio por Colaborador");
   detail.addRow(["Empresa", "Nome", "Departamento", "Centro de custo", "Passagens por Dia", "Diferença Mês Anterior", "Descontos", "Dias Úteis", "Passagens a Receber", "Valor Unitário", "Valor Total", "Observação"]); header(detail.getRow(1));
   for (const row of rows) detail.addRow([row.company, row.employeeName, row.department ?? "", row.costCenter ?? "", row.dailyPassageQuantity ?? "", row.previousPassageDifference ?? "", row.passageDiscount ?? "", row.workingDays ?? "", row.passagesToReceive ?? (row.days ? Number(row.days) : ""), row.fareUnitPrice ? Number(row.fareUnitPrice) : "", Number(row.amount), formatTransitObservation(row.observationType, row.observationDetails)]);
   total(detail.addRow(["TOTAL", "", "", "", "", "", "", "", "", "", Number(grand), ""]));
   detail.columns = [28, 34, 28, 28, 16, 20, 12, 12, 18, 16, 16, 40].map((width) => ({ width })); [10, 11].forEach((column) => { detail.getColumn(column).numFmt = MONEY; });
 
+  // Auditoria: origem, versão, fornecedor e feriados do holidaysSnapshot do mapa (não os feriados atuais da competência).
   const audit = workbook.addWorksheet("Auditoria");
   audit.addRows([["Competência", `${String(map.competence.month).padStart(2, "0")}/${map.competence.year}`], ["Origem", map.originalName], ["Versão", map.version], ["Processado em", map.processedAt], ["Fornecedor / cadastro_id", `${map.administrativeEntity.tradeName} / ${map.administrativeEntityId}`], ["Valor total", Number(map.totalAmount)], ["Feriados considerados", holidaysText(map.holidaysSnapshot)]]);
   audit.getColumn(1).font = { bold: true }; audit.getColumn(1).width = 28; audit.getColumn(2).width = 70; audit.getCell("B6").numFmt = MONEY;
@@ -74,6 +86,7 @@ export function buildTransitVoucherWorkbook(map: TransitVoucherWorkbookMap) {
   return workbook;
 }
 
+// Texto dos feriados do snapshot ("dd/mm/aaaa - Nome; ..."). Mapas anteriores ao snapshot mostram "Não registrado".
 function holidaysText(snapshot: unknown) {
   if (!Array.isArray(snapshot)) return "Não registrado";
   if (!snapshot.length) return "Nenhum";

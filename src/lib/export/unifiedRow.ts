@@ -13,6 +13,7 @@ const CODIGO_VT = "48";
 const CODIGO_DESC_AUT = "223";
 const CODIGO_IR = "999";
 
+// Soma os valores das rubricas com os códigos dados, arredondando a 2 casas (centavos).
 function sumByCodigo(colaborador: Colaborador, codigos: string[]): number {
   let total = 0;
   for (const r of colaborador.rubricas) {
@@ -21,6 +22,7 @@ function sumByCodigo(colaborador: Colaborador, codigos: string[]): number {
   return Math.round(total * 100) / 100;
 }
 
+/** Linha no formato do Relatório Sintético (mesmos campos de LinhaSintetico). */
 export interface UnifiedRow {
   mat: string;
   nome: string;
@@ -61,6 +63,7 @@ export function unifiedRowFromColaborador(c: Colaborador): UnifiedRow {
   const vt = sumByCodigo(c, [CODIGO_VT]);
   const descAut = sumByCodigo(c, [CODIGO_DESC_AUT]);
   const ir = sumByCodigo(c, [CODIGO_IR]);
+  // OUTROS não tem rubrica mapeada: sempre 0. VT aparece na coluna, mas não entra em TOTAL DESC.
   const outros = 0;
   const totalDesc = Math.round((inss + descAut + ir + outros) * 100) / 100;
 
@@ -93,6 +96,7 @@ function matAsNumberOrText(mat: string): string | number {
   return /^\d+$/.test(mat) ? Number(mat) : mat;
 }
 
+/** Array alinhado a SINTETICO_HEADERS, com MAT numérico quando possível. */
 export function unifiedRowToArray(r: UnifiedRow): (string | number)[] {
   return [
     matAsNumberOrText(r.mat),

@@ -1,4 +1,9 @@
 "use client";
+// Editor de ocorrências de um lote de Alimentação já finalizado (READY), MA ou PA. Usado pela página
+// /pagamentos/alimentacao ("Editar rateio"). Tudo é local até "Salvar e recalcular", que envia a situação de TODAS as
+// ocorrências para PATCH [batchId]/edit → editFoodMaBatch (servidor recalcula rateio, obrigação e auditoria).
+// Permite trocar colaborador, setor, situação (válida/duplicada/ignorada), alias, quantidade (só ocorrências sem data)
+// e, no PA, a Emissão NF (muda só a empresa do rateio). A empresa exibida é derivada da NF pelo helper único.
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import { Button, FeedbackAlert, StatusBadge, type StatusTone } from "@/components/ui";
@@ -6,6 +11,7 @@ import { compareDateThenId, comparePtBr } from "@/lib/sorting/ptBr";
 import { normalizeOrganizationalValue } from "@/lib/organizational-label";
 import { FOOD_PA_INVOICE_CODES, FOOD_PA_INVOICES, foodInvoiceEmissionToCompany, parseFoodPaInvoice, type FoodPaInvoiceCode } from "../invoice-company";
 
+// Formas mínimas dos dados recebidos da página (ocorrências do lote e colaboradores ativos).
 type Employee = { id: string; officialName: string; department: string };
 type Occurrence = {
   id: string;
@@ -34,6 +40,7 @@ type Value = {
   // PA: Emissão NF da linha (NF_01/NF_02; "" = não reconhecida/manter a atual).
   invoiceCode: FoodPaInvoiceCode | "";
 };
+// Filtros/ordenação da lista e paginação local (50 por página).
 type StatusFilter = "ALL" | "OK" | "FUZZY" | "ALIAS" | "PENDING" | "DUPLICATE";
 type Sort = "PRIORITY" | "NAME" | "DEPARTMENT" | "DATE";
 const PAGE_SIZE = 50;
@@ -44,6 +51,7 @@ const normalize = (value: string) =>
     .toLocaleLowerCase("pt-BR")
     .replace(/\s+/g, " ")
     .trim();
+// Situação exibida de cada linha; priority define a ordem de "Pendências primeiro" (0 = mais urgente).
 const statusInfo = (row: Occurrence, value: Value) => {
   if (value.disposition === "DUPLICATE" || row.duplicateCandidate)
     return {
@@ -88,6 +96,8 @@ const statusInfo = (row: Occurrence, value: Value) => {
   };
 };
 
+// Combobox de colaborador: por padrão filtra pelo mesmo setor (até 30 opções); "Usar ... como nome corrigido"
+// limpa o vínculo. Observação: o servidor exige colaborador existente, então salvar com nome livre é recusado.
 function EmployeeCombobox({
   value,
   department,
@@ -202,6 +212,7 @@ function EmployeeCombobox({
   );
 }
 
+/** Editor do rateio de um lote READY; `cancel` fecha o editor e `reload` recarrega a competência após salvar. */
 export function FoodMaEditor({
   batchId,
   locality,
@@ -246,6 +257,7 @@ export function FoodMaEditor({
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Busca com debounce de 250 ms; volta para a 1ª página a cada nova busca.
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setQuery(queryInput);

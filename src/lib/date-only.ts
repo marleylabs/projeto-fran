@@ -2,10 +2,13 @@
 // sempre "yyyy-MM-dd"; no banco vai como meia-noite UTC (@db.Date), e toda leitura/formatação usa
 // as partes UTC — assim 05/10/2026 nunca vira 04/10 ou 06/10 por fuso horário.
 
+// Lançado por parseOptionalDateOnly; mensagem "<label> inválida." pronta para devolver ao usuário.
 export class DateOnlyValidationError extends Error {}
 
+// Dia zero do serial do Excel (30/12/1899) — compensa o bug do ano bissexto 1900 do Excel.
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 const pad = (value: number) => String(value).padStart(2, "0");
+// Monta "yyyy-MM-dd" só se a data existir de fato (rejeita 31/02 etc., que o Date "rolaria" para março).
 const isoFromParts = (year: number, month: number, day: number) => {
   const date = new Date(Date.UTC(year, month - 1, day));
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? `${String(year).padStart(4, "0")}-${pad(month)}-${pad(day)}` : null;
@@ -59,6 +62,7 @@ export function parseOptionalDateOnly(value: unknown, label = "Data"): string | 
   return iso;
 }
 
+// Conversões banco <-> "yyyy-MM-dd" e exibição dd/MM/yyyy (vazio quando não há data). Sempre em UTC.
 export const dateOnlyToDb = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 export const dateOnlyFromDb = (value: Date | string | null | undefined) => (value ? parseDateOnly(value instanceof Date ? value : String(value)) : null);
 export const formatDateOnlyBR = (value: Date | string | null | undefined) => { const iso = dateOnlyFromDb(value); return iso ? iso.split("-").reverse().join("/") : ""; };

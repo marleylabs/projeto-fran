@@ -13,6 +13,7 @@ import type { PointMirrorCandidate } from "../point-mirror-review";
 import { moneyCents, people as peopleLabel } from "./format";
 import { InfoTip, Note } from "@/modules/accounts-payable/shared/ui/parts";
 
+/** Situação por pessoa: mesmo conjunto de BasicBasketPointMirrorStatus (point-mirror-server.ts). */
 export type PointMirrorStatus = "ABSENCE" | "VACATION" | "NEXT_COMPETENCE" | "BEFORE_ADMISSION" | "NO_OCCURRENCE" | "OUT_OF_PERIOD" | "NOT_SELECTED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "INVALID_CPF" | "NOT_IN_FILE" | "MISSING_ADMISSION";
 export type PointMirrorPerson = { employeeId: string | null; employeeName: string; department: string | null; cpfMasked: string; status: PointMirrorStatus; apurationAbsence: string; nextCompetenceAbsence: string; beforeAdmissionAbsence: string; beforeAdmissionVacation: string; vacationBlocks: Array<{ month: "current" | "reference"; label: string; financialDays: number; extended: boolean; isolatedLastDay: boolean }>; outOfPeriodRows: number; currentVacation: string; referenceVacation: string; currentVacationDates: number; referenceVacationDates: number; absenceEventWithoutJourney: number; duplicateVacationRows: number; currentBasketDays: number; retroactiveDays: number; adjustments: BasicBasketAdjustments | null };
 export type PointMirrorPreview = { importId: string; reference: { current: string; previous: string; absence: string; absenceStart: string; absenceEnd: string }; totals: Record<string, number>; people: PointMirrorPerson[]; candidates: PointMirrorCandidate[]; occurrences: Record<string, BasicBasketOccurrences> };
@@ -51,6 +52,7 @@ export type BasicBasketPointMirrorProps = {
   onBackToPreview: () => void;
 };
 
+/** Etapa do ImportFlow derivada do estado da seção: seleção → processamento → prévia → revisão → aplicação → concluído. */
 export function BasicBasketPointMirror({ description, file, busy, preview, stale, appliedCount, appliedIsCurrent, applyLabel, statusText, compare, onSelect, onClearFile, onProcess, onApply, onReset, onRemoveAdjustments, review, reviewing, applying, canApply, applyHint, onReview, onBackToPreview }: BasicBasketPointMirrorProps) {
   const step: ImportFlowStep = busy ? "processing" : preview && appliedIsCurrent && !reviewing && !applying ? "done" : preview && applying ? "applying" : preview && reviewing ? "review" : preview ? "preview" : "select";
   const t = preview?.totals ?? {};
@@ -105,6 +107,7 @@ export function BasicBasketPointMirror({ description, file, busy, preview, stale
   );
 }
 
+// Conteúdo da prévia: KPIs, tabela por pessoa (CPF só mascarado) e comparação antes/depois vinda da seção.
 function PointMirrorPreviewContent({ preview, statusText, compare }: { preview: PointMirrorPreview; statusText: (person: PointMirrorPerson) => string; compare: (person: PointMirrorPerson) => PointMirrorComparison }) {
   const t = preview.totals;
   const kpis = [["Linhas analisadas", t.rows], ["Colaboradores encontrados", t.located], ["Cesta cortada por Falta Injustificada", t.absence], ["Colaboradores com Férias", t.vacation], ["Sem ocorrência", t.noOccurrence + t.notInFile], ["Afeta a próxima competência", t.nextCompetence], ["Anterior à admissão (ignorada)", t.beforeAdmission], ["Fora do período de apuração", t.outOfPeriod], ["Não localizados", t.notFound], ["CPF inválido", t.invalidCpfPeople]] as const;

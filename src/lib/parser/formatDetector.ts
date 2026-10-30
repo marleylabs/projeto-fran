@@ -1,6 +1,9 @@
+// Detecção do layout de folha (Extrato Mensal x Relatório Sintético) por palavras-chave. Usado por router.ts.
+
 import type { PdfPageRows } from "@/lib/pdf/extractRows";
 import { rowText } from "@/lib/pdf/extractRows";
 
+/** Layouts reconhecidos; "desconhecido" quando nenhuma assinatura bate. */
 export type FormatoRelatorio = "extrato-mensal" | "relatorio-sintetico" | "desconhecido";
 
 /**
@@ -14,6 +17,7 @@ export function detectFormat(pages: PdfPageRows[]): FormatoRelatorio {
 
   if (upper.includes("EXTRATO MENSAL")) return "extrato-mensal";
 
+  // Regex tolera acentos/letras trocados na extração de texto (Ó->0, É->3).
   const mentionsSintetico = /RELAT[OÓ0]RIO\s+SINT[EÉ3]TICO/.test(upper);
   const looksLikeTable =
     upper.includes("PROVENTOS") &&

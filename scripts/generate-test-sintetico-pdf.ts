@@ -1,3 +1,6 @@
+// Gera um PDF sintético no layout do "Relatório Sintético de Folha de Pagamento" para testar o parser
+// sem usar folha real. Uso: npx tsx scripts/generate-test-sintetico-pdf.ts [saida.pdf] (padrão: test-sintetico.pdf).
+// Depois rode scripts/test-sintetico-e2e.ts com o arquivo gerado.
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { writeFile } from "fs/promises";
 
@@ -23,6 +26,7 @@ async function main() {
   draw("Relatório Sintético de Folha de Pagamento", 300, y);
   y -= 20;
 
+  // Posição x de cada coluna; o parser associa valores às colunas pela proximidade com estes cabeçalhos.
   const cols = [20, 60, 200, 250, 300, 340, 380, 420, 460, 500, 540, 580, 620, 660, 700, 730, 760, 790, 815];
   const headerLabels = [
     "CÓDIGO",

@@ -1,3 +1,6 @@
+// GET /api/accounts-payable/health-plan/[invoiceId]/download — XLSX do rateio do Plano de Saúde.
+// Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission). Saída: arquivo .xlsx como anexo (Content-Disposition).
+// Erros: 404 se a fatura não existe (ou não há fatura ativa do fornecedor).
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { getHealthPlanSupplierInvoices } from "@/modules/accounts-payable/health-plan/server";
 import { buildHealthPlanWorkbook } from "@/modules/accounts-payable/health-plan/workbook";

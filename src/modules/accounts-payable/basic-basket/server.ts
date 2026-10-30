@@ -1,4 +1,6 @@
 import "server-only";
+// Chamado pelas rotas /api/accounts-payable/basic-basket/* (context, employee-config, entries, point-mirror/review,
+// [mapId]/entries/[allocationId]); o cancelamento do mapa fica em ../deletion-server.ts (cancelBasicBasketMap).
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { dateOnlyFromDb, dateOnlyToDb } from "@/lib/date-only";
@@ -15,11 +17,14 @@ import { BasicBasketReviewError, buildPointMirrorCandidates, correctionAdjustmen
 // Cesta MENSAL, Observação). Pagamentos (anterior/atual), base de 30 dias e dias de direito à Cesta, Cesta paga,
 // mês de referência do Retroativo e seus dias, dias retroativos, Retroativo e Total são sempre derivados aqui, com a
 // Data de Admissão lida do cadastro; snapshots históricos nunca são recalculados a partir do cadastro atual.
+/** Erro de negócio com mensagem pronta para o usuário; as rotas respondem HTTP 400 com ela. */
 export class BasicBasketValidationError extends Error {}
 type Tx = Prisma.TransactionClient;
+// Coluna @db.Date (meia-noite UTC) → "yyyy-MM-dd".
 const isoDay = (date: Date) => date.toISOString().slice(0, 10);
 const OBSERVATION_MAX = 500;
 
+// Competência plausível (ano 2000..2200, mês 1..12); senão BasicBasketValidationError.
 function validateCompetence(year: number, month: number) {
   if (!Number.isInteger(year) || year < 2000 || year > 2200 || !Number.isInteger(month) || month < 1 || month > 12) throw new BasicBasketValidationError("Competência inválida.");
 }
@@ -47,6 +52,8 @@ export async function getBasicBasketContext(year: number, month: number) {
   return { year, month, daysInMonth: basicBasketDaysInMonth(year, month), calculationDays: BASIC_BASKET_CALCULATION_DAYS, ...cycle, holidays, people };
 }
 
+/** Lançamentos VIGENTES da competência (current, não cancelados) com fornecedor, obrigação e alocações ativas
+ *  (deletedAt null). Somente leitura; alimenta as abas Rateio/Resumo/Histórico. */
 export async function getBasicBasketCompetence(year: number, month: number) {
   validateCompetence(year, month);
   return prisma.basicBasketCompetence.findUnique({
@@ -61,14 +68,17 @@ export async function getBasicBasketEmployeeConfigs() {
   return rows.map((row) => ({ employeeId: row.employeeId, defaultCompanyId: row.defaultCompany?.active ? row.defaultCompanyId : null, driverBonus: row.driverBonus.toFixed(2), agreementAmount: row.agreementAmount.toFixed(2), basketAmount: row.basketAmount.toFixed(2) }));
 }
 
+/** Payload do cliente por colaborador: só INSUMOS (dinheiro em texto pt-BR ou número). Demais campos são ignorados. */
 export type BasicBasketEntryInput = { employeeId: string; companyId: string; driverBonus: unknown; agreementAmount: unknown; basketAmount: unknown; observation?: string | null; manualVacationDays?: unknown };
 // basketCents = VALOR MENSAL cheio informado (vira o padrão do colaborador); o valor pago é derivado.
 // manualVacationDays = Férias manuais da competência (dias financeiros 0..30; null = usa o Espelho aprovado). Específico
 // do lançamento: NÃO vira padrão do colaborador.
 type ParsedEntry = { employeeId: string; companyId: string; driverBonusCents: number; agreementCents: number; basketCents: number; observation: string | null; manualVacationDays: number | null };
+/** Decisões da revisão do Espelho: listas de ids de candidatos (conferidas em validatePointMirrorDecisions). */
 export type BasicBasketPointMirrorReviewInput = { approvedIds: unknown; rejectedIds: unknown };
 export const MISSING_ADMISSION_MESSAGE = "Informe a Data de Admissão do colaborador para calcular a Cesta Básica.";
 
+// Valida o formato do insumo e converte dinheiro para centavos; qualquer erro vira BasicBasketValidationError.
 function parseEntry(entry: BasicBasketEntryInput): ParsedEntry {
   if (!entry || typeof entry.employeeId !== "string" || !entry.employeeId) throw new BasicBasketValidationError("Colaborador inválido.");
   if (typeof entry.companyId !== "string" || !entry.companyId) throw new BasicBasketValidationError("Selecione uma empresa cadastrada para cada colaborador.");
@@ -133,6 +143,7 @@ async function syncMapTotals(tx: Tx, map: { id: string; administrativeEntityId: 
   const total = all.reduce((sum, row) => sum.add(row.amount), new Prisma.Decimal(0));
   if (total.lte(0)) throw new BasicBasketValidationError("O lançamento ficaria com total R$ 0,00 (sem valor a pagar); nada foi gravado.");
   if (all.some((row) => !row.driverBonus.add(row.agreementAmount).add(row.basketAmount).add(row.retroactiveAmount).equals(row.amount))) throw new BasicBasketValidationError("Erro de integridade: Total de uma linha diferente da soma dos componentes.");
+  // Obrigação financeira: atualiza o valor bruto da existente ou cria uma nova, na mesma transação.
   let financialRecordId = map.financialRecordId;
   if (financialRecordId) await tx.financialRecord.update({ where: { id: financialRecordId }, data: { grossAmount: total } });
   else financialRecordId = (await createFinancialRecordInTransaction(tx, { administrativeEntityId: map.administrativeEntityId, grossAmount: total, createdByUserId: userId })).id;
@@ -181,6 +192,10 @@ export async function reviewBasicBasketPointMirror(input: { importId: string; ye
   });
 }
 
+/** Novo lançamento (ou acréscimo ao mapa vigente do fornecedor na competência). Numa transação Serializable:
+ *  valida e calcula TODAS as linhas, cria/reutiliza o BasicBasketMap (nova versão se não houver vigente), grava as
+ *  alocações com snapshots, atualiza os padrões do colaborador e cria/atualiza a obrigação (FinancialRecord) com o
+ *  total conferido. Colaborador já lançado no mapa é ignorado e devolvido em duplicateNames. Erros: BasicBasketValidationError. */
 export async function addBasicBasketEntries(input: { year: number; month: number; administrativeEntityId: string; entries: BasicBasketEntryInput[]; userId: string; pointMirrorImportId?: string | null; pointMirrorReview?: BasicBasketPointMirrorReviewInput | null }) {
   validateCompetence(input.year, input.month);
   if (!Array.isArray(input.entries) || !input.entries.length) throw new BasicBasketValidationError("Selecione ao menos um colaborador.");
@@ -249,6 +264,7 @@ export async function addBasicBasketEntries(input: { year: number; month: number
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+// Correção só enquanto a obrigação não avançou: ativa e PENDING em pagamento, conciliação e contabilidade.
 function assertFinancialPristine(record: { lifecycleState: string; paymentState: string; reconciliationState: string; accountingState: string } | null) {
   if (record && (record.lifecycleState !== "ACTIVE" || record.paymentState !== "PENDING" || record.reconciliationState !== "PENDING" || record.accountingState !== "PENDING")) throw new BasicBasketValidationError("Este lançamento já avançou no fluxo financeiro e não pode ser corrigido diretamente.");
 }

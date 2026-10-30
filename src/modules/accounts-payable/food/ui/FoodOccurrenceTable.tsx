@@ -6,8 +6,10 @@ import { Trash2 } from "lucide-react";
 import { Button, DataTable, type DataTableColumn } from "@/components/ui";
 import { dateBr, money } from "./format";
 
+/** Linha exibida: occurredOn null = lançamento manual PA por quantidade (sem data); amount em string decimal. */
 export type FoodOccurrenceRow = { id: string; name: string; occurredOn: string | null; mealQuantity: number; department: string; amount: string };
 
+/** Tabela com seleção múltipla; onDelete recebe os ids (a página abre o modal de exclusão com motivo). */
 export function FoodOccurrenceTable({ rows, selected, onSelectedChange, onDelete }: { rows: FoodOccurrenceRow[]; selected: string[]; onSelectedChange: (ids: string[]) => void; onDelete: (ids: string[]) => void }) {
   const columns: DataTableColumn<FoodOccurrenceRow>[] = [
     { id: "name", header: "Colaborador", rowHeader: true, width: "16rem", cell: (row) => <span className="block truncate">{row.name}</span> },

@@ -6,4 +6,8 @@ export { easterSunday, getBrazilianNationalHolidays, toHolidaySnapshot } from "@
 export type { HolidaySource, HolidayEntry, EffectiveHoliday, HolidaySnapshotEntry } from "@/modules/shared/holidays";
 import { getEffectiveHolidays } from "@/modules/shared/holidays";
 
+/**
+ * Feriados efetivos da competência: nacionais (código) + manuais (banco), uma entrada por data; na mesma data
+ * prevalece o nacional (o nome manual fica em manualName). Resultado alimenta dias úteis e o holidaysSnapshot do mapa.
+ */
 export const getEffectiveTransitVoucherHolidays = getEffectiveHolidays;

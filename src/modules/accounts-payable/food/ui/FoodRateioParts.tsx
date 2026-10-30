@@ -12,6 +12,7 @@ import { FOOD_PA_UNIDENTIFIED_COMPANY, type FoodPaRateioCompany, type FoodPaRate
 import type { FoodRateioViewRow } from "../rateio-views";
 import { money, moneyCents } from "./format";
 
+// Rótulo com singular/plural.
 const meals = (count: number) => `${count} ${count === 1 ? "refeição" : "refeições"}`;
 
 /** PA: rateio por Empresa (Emissão NF) com a conferência empresas = lote/obrigação. */
@@ -40,6 +41,7 @@ export function FoodPaCompanyRateio({ companies, companiesCents, expectedCents, 
   );
 }
 
+/** Grupo por setor montado pela página a partir das alocações salvas (amount em reais; people.amount em string decimal). */
 export type FoodSectorGroup = { sector: string; collaborators: number; meals: number; amount: number; people: Array<{ id: string; name: string; meals: number; amount: string }> };
 
 /** Perspectiva Departamento (lista de setores das alocações salvas, como sempre foi). */

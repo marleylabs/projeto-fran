@@ -1,7 +1,11 @@
+// GET /api/accounts-payable/training-expense/summary?year=&month= — totais de Treinamentos (getTrainingExpenseSummary).
 import { NextRequest, NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { getTrainingExpenseSummary } from "@/modules/accounts-payable/training-expense/server";
 
+/**
+ * Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission). Filtros opcionais. Saída: JSON do resumo.
+ */
 export async function GET(request: NextRequest) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);
   if (response) return response;

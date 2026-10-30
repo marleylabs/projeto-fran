@@ -1,3 +1,7 @@
+// Barril (barrel) do Design System: ponto único de importação dos componentes de interface (`@/components/ui`).
+// Ao criar um componente novo em components/ui, exporte-o aqui junto com seus tipos públicos e helpers puros
+// (os testes importam alguns helpers — nextSort, paginationRange, validateUploadFile… — direto dos arquivos).
+// Componentes removidos não devem voltar a ser exportados (há teste garantindo a limpeza dos legados).
 export {
   Button,
   buttonClassName,

@@ -3,8 +3,11 @@
 import { daysInMonth, isoDate } from "@/modules/shared/calendar";
 import { getBrazilianNationalHolidays } from "@/modules/shared/holidays";
 
+// Erro de domínio do cálculo (valor negativo, proporção inválida, dinheiro mal formatado). No servidor vira
+// BasicBasketValidationError (HTTP 400); na tela vira mensagem da linha.
 export class BasicBasketCalculationError extends Error {}
 
+// Dias REAIS do mês: só calendário/card da tela. Nunca entram na fórmula financeira (base fixa de 30).
 export const basicBasketDaysInMonth = (year: number, month: number) => daysInMonth(year, month);
 
 // Pagamento: SEMPRE a 2ª quarta-feira da competência — sem mover por feriado (não existe essa regra).
@@ -55,6 +58,8 @@ export function basicBasketContextFromPayments(previousPaymentDate: string, paym
   const absence = previousCompetence(competenceYear, competenceMonth), absenceBounds = monthBounds(absence.year, absence.month);
   return { previousPaymentDate, paymentDate, competenceYear, competenceMonth, currentMonthStart: current.start, currentMonthEnd: current.end, referenceYear, referenceMonth, referenceMonthStart: reference.start, referenceMonthEnd: reference.end, absenceReferenceYear: absence.year, absenceReferenceMonth: absence.month, absenceReferenceMonthStart: absenceBounds.start, absenceReferenceMonthEnd: absenceBounds.end };
 }
+// Contexto pela regra atual (2ª quarta do mês anterior → 2ª quarta da competência). Lançamento NOVO usa esta função;
+// a correção usa basicBasketContextFromPayments com as datas gravadas no mapa (snapshot), nunca a regra atual.
 export function buildBasicBasketContext(year: number, month: number) {
   const previous = previousCompetence(year, month);
   return basicBasketContextFromPayments(getSecondWednesday(previous.year, previous.month), getSecondWednesday(year, month));
@@ -145,6 +150,8 @@ function applicableVacationDays(dates: readonly string[], periodStart: string, m
 // Datas de ocorrência aplicáveis ao colaborador: só a partir da admissão (inclusive). Reutilizável por Falta e Férias.
 export const applicableOccurrenceDates = (dates: readonly string[], admissionDate: string) => dates.filter((date) => date >= admissionDate);
 
+// Ocorrências (datas) de UM colaborador → ajustes numéricos para calculateBasicBasketLine. Sem admissão → nenhum
+// ajuste (o lançamento é bloqueado em outro ponto). No fluxo revisado recebe só as datas APROVADAS (point-mirror-review).
 export function resolveBasicBasketAdjustments(input: { context: BasicBasketContext; admissionDate: string | null | undefined; occurrences: BasicBasketOccurrences | null | undefined }): BasicBasketAdjustments {
   const { context, admissionDate } = input; const occurrences = input.occurrences ?? EMPTY_BASIC_BASKET_OCCURRENCES;
   if (!admissionDate) return NO_BASIC_BASKET_ADJUSTMENTS;
@@ -163,6 +170,8 @@ export function resolveBasicBasketAdjustments(input: { context: BasicBasketConte
   };
 }
 
+// Entrada de UMA linha: dinheiro em CENTAVOS inteiros; dias de direito já calculados por calculateCurrentBasketDays /
+// calculateRetroactiveDays. adjustments omitido = sem Espelho de Ponto. Lança BasicBasketCalculationError.
 export type BasicBasketLineInput = { driverBonusCents: number; agreementCents: number; monthlyBasketCents: number; currentBasketDays: number; retroactiveDays: number; adjustments?: BasicBasketAdjustments };
 // Dias finais = direito − Férias aplicáveis (mínimo 0), ou 0 com Falta Injustificada.
 // Cesta paga = mensal × currentPayableDays ÷ base (30) · Retroativo = mensal × retroactivePayableDays ÷ base (30) ·
@@ -191,6 +200,8 @@ export function summarizeDateRanges(dates: readonly string[]) {
   return ranges.join(", ");
 }export const centsToDecimalString = (cents: number) => `${cents < 0 ? "-" : ""}${Math.floor(Math.abs(cents) / 100)}.${String(Math.abs(cents) % 100).padStart(2, "0")}`;
 
+// centsToDecimalString (fim da linha acima): centavos inteiros → "123.45" sem float; é o texto gravado nas colunas
+// Decimal do Prisma e nos padrões do colaborador.
 // Calendário só VISUAL: nacionais (helper compartilhado) + manuais do Vale Transporte e do Café da Manhã,
 // uma entrada por data (mesma data em várias fontes aparece uma vez, com a lista de fontes).
 export type BasicBasketHolidaySource = "NATIONAL" | "TRANSIT_VOUCHER" | "BREAKFAST";

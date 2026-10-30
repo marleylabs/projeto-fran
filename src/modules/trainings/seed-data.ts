@@ -7,6 +7,7 @@
 // "additionalStudentPrice" (valor para incluir aluno adicional) e "unitPrice"
 // (valor unitário do treinamento) são colunas distintas do orçamento e
 // divergem intencionalmente nos itens 17, 25 e 26 — não "corrigir".
+/** Item da proposta. sourceItemId = número do item no documento (chave de idempotência da importação). */
 export type TrainingSeedItem = {
   sourceItemId: number;
   description: string;
@@ -20,6 +21,7 @@ export type TrainingSeedItem = {
   totalPrice: string;
 };
 
+/** Proposta comercial completa; supplierCnpj localiza o fornecedor já cadastrado em AdministrativeEntity. */
 export type TrainingProposalSeed = {
   supplierCnpj: string;
   proposalNumber: string;
@@ -29,6 +31,7 @@ export type TrainingProposalSeed = {
   items: TrainingSeedItem[];
 };
 
+/** Proposta 898 da Massariol (fornecedor por CNPJ). Importada por scripts/seed-training-proposal-898.ts. */
 export const MASSARIOL_PROPOSAL_898: TrainingProposalSeed = {
   supplierCnpj: "65082906000148",
   proposalNumber: "898",

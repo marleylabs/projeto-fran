@@ -13,7 +13,8 @@ import { formatTransitObservation } from "../calculations";
 import { money, moneyCents, people } from "./format";
 import type { TransitEntryValue } from "./types";
 
-export type TransitFillRow = { id: string; employee: CollaboratorOption | undefined; error: string | null; passages: number; total: number };
+/** Linha da prévia montada pela página: error ≠ null indica insumo inválido; total em centavos. */
+export type TransitFillRow ={ id: string; employee: CollaboratorOption | undefined; error: string | null; passages: number; total: number };
 
 type Props = {
   rows: TransitFillRow[];
@@ -37,6 +38,7 @@ function Calculated({ children }: { children: ReactNode }) {
   );
 }
 
+/** Tabela editável do Preenchimento; mostra só linhas que já têm estado de digitação em `values`. */
 export function TransitFillTable({ rows, values, baseDays, fare, companyListId, previewTotal, onPatch, onCompanyText }: Props) {
   const visible = rows.filter((row) => values[row.id]);
   // Inteiros informados pelo usuário (sem CurrencyInput); a validação continua na prévia da página e no servidor.

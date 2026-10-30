@@ -9,6 +9,9 @@ import { Button, buttonClassName, FeedbackAlert, Field, TextInput } from "@/comp
 
 // Fluxo real: o ADMINISTRADOR gera o link (Usuários → Redefinir senha); quem recebe define a nova senha aqui.
 // Não existe pedido público de "esqueci minha senha".
+// Formulário de nova senha: lê o `token` da query string (?token=...), envia token + senha + confirmação para
+// /api/auth/password-reset. Validações de verdade (token válido/expirado, tamanho, confirmação) são do servidor;
+// minLength só ajuda no cliente. Sem token o botão fica desabilitado e um aviso é exibido.
 function RedefinirSenhaForm() {
   const token = useSearchParams().get("token") ?? "";
   const [password, setPassword] = useState("");
@@ -61,6 +64,8 @@ function RedefinirSenhaForm() {
   );
 }
 
+/** Página pública /redefinir-senha (liberada no proxy). useSearchParams exige um limite de <Suspense> no Next,
+ * por isso o formulário fica num componente filho com fallback de carregamento. */
 export default function RedefinirSenhaPage() {
   return (
     <Suspense fallback={<div className="grid min-h-dvh place-items-center bg-background"><span role="status" aria-label="Carregando"><LoaderCircle size={24} className="animate-spin text-primary motion-reduce:animate-none" aria-hidden="true" /></span></div>}>

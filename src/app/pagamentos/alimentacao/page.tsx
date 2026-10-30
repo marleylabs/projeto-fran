@@ -3,6 +3,11 @@
 // Card, Field, CurrencyInput, UploadDropzone, DataTable, StatusBadge, AllocationViews), no mesmo padrão de Cesta, Café e
 // VT. Estado, chamadas de API, validações da prévia e payloads continuam AQUI; os componentes em food/ui só exibem.
 // Regras MA/PA (ciclos, NF → empresa, snapshots, rateios, XLSX) seguem no servidor e nos helpers já existentes.
+// Fluxo: competência → estado (MA em 2 ciclos quinzenais; PA mensal) → fornecedor → lote (upload ou lançamento
+// manual) → revisão de nomes (UNDER_REVIEW) → lote READY com UMA obrigação por fornecedor/ciclo → aba Rateio.
+// APIs: /api/accounts-payable/food (GET competência), upload, manual, price (PATCH valor do fornecedor), template,
+// [batchId] e [batchId]/records (GET/DELETE), [batchId]/download e consolidated/download. Servidor: modules/accounts-payable/food.
+// Valores somados aqui com Number() são só exibição; os totais oficiais (Decimal/centavos) vêm do servidor.
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Download, FileSpreadsheet, ListTree, PencilLine, Trash2 } from "lucide-react";
 import {
@@ -56,6 +61,7 @@ import type { FoodBatchStatus } from "@/modules/accounts-payable/food/batch-stat
 import { parseManualFoodResponse } from "@/modules/accounts-payable/food/manual-contract";
 import { FOOD_PA_INVOICE_REQUIRED_MESSAGE, isFoodPaInvoiceCode, type FoodPaInvoiceCode, type FoodPaRateioCompany } from "@/modules/accounts-payable/food/invoice-company";
 
+// Tipos de EXIBIÇÃO do JSON de GET /api/accounts-payable/food (decimais como texto).
 type Locality = "MA" | "PA";
 type Entity = {
   id: string;
@@ -65,6 +71,8 @@ type Entity = {
   activityArea: string;
   locality: string;
 };
+// Alocação por colaborador no lote. sourceIdentifier identifica a pessoa (pode ser CPF/matrícula: dado pessoal,
+// usado só como chave de agrupamento, nunca exibido).
 type Allocation = {
   id: string;
   sourceIdentifier: string | null;
@@ -78,6 +86,7 @@ type Allocation = {
 };
 type Issue = { id: string; sourceRow: number | null; message: string };
 type FoodEmployee = CollaboratorOption;
+// Uma refeição/linha importada ou lançada: nome recebido × colaborador oficial casado, setor confirmado, NF (PA).
 type MealOccurrence = {
   id: string;
   sourceRow: number;
@@ -96,6 +105,7 @@ type MealOccurrence = {
   restaurantName: string | null;
   amount: string;
 };
+// Lote = fornecedor × estado × ciclo (cycle 0 = lote mensal anterior aos ciclos do MA) × versão.
 type Batch = {
   id: string;
   locality: Locality;
@@ -120,6 +130,8 @@ type Batch = {
   issues: Issue[];
   revisions: { revision: number; createdAt: string }[];
 };
+// Exclusão do lote inteiro (exige digitar EXCLUIR) ou de ocorrências selecionadas, sempre com motivo. É cancelamento
+// lógico no servidor: recalcula colaboradores, setores, total e obrigação; o arquivo original fica para auditoria.
 function FoodDeletionControls({
   batch,
   reload,
@@ -271,6 +283,7 @@ function FoodDeletionControls({
     </div>
   );
 }
+// Abas de topo (Alimentação, Café da Manhã, Cesta Básica), formas de entrada do lote e ciclos quinzenais do MA.
 const FOOD_SUBSECTIONS = [
   { value: "alimentacao", label: "Alimentação" },
   { value: "cafe", label: "Café da Manhã" },
@@ -293,6 +306,7 @@ const money = (value: string | number) =>
 // valida o valor. O valor recebido (ex.: preço do cadastro) é exibido sem cortar casas; só a digitação passa a ter 2 casas.
 const currencyValue = (text: string) => { const normalized = text.trim().replace(",", "."); return /^\d+(\.\d+)?$/.test(normalized) ? Number(normalized) : null; };
 const currencyText = (value: number | null) => (value === null ? "" : value.toFixed(2));
+// Colaboradores únicos entre lotes: chave = sourceIdentifier ou, na falta, o nome sem acento/caixa/espaços extras.
 const uniqueCollaborators = (values: Batch[]) =>
   new Set(
     values.flatMap((batch) =>
@@ -308,6 +322,7 @@ const uniqueCollaborators = (values: Batch[]) =>
       ),
     ),
   ).size;
+// Localidade do cadastro pode ser lista ("MA/PA", "MA, PA"): o fornecedor aparece em cada estado listado.
 const accepts = (value: string, locality: Locality) =>
   value
     .toUpperCase()
@@ -334,6 +349,7 @@ function MaRateio({
   const [editor, setEditor] = useState<{ batch: Batch; occurrences: MealOccurrence[] } | null>(null);
   const [loadingEditor, setLoadingEditor] = useState<string | null>(null);
   const toast = useToast();
+  // Carrega as ocorrências do lote (GET .../records) e abre o FoodMaEditor; a gravação acontece dentro do editor.
   async function beginEditing(target: Batch) {
     setLoadingEditor(target.id);
     try {
@@ -512,6 +528,9 @@ function FoodBatchReadyCard({ batch, onOpenRateio }: { batch: Batch; onOpenRatei
   );
 }
 
+// Card do lote na Operação, conforme o status: UNDER_REVIEW → revisão de nomes (FoodMaReview); READY com refeições →
+// resumo (ou rateio completo, na aba Rateio); demais (lote por colaborador, sem refeições, ou com inconsistências) →
+// card simples com rateio individual/por setor e pendências.
 function BatchCard({
   batch,
   employees,
@@ -623,6 +642,8 @@ function BatchCard({
   );
 }
 
+// Painel de um estado (e ciclo, no MA): escolha do fornecedor, lançamento manual ou upload, e os lotes processados.
+// Valor por refeição: vem do cadastro do fornecedor (prices); no upload precisa estar salvo antes de processar.
 function LocalityPanel({
   locality,
   cycle,
@@ -702,9 +723,11 @@ function LocalityPanel({
           : !(Number(manualAmount) > 0)
             ? "Informe o valor por refeição para continuar."
             : null;
+  // Janela de datas do lançamento manual: 1º ciclo do MA = dias 1–15; 2º ciclo = 16 ao fim; PA = mês inteiro.
   const lastDay = new Date(year, month, 0).getDate();
   const dateMin = `${year}-${String(month).padStart(2, "0")}-${String(locality === "MA" && cycle === 2 ? 16 : 1).padStart(2, "0")}`;
   const dateMax = `${year}-${String(month).padStart(2, "0")}-${String(locality === "MA" && cycle === 1 ? 15 : lastDay).padStart(2, "0")}`;
+  // Quantidade de refeições: PA = soma das quantidades por colaborador; MA = colaboradores × datas.
   const occurrenceCount =
     locality === "PA"
       ? manualEmployeeIds.reduce(
@@ -729,6 +752,7 @@ function LocalityPanel({
       .then((body) => setAvailableEmployees(body.employees ?? []))
       .catch(() => undefined);
   }, [year, month]);
+  // Salva o valor por colaborador/refeição do fornecedor (PATCH .../food/price, com ano/mês da competência) e recarrega.
   async function savePrice() {
     setSavingPrice(true);
     setError(null);
@@ -754,6 +778,8 @@ function LocalityPanel({
       setSavingPrice(false);
     }
   }
+  // Upload multipart do arquivo do fornecedor (MA: CSV/XLSX; PA: XLSX RateioOficial). Reenvio gera nova versão do lote.
+  // No PA a competência vem do próprio arquivo: se diferir da selecionada, a tela troca para a competência importada.
   async function upload(event: FormEvent) {
     event.preventDefault();
     if (!file) return;
@@ -800,6 +826,8 @@ function LocalityPanel({
       setUploading(false);
     }
   }
+  // Lançamento manual: PA envia quantidade + NF por colaborador; MA envia colaboradores × datas. Ocorrências já
+  // existentes são ignoradas pelo servidor e listadas no aviso (duplicateDetails).
   async function saveManual(event: FormEvent) {
     event.preventDefault();
     if (!manualReady) return;
@@ -1154,6 +1182,7 @@ function LocalityPanel({
   );
 }
 
+// MA: abas 1º/2º ciclo (cada ciclo tem seus lotes e obrigações) + histórico de lotes mensais anteriores aos ciclos.
 function MaCyclePanel(
   props: Omit<
     Parameters<typeof LocalityPanel>[0],
@@ -1285,6 +1314,8 @@ function LocalityTabs({
 
 const cycleLabel = (batch: Batch) => batch.locality === "PA" ? "competência" : batch.cycle === 1 ? "1º ciclo" : batch.cycle === 2 ? "2º ciclo" : "mensal (anterior aos ciclos)";
 
+// Aba Rateio: só lotes READY, por estado. Lotes com refeições viram MaRateio por fornecedor; lotes sem refeições
+// (por colaborador) usam o BatchCard simples.
 function FoodAllocationTab({ batches, employees, reload, locality, onLocalityChange }: {
   batches: Batch[];
   employees: FoodEmployee[];
@@ -1329,6 +1360,10 @@ function FoodAllocationTab({ batches, employees, reload, locality, onLocalityCha
   );
 }
 
+/**
+ * Página /pagamentos/alimentacao. Carrega a competência (lotes, preços por fornecedor e colaboradores) e os cadastros
+ * de área "ALIMENTA..."; `load` é o reload passado aos filhos após cada gravação. Café e Cesta são seções independentes.
+ */
 export default function FoodAccountsPayablePage() {
   const [subsection, setSubsection] = useState<"alimentacao" | "cafe" | "cesta">("alimentacao");
   const now = new Date();
@@ -1386,6 +1421,7 @@ export default function FoodAccountsPayablePage() {
     });
   }, []);
 
+  // Indicadores do topo: só lotes READY. O total MA + PA é informativo (as obrigações seguem separadas por fornecedor).
   const ready = batches.filter((batch) => batch.status === "READY");
   const totalPeople = uniqueCollaborators(ready);
   const totalAmount = ready.reduce(

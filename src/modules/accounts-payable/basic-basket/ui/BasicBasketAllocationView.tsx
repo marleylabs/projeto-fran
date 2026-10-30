@@ -21,6 +21,7 @@ import type { BasicBasketAllocationRow, BasicBasketMapData } from "./types";
 
 type ViewProps = { monthLabel: string; onCorrect: (map: BasicBasketMapData, row: BasicBasketAllocationRow) => void; onCancel: (mapId: string) => void; onFlash: (mapId: string) => void; flashBusy: string | null };
 
+/** Um cartão por lançamento (mapa). Corrigir, cancelar e Máscara Flash são callbacks da seção. */
 export function BasicBasketAllocationView({ maps, ...props }: ViewProps & { maps: BasicBasketMapData[] }) {
   if (!maps.length) return <Card><EmptyState title="Nenhum lançamento nesta competência." description="Preencha as etapas para gerar o rateio." /></Card>;
   return (
@@ -30,6 +31,7 @@ export function BasicBasketAllocationView({ maps, ...props }: ViewProps & { maps
   );
 }
 
+// Cartão de um mapa com conferência Valor total × Rateado × Obrigação (a diferença em centavos deve ser zero).
 function MapAllocation({ map, monthLabel, onCorrect, onCancel, onFlash, flashBusy }: ViewProps & { map: BasicBasketMapData }) {
   const [view, setView] = useState<AllocationViewId>("companyDepartment");
   const tree = groupBasicBasketByCompanyDepartment(map.allocations);

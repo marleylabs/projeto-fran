@@ -1,9 +1,11 @@
+// Exportações (no navegador) do Relatório Sintético: CSV, JSON e XLSX (aba "Resumo" + aba "Colaboradores").
 import ExcelJS from "exceljs";
 import type { SinteticoResult } from "@/lib/types/sintetico";
 import { formatBRNumber } from "@/lib/normalize/money";
 import { SINTETICO_HEADERS, linhaSinteticoToRow } from "./sinteticoRows";
 import { triggerDownload } from "./download";
 
+// Mesmo padrão de ./csv: ";" e decimal "," para o Excel pt-BR; o "﻿" (BOM) no início garante UTF-8.
 const DELIMITER = ";";
 
 function escapeCsvCell(value: string | number): string {
@@ -14,6 +16,7 @@ function escapeCsvCell(value: string | number): string {
   return str;
 }
 
+/** Baixa o CSV com SINTETICO_HEADERS + uma linha por colaborador. */
 export function exportSinteticoCsv(result: SinteticoResult, filename = "relatorio-sintetico.csv") {
   const lines = [
     SINTETICO_HEADERS.map(escapeCsvCell).join(DELIMITER),
@@ -23,16 +26,19 @@ export function exportSinteticoCsv(result: SinteticoResult, filename = "relatori
   triggerDownload(blob, filename);
 }
 
+/** Baixa o resultado completo do Relatório Sintético como JSON. */
 export function exportSinteticoJson(result: SinteticoResult, filename = "relatorio-sintetico.json") {
   const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
   triggerDownload(blob, filename);
 }
 
+// Cabeçalho em branco sobre a cor institucional (roxo #64025F).
 function styleHeaderRow(row: ExcelJS.Row) {
   row.font = { bold: true, color: { argb: "FFFFFFFF" } };
   row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF64025F" } };
 }
 
+/** Baixa o XLSX com cabeçalho/totais do relatório na aba "Resumo" e as linhas na aba "Colaboradores". */
 export async function exportSinteticoExcel(result: SinteticoResult, filename = "relatorio-sintetico.xlsx") {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Extrato Mensal - Extrator de Folha";
@@ -63,6 +69,7 @@ export async function exportSinteticoExcel(result: SinteticoResult, filename = "
     sheet.addRow(linhaSinteticoToRow(l));
   }
   sheet.columns.forEach((col) => (col.width = 16));
+  // Letra da última coluna via char code: só funciona até 26 colunas (Z).
   sheet.autoFilter = { from: "A1", to: `${String.fromCharCode(64 + SINTETICO_HEADERS.length)}1` };
 
   const buffer = await workbook.xlsx.writeBuffer();

@@ -4,10 +4,12 @@
 //   cabeçalho da subseção → contexto da competência → abas [Operação] [Rateio] [Histórico].
 // Não conhece regra de nenhum módulo: cada um entrega o conteúdo de cada região (slots). Operação fica montada ao trocar
 // de aba (keepMounted) para não perder formulário não salvo; Rateio e Histórico montam sob demanda.
+// Usado por /pagamentos/alimentacao e pelas seções de Café da Manhã, Cesta Básica e Plano de Saúde.
 import type { ReactNode } from "react";
 import { Card, DataTable, EmptyState, Field, SkeletonCard, SkeletonGroup, StatusBadge, TabPanel, Tabs, textInputClassName, type DataTableColumn, type StatusTone } from "@/components/ui";
 import { CompetenceSummary, type CompetenceSummaryItem } from "./CompetenceSummary";
 
+/** Abas fixas do benefício, nesta ordem: Operação → Rateio → Histórico. */
 export type BenefitTab = "operacao" | "rateio" | "historico";
 export const BENEFIT_TABS: { value: BenefitTab; label: string }[] = [
   { value: "operacao", label: "Operação" },
@@ -15,6 +17,10 @@ export const BENEFIT_TABS: { value: BenefitTab; label: string }[] = [
   { value: "historico", label: "Histórico" },
 ];
 
+/**
+ * Casca do benefício: título/descrição, contexto da competência e as três abas. A aba ativa é controlada pelo
+ * módulo (tab/onTabChange); cada slot recebe o conteúdo pronto.
+ */
 export function BenefitWorkspace({ title, description, context, tab, onTabChange, operation, allocation, history }: {
   title: string;
   description: ReactNode;
@@ -63,6 +69,7 @@ export function BenefitCompetenceContext({ id, competence, onCompetenceChange, i
   );
 }
 
+/** Linha do histórico: lançamento, situação, versão, identificador da obrigação (null = ainda não gerada) e valor já formatado. */
 export type BenefitHistoryRow = {
   id: string;
   title: ReactNode;

@@ -23,6 +23,7 @@ function SummaryTable({ title, rows }: { title: string; rows: Line[] }) {
   );
 }
 
+/** Indicadores + três tabelas de valores (já ordenadas do maior para o menor pelo servidor). */
 export function TrainingSummaryPanel({ data }: { data: SummaryData }) {
   const indicators: [string, string, boolean?][] = [
     ["Treinamentos realizados", String(data.trainingsRealized)],

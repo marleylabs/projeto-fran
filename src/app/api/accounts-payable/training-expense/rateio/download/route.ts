@@ -1,3 +1,5 @@
+// GET /api/accounts-payable/training-expense/rateio/download?year=&month=&supplierId= — XLSX do rateio de
+// Treinamentos da competência (todos os fornecedores ou só supplierId).
 import { NextRequest } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { buildTrainingRateioWorkbook, trainingRateioFilename } from "@/modules/accounts-payable/training-expense/rateio-export";
@@ -5,6 +7,11 @@ import { getTrainingExpenseRateio } from "@/modules/accounts-payable/training-ex
 
 export const runtime = "nodejs";
 
+/**
+ * Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Saída: arquivo .xlsx como anexo (Content-Disposition).
+ * Erros: 400 competência inválida (year/month obrigatórios); 404 sem rateio concluído na competência.
+ */
 export async function GET(request: NextRequest) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);
   if (response) return response;

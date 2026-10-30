@@ -1,3 +1,7 @@
+// Script manual de depuração (somente leitura) da linha unificada de exportação da Folha.
+// Lê ../FOLHAD_2.PDF (caminho relativo ao diretório de execução, fora do repositório), extrai com parsePayrollPdf e
+// imprime unifiedRowFromColaborador para alguns códigos fixos de colaborador. Não grava nada.
+// Atenção: a saída contém dados pessoais e salariais (nome e valores) — não compartilhar.
 import { readFile } from "fs/promises";
 import { parsePayrollPdf } from "../src/lib/parser/parsePayrollPdf";
 import { unifiedRowFromColaborador } from "../src/lib/export/unifiedRow";

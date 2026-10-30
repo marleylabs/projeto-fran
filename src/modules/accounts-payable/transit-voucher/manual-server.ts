@@ -1,4 +1,12 @@
 import "server-only";
+// Servidor do fluxo ATUAL de Vale Transporte (lançamento calculado pelo sistema), usado pela tela
+// /pagamentos/vale-transporte via rotas .../transit-voucher/{context, holidays, employee-config, entries,
+// [mapId]/entries/[allocationId]}.
+// - Competência (TransitVoucherCompetence): tarifa e feriados manuais; dias úteis = seg–sex − feriados em dia útil.
+// - Mapa "Lançamentos manuais" (TransitVoucherMap) por fornecedor/competência, com uma obrigação (FinancialRecord).
+// - Cada alocação guarda SNAPSHOTS (tarifa, dias úteis, empresa, departamento, CC): o histórico nunca é recalculado
+//   com a configuração atual. O cliente envia só insumos (quantidades); valores monetários são sempre calculados aqui,
+//   em centavos inteiros, e persistidos como Decimal.
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { createFinancialRecordInTransaction } from "@/modules/accounts-payable/server/financialRecords";
@@ -16,6 +24,7 @@ function validateCompetence(year: number, month: number) {
   if (!Number.isInteger(year) || year < 2000 || year > 2200 || !Number.isInteger(month) || month < 1 || month > 12) throw new TransitVoucherValidationError("Competência inválida.");
 }
 const isoDay = (date: Date) => date.toISOString().slice(0, 10);
+// Datas de feriado são tratadas em UTC meia-noite (coluna date); exige "aaaa-mm-dd" dentro da competência.
 function parseHolidayDate(value: unknown, year: number, month: number) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new TransitVoucherValidationError("Data do feriado inválida.");
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -29,9 +38,11 @@ const holidayName = (value: unknown) => {
 async function ensureCompetence(tx: Tx, year: number, month: number) {
   return tx.transitVoucherCompetence.upsert({ where: { year_month: { year, month } }, create: { year, month }, update: {} });
 }
+// Tarifa vigente da competência como texto "0.00" (padrão quando ainda não salva).
 const fareOf = (competence: { fareUnitPrice: Prisma.Decimal | null } | null) => (competence?.fareUnitPrice ?? new Prisma.Decimal(DEFAULT_FARE_UNIT_PRICE)).toFixed(2);
 
 // Leitura pura (não cria competência): tarifa (padrão R$ 4,20 até ser definida), feriados e dias úteis.
+/** Contexto da competência para a tela (TransitContext). Feriados manuais são editáveis; nacionais não. */
 export async function getTransitVoucherContext(year: number, month: number) {
   validateCompetence(year, month);
   const competence = await prisma.transitVoucherCompetence.findUnique({ where: { year_month: { year, month } }, include: { holidays: { orderBy: { date: "asc" } } } });
@@ -40,6 +51,10 @@ export async function getTransitVoucherContext(year: number, month: number) {
   return { year, month, fareUnitPrice: fareOf(competence), fareDefined: Boolean(competence?.fareUnitPrice), holidays, ...summarizeCompetenceDays(year, month, holidays.map((holiday) => holiday.date)) };
 }
 
+/**
+ * Salva a tarifa da competência (cria a competência se preciso). Valida com parseFareToCents (até 2 casas, > 0).
+ * Não altera mapas existentes: eles mantêm a tarifa gravada nas próprias alocações.
+ */
 export async function setTransitVoucherFare(year: number, month: number, fare: string | number) {
   validateCompetence(year, month);
   let cents: number;
@@ -48,6 +63,10 @@ export async function setTransitVoucherFare(year: number, month: number, fare: s
   return getTransitVoucherContext(year, month);
 }
 
+/**
+ * Cadastra/renomeia feriado manual (estadual, municipal ou interno) na competência. Data de feriado nacional
+ * automático é recusada. Afeta só dias úteis de mapas NOVOS (mapa existente usa o próprio holidaysSnapshot).
+ */
 export async function saveTransitVoucherHoliday(input: { year: number; month: number; date: unknown; name: unknown; userId: string }) {
   validateCompetence(input.year, input.month);
   const date = parseHolidayDate(input.date, input.year, input.month);
@@ -60,6 +79,11 @@ export async function saveTransitVoucherHoliday(input: { year: number; month: nu
   return getTransitVoucherContext(input.year, input.month);
 }
 
+/**
+ * Remove o feriado manual da data. Feriado nacional automático não pode ser removido, exceto quando há um manual
+ * na mesma data (aí só o registro manual é apagado e o nacional continua valendo). DELETE físico: é configuração,
+ * não dado financeiro.
+ */
 export async function removeTransitVoucherHoliday(year: number, month: number, date: unknown) {
   validateCompetence(year, month);
   const parsed = parseHolidayDate(date, year, month);
@@ -70,12 +94,17 @@ export async function removeTransitVoucherHoliday(year: number, month: number, d
   return getTransitVoucherContext(year, month);
 }
 
+/** Padrões por colaborador (passagens por dia e empresa) para pré-preencher o Preenchimento. Só leitura. */
 export async function getTransitVoucherEmployeeConfigs() {
   // Padrão ATUAL do colaborador (preferência). Empresa padrão inativa nunca é sugerida (vem como null + flag).
   const rows = await prisma.transitVoucherEmployeeConfig.findMany({ select: { employeeId: true, dailyPassageQuantity: true, defaultCompanyId: true, defaultCompany: { select: { active: true } } } });
   return rows.map((row) => ({ employeeId: row.employeeId, dailyPassageQuantity: row.dailyPassageQuantity, defaultCompanyId: row.defaultCompany?.active ? row.defaultCompanyId : null, defaultCompanyUnavailable: Boolean(row.defaultCompanyId && !row.defaultCompany?.active) }));
 }
 
+/**
+ * Insumos de UMA linha enviados pela tela: só quantidades inteiras de passagens, empresa (id do cadastro mestre) e
+ * observação. Não existe campo de valor — o total é sempre calculado no servidor.
+ */
 export type TransitVoucherEntryInput = {
   employeeId: string;
   companyId: string;
@@ -86,8 +115,11 @@ export type TransitVoucherEntryInput = {
   observationDetails?: string | null;
 };
 
+// Chave de agrupamento sem acento/caixa, usada na conferência de totais por empresa/departamento.
 const normalizedKey = (value: string) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("pt-BR");
 
+// Validação de formato (sem banco) de uma linha: ids presentes, inteiros, passagem/dia >= 1, desconto >= 0, observação válida.
+// Diferença do mês anterior pode ser negativa; o resultado final é checado depois em assertPassagesToReceive.
 function validateEntryShape(entry: TransitVoucherEntryInput) {
   if (typeof entry.employeeId !== "string" || !entry.employeeId) throw new TransitVoucherValidationError("Colaborador inválido.");
   // A empresa vem SEMPRE do cadastro mestre (Company): id obrigatório; texto livre nunca é aceito.
@@ -125,6 +157,9 @@ function computeEntryRow(entry: TransitVoucherEntryInput, employee: EmployeeRef,
 // O backend RECALCULA tudo (dias úteis, a receber, total, totais por empresa/departamento) — o
 // frontend só envia insumos; nenhum valor monetário do cliente é aceito.
 export async function addTransitVoucherEntries(input: { year: number; month: number; administrativeEntityId: string; entries: TransitVoucherEntryInput[]; userId: string }) {
+  // Efeitos (tudo numa transação Serializable): cria competência/mapa se preciso, grava as alocações, atualiza o padrão
+  // de cada colaborador e cria/atualiza a obrigação com o novo Total Geral. Colaborador já lançado no mapa é IGNORADO
+  // (devolvido em duplicateNames), não sobrescrito; correção é feita por correctTransitVoucherEntry.
   validateCompetence(input.year, input.month);
   if (!Array.isArray(input.entries) || !input.entries.length) throw new TransitVoucherValidationError("Selecione ao menos um colaborador.");
   const ids = input.entries.map((entry) => entry.employeeId);
@@ -159,6 +194,7 @@ export async function addTransitVoucherEntries(input: { year: number; month: num
     const holidaysSnapshot = baseRow ? (map!.holidaysSnapshot ?? undefined) : currentHolidays;
     // Persiste o valor efetivo da tarifa na competência (snapshot para novos mapas).
     if (!competence.fareUnitPrice) await tx.transitVoucherCompetence.update({ where: { id: competence.id }, data: { fareUnitPrice: centsToDecimalString(currentFareCents) } });
+    // Mapa existente mas sem registros ativos (todos excluídos): passa a usar os feriados atuais como snapshot.
     if (map && !baseRow) map = await tx.transitVoucherMap.update({ where: { id: map.id }, data: { holidaysSnapshot: currentHolidays } });
     if (!map) {
       const last = await tx.transitVoucherMap.findFirst({ where: { competenceId: competence.id, administrativeEntityId: input.administrativeEntityId }, orderBy: { version: "desc" } });
@@ -182,6 +218,8 @@ export async function addTransitVoucherEntries(input: { year: number; month: num
     // Empresa já validada (ativa, cadastro mestre) acima; o padrão é atualizado na MESMA transação do lançamento.
     for (const entry of accepted) await tx.transitVoucherEmployeeConfig.upsert({ where: { employeeId: entry.employeeId }, create: { employeeId: entry.employeeId, dailyPassageQuantity: entry.dailyPassageQuantity, defaultCompanyId: entry.companyId }, update: { dailyPassageQuantity: entry.dailyPassageQuantity, defaultCompanyId: entry.companyId } });
 
+    // Conferência de integridade em Decimal antes de tocar na obrigação: soma por empresa e por empresa+departamento
+    // precisa bater com o total; divergência aborta a transação inteira.
     const all = await tx.transitVoucherAllocation.findMany({ where: { mapId: map.id, deletedAt: null }, select: { amount: true, company: true, department: true } });
     const total = all.reduce((sum, row) => sum.add(row.amount), new Prisma.Decimal(0));
     const group = (key: (row: (typeof all)[number]) => string) => [...all.reduce((groups, row) => groups.set(key(row), (groups.get(key(row)) ?? new Prisma.Decimal(0)).add(row.amount)), new Map<string, Prisma.Decimal>()).values()].reduce((sum, value) => sum.add(value), new Prisma.Decimal(0));
@@ -198,6 +236,8 @@ export async function addTransitVoucherEntries(input: { year: number; month: num
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+// Correção só é permitida enquanto a obrigação está no estado inicial (ativa e pendente em pagamento, conciliação e
+// contabilidade). Depois disso o ajuste tem de ser feito pelo fluxo financeiro. Sem obrigação, não bloqueia.
 function assertFinancialPristine(record: { lifecycleState: string; paymentState: string; reconciliationState: string; accountingState: string } | null) {
   if (record && (record.lifecycleState !== "ACTIVE" || record.paymentState !== "PENDING" || record.reconciliationState !== "PENDING" || record.accountingState !== "PENDING")) {
     throw new TransitVoucherValidationError("Este lançamento já avançou no fluxo financeiro e não pode ser corrigido diretamente.");
@@ -209,6 +249,10 @@ function assertFinancialPristine(record: { lifecycleState: string; paymentState:
 // é atualizado para o novo Total Geral (mesmo padrão de editTransitVoucherMap / recalculateTransitMap).
 // Por padrão PRESERVA os snapshots do registro original (tarifa, dias úteis, empresa, departamento, centro de custo e
 // feriados do mapa); só campos alterados explicitamente (passagens, diferença, desconto, empresa, observação) mudam.
+/**
+ * Exige motivo, mapa vigente, obrigação no estado inicial, mesmo colaborador e registro com snapshot completo
+ * (registros importados pelo fluxo legado não são corrigidos aqui). Retorna ids do original/substituto e o novo total.
+ */
 export async function correctTransitVoucherEntry(input: { mapId: string; allocationId: string; entry: TransitVoucherEntryInput; reason: string; userId: string }) {
   if (!input.reason?.trim()) throw new TransitVoucherValidationError("Informe o motivo da correção.");
   validateEntryShape(input.entry);
@@ -221,6 +265,7 @@ export async function correctTransitVoucherEntry(input: { mapId: string; allocat
     if (original.passagesToReceive === null) throw new TransitVoucherValidationError("Registros importados antes desta versão não são corrigidos por este fluxo.");
 
     if (input.entry.employeeId !== original.employeeId) throw new TransitVoucherValidationError("A correção não pode trocar o colaborador do registro.");
+    // Empresa mantida → reaproveita o nome gravado no registro (snapshot), mesmo que o cadastro mestre tenha mudado/inativado.
     const companyChanged = input.entry.companyId !== original.companyId;
     const [employee, company, clash] = await Promise.all([
       tx.foodEmployee.findFirst({ where: { id: input.entry.employeeId } }),

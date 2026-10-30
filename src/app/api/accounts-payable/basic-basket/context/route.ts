@@ -1,3 +1,6 @@
+// GET /api/accounts-payable/basic-basket/context?year=&month= — contexto de calendário da competência da Cesta.
+// Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission). Saída: JSON de getBasicBasketContext.
+// Erros: 400 BasicBasketValidationError (competência inválida).
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { BasicBasketValidationError, getBasicBasketContext } from "@/modules/accounts-payable/basic-basket/server";

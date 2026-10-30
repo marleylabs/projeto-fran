@@ -9,6 +9,7 @@ import type { TotaisGerais } from "@/lib/types/payroll";
 import type { SinteticoTotais } from "@/lib/types/sintetico";
 import { brl } from "./format";
 
+// Faixa de contexto: badge do formato + pares rótulo/valor (empresa, CNPJ, competência, leitura...).
 export function PayrollContext({ items, format }: { items: [string, ReactNode][]; format: string }) {
   return (
     <section aria-label="Contexto da extração" className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-card border border-border bg-surface px-4 py-3">
@@ -20,6 +21,7 @@ export function PayrollContext({ items, format }: { items: [string, ReactNode][]
   );
 }
 
+// Grade de totais; o terceiro elemento do item destaca o valor (accent).
 function Totals({ label, items }: { label: string; items: [string, string, boolean?][] }) {
   return (
     <dl aria-label={label} className="grid grid-cols-2 gap-px overflow-hidden rounded-card border border-border bg-border sm:grid-cols-4">
@@ -33,6 +35,7 @@ function Totals({ label, items }: { label: string; items: [string, string, boole
   );
 }
 
+// Totais do Extrato Mensal (totaisGerais, recalculados pelo workspace após correção manual).
 export function ExtratoTotals({ totais }: { totais: TotaisGerais }) {
   return <Totals label="Totais do Extrato Mensal" items={[
     ["Colaboradores", String(totais.totalColaboradores), true],
@@ -46,6 +49,7 @@ export function ExtratoTotals({ totais }: { totais: TotaisGerais }) {
   ]} />;
 }
 
+// Totais do Relatório Sintético, exatamente como vieram da extração.
 export function SinteticoTotals({ totais }: { totais: SinteticoTotais }) {
   return <Totals label="Totais do Relatório Sintético" items={[
     ["Colaboradores", String(totais.totalColaboradores), true],

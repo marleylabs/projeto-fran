@@ -1,3 +1,5 @@
+// Exportação XLSX (no navegador) do Extrato Mensal no layout de colunas do Relatório Sintético
+// (ver ./unifiedRow). Quando o resultado combina várias empresas, ganha a coluna EMPRESA à esquerda.
 import ExcelJS from "exceljs";
 import type { ExtractionResult } from "@/lib/types/payroll";
 import { SINTETICO_HEADERS } from "./sinteticoRows";
@@ -7,6 +9,7 @@ import { triggerDownload } from "./download";
 // Formato "Contábil" (padrão do Excel/pt-BR) para as colunas monetárias.
 const ACCOUNTING_FORMAT = '_-"R$" * #,##0.00_-;-"R$" * #,##0.00_-;_-"R$" * "-"??_-;_-@_-';
 
+/** Monta a planilha "Colaboradores" como Tabela do Excel (filtros/listras) e dispara o download. */
 export async function exportExcel(result: ExtractionResult, filename = "extrato-mensal.xlsx") {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Extrato Mensal - Extrator de Folha";
@@ -34,6 +37,7 @@ export async function exportExcel(result: ExtractionResult, filename = "extrato-
   // MAT no padrão "000025" e colunas de valores no formato Contábil.
   const offset = includesEmpresa ? 1 : 0;
   sheet.getColumn(1 + offset).numFmt = "000000";
+  // Colunas 4..18 = SALARIO..LIQUIDO de SINTETICO_HEADERS; ajustar se os cabeçalhos mudarem.
   for (let col = 4 + offset; col <= 18 + offset; col++) {
     sheet.getColumn(col).numFmt = ACCOUNTING_FORMAT;
   }

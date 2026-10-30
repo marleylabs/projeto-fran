@@ -10,6 +10,7 @@ import clsx from "clsx";
 // Controlada: o consumidor guarda o arquivo (`file`) e decide o que fazer com ele (`onFileSelect`). Com `multiple`,
 // `onFileSelect` é chamado uma vez por arquivo válido e o consumidor mostra a própria lista (passa `file={null}`).
 
+/** Forma mínima de arquivo usada na validação/exibição (File real ou objeto { name, size, type } vindo do consumidor). */
 export type UploadFileLike = { name: string; size: number; type?: string };
 
 /** Tamanho legível em pt-BR ("512 B", "1,5 KB", "2,3 MB"). */
@@ -59,10 +60,13 @@ const typeLabel = (rule: string) => {
   const subtype = value.split("/")[1];
   return subtype && subtype !== "*" ? subtype.toUpperCase() : value.toUpperCase();
 };
+/** Lista legível dos formatos de `accept` (ex.: "PDF, XLSX"); usada no texto de ajuda e na mensagem de erro. */
 export function formatAcceptedFileTypes(accept?: string) {
   return [...new Set((accept ?? "").split(",").map((rule) => rule.trim()).filter(Boolean).map(typeLabel))].join(", ");
 }
 
+/** label: título da área; file: arquivo atual a exibir (ou null); onFileSelect: recebe cada arquivo VÁLIDO;
+ * onClear: mostra o botão de remover; accept/maxSize (bytes): regras de validação; helperText: ajuda extra. */
 export type UploadDropzoneProps = {
   label: ReactNode;
   file: UploadFileLike | null;
@@ -80,6 +84,8 @@ export type UploadDropzoneProps = {
   className?: string;
 };
 
+/** Área de upload acessível. Erros de validação ficam em estado local (localError) e têm prioridade sobre `error`
+ * do consumidor; o input é limpo após cada seleção para permitir escolher o mesmo arquivo de novo. */
 export function UploadDropzone({ label, file, onFileSelect, onClear, accept, maxSize, disabled = false, multiple = false, helperText, error, id, className }: UploadDropzoneProps) {
   const generated = useId();
   const inputId = id ?? `upload-${generated}`;
@@ -91,6 +97,7 @@ export function UploadDropzone({ label, file, onFileSelect, onClear, accept, max
   const shownError = localError ?? error;
   const rules = [accept && `Formatos: ${formatAcceptedFileTypes(accept)}`, maxSize !== undefined && `até ${formatFileSize(maxSize)}`].filter(Boolean).join(" · ");
 
+  // Um arquivo: valida e só repassa ao consumidor se estiver dentro das regras.
   const take = (candidate: File | undefined) => {
     if (!candidate || disabled) return;
     const problem = validateUploadFile(candidate, { accept, maxSize });
@@ -106,6 +113,7 @@ export function UploadDropzone({ label, file, onFileSelect, onClear, accept, max
     for (const [candidate, problem] of problems) if (!problem) onFileSelect(candidate);
   };
 
+  // Soltar: sem `multiple`, recusa mais de um arquivo em vez de pegar só o primeiro silenciosamente.
   const onDrop = (event: DragEvent<HTMLLabelElement>) => {
     event.preventDefault();
     setDragging(false);
@@ -131,6 +139,7 @@ export function UploadDropzone({ label, file, onFileSelect, onClear, accept, max
         className="peer sr-only"
         onChange={(event) => { const files = [...(event.target.files ?? [])]; if (multiple) takeMany(files); else take(files[0]); event.target.value = ""; }}
       />
+      {/* A área visível é o <label> do input: clicar nela abre o seletor; também recebe os eventos de arrastar. */}
       <label
         htmlFor={inputId}
         onDragEnter={(event) => { event.preventDefault(); if (!disabled) setDragging(true); }}

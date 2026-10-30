@@ -11,21 +11,33 @@ import { amountToCents } from "@/modules/accounts-payable/breakfast/rateio";
 // CPF: lido do cadastro atual do colaborador (alocação.employeeId → FoodEmployee.cpf) —
 // não há snapshot de CPF no lançamento; aceitável porque CPF identifica a própria pessoa (não é um
 // valor financeiro variável). Sem CPF cadastrado → célula vazia.
+/** Nome interno da planilha, idêntico ao da máscara original da Flash (não alterar). */
 export const FLASH_SHEET_NAME = "0gxOg0uxTD06R5KuSS08v";
+/** Cabeçalhos exatamente como na máscara. */
 export const FLASH_HEADERS = ["CNPJ", "NOME COMPLETO", "CPF", "FLEXIVEL (R$)"] as const;
+// Formatos numéricos copiados da máscara (contábil R$ e CPF com zeros à esquerda).
 const FLASH_MONEY = '_-"R$" * #,##0.00_-;-"R$" * #,##0.00_-;_-"R$" * "-"??_-;_-@_-';
 const FLASH_CPF = '000"."000"."000"-"00';
 
+/** Erro de validação da exportação Flash; a rota devolve a mensagem ao usuário. */
 export class FlashExportError extends Error {}
 
+/** Alocação do lançamento com a empresa (CNPJ em companyRef.taxId) e o CPF do colaborador, quando carregado. */
 export type FlashAllocation = {
   id: string; employeeId: string | null; employeeName: string; company: string; companyId: string | null;
   amount: { toString(): string } | string | number;
   companyRef: { taxId: string } | null;
   employee?: { cpf: string | null } | null;
 };
+/** Lançamento salvo: total, obrigação financeira e alocações. */
 export type FlashMap = { totalAmount: { toString(): string } | string | number; financialRecord: { grossAmount: { toString(): string } | string | number } | null; allocations: FlashAllocation[] };
 
+/**
+ * Valida e monta as linhas da Flash (ordenadas por empresa e nome), valores em centavos.
+ * Lança FlashExportError se: não há colaboradores; colaborador repetido; empresa sem CNPJ de 14 dígitos;
+ * lançamento sem obrigação; ou soma das linhas ≠ total do lançamento ≠ grossAmount da obrigação.
+ * CPF inválido ou ausente sai como null (célula vazia), sem bloquear.
+ */
 export function buildFlashRows(map: FlashMap) {
   if (!map.allocations.length) throw new FlashExportError("Não há colaboradores para exportar.");
   const people = new Set<string>();
@@ -47,6 +59,7 @@ export function buildFlashRows(map: FlashMap) {
   return { rows, totalCents: sum };
 }
 
+/** Gera o workbook da Máscara Flash (uma aba, sem total). Chama buildFlashRows, portanto valida tudo antes. */
 export function buildFlashWorkbook(map: FlashMap) {
   const { rows } = buildFlashRows(map);
   const workbook = new ExcelJS.Workbook();

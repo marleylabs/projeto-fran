@@ -1,3 +1,9 @@
+// Regressão manual da Alimentação PA (fornecedor "REI DO ASSADO") contra http://localhost:3000.
+// Requer VERIFY_EMAIL, VERIFY_PASSWORD e VERIFY_PA_FILE (planilha real "RATEIO REI DO ASSADO ATUAL.xlsx").
+// Valores esperados são dessa planilha específica: competência detectada 06/2026 (embora o upload seja 08/2026),
+// 161 refeições, 22 colaboradores, R$ 30/refeição = R$ 4.830 (ENGENHARIA SALOBO 3.930 + TOPOGRAFIA BMSA 900).
+// Também testa a edição: ignorar 1 refeição (→ 4.800, obrigação financeira acompanha) e restaurar (2 revisões).
+// ESCREVE dados; use apenas em banco de desenvolvimento.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 const email = process.env.VERIFY_EMAIL;
@@ -7,6 +13,7 @@ if (!email || !password || !source)
   throw new Error("Defina VERIFY_EMAIL, VERIFY_PASSWORD e VERIFY_PA_FILE.");
 const sourcePath: string = source;
 const base = "http://localhost:3000";
+// Lê o corpo JSON e lança erro com status + corpo quando a resposta não é 2xx.
 async function json(response: Response) {
   const value = await response.json();
   if (!response.ok)
@@ -127,6 +134,7 @@ async function main() {
       ),
     900,
   );
+  // Edição 1: marca a primeira refeição como IGNORED; a edição 2 (restoredRows) volta todas para VALID.
   const editRows = ready.mealOccurrences.map(
     (
       row: {

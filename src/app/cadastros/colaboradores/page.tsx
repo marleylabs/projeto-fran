@@ -16,18 +16,28 @@ import { CollaboratorImport } from "@/modules/collaborators/ui/CollaboratorImpor
 import { CollaboratorTable } from "@/modules/collaborators/ui/CollaboratorTable";
 import type { CollaboratorItem as Item, ImportOverride, ImportPreview as Preview, ImportResult, ImportStatus } from "@/modules/collaborators/ui/types";
 
+// Par de possíveis duplicados devolvido por /api/collaborators/duplicates.
 type Pair = { left: Item; right: Item };
+// Vínculos de um colaborador (usado no aviso de impacto da mesclagem).
 type Counts = { food: number; transit: number; aliases: number };
+// Análise prévia de exclusão devolvida por /api/collaborators/delete (action "analyze"). mode "purge" (só ADMIN):
+// apaga colaboradores e históricos; mode "common": exclui quem não tem histórico e inativa quem tem.
 type DeletePlan = {
   scope: "selection" | "all"; ids?: string[]; mode: "purge" | "common"; total: number; deletable?: number; withHistory?: number;
   foodOccurrences?: number; transitAllocations?: number; aliases?: number; mergedLinks?: number; foodBatches?: number; transitMaps?: number; advancedFinancialRecords?: number;
   items: Array<{ id: string; officialName: string; action?: "DELETE" | "DEACTIVATE"; references?: Counts; food?: number; transit?: number; aliases?: number }>;
 };
 
+// Formulário vazio de colaborador (novo cadastro).
 const blank = { officialName: "", jobTitle: "", department: "", costCenter: "", cpf: "", admissionDate: "", active: true };
+// Busca sem acento/caixa.
 const norm = (v: string) => v.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("pt-BR");
 const menuItem = "block w-full cursor-pointer rounded-control px-3 py-2 text-left text-body hover:bg-surface-muted";
 
+/** Tela /cadastros/colaboradores: cadastro oficial de colaboradores usado pelos benefícios. Concentra estado e chamadas:
+ * CRUD, inativar/reativar (individual e em lote), mesclagem de duplicados, exclusão com análise prévia,
+ * importação XLSX em duas fases (prévia + confirmação) e indicadores. Os componentes de modules/collaborators/ui só
+ * exibem. Lista carregada inteira (limit=10000) e filtrada no cliente. */
 export default function CollaboratorsPage() {
   const toast = useToast();
   const [items, setItems] = useState<Item[]>([]), [q, setQ] = useState(""), [department, setDepartment] = useState(""), [costCenter, setCostCenter] = useState(""), [status, setStatus] = useState("all"), [form, setForm] = useState(blank), [editing, setEditing] = useState<string | null>(null), [editOpen, setEditOpen] = useState(false), [busy, setBusy] = useState(false), [selected, setSelected] = useState<string[]>([]), [menuId, setMenuId] = useState<string | null>(null), [confirmAction, setConfirmAction] = useState<{ item: Item; kind: "activate" | "deactivate" } | null>(null), [importOpen, setImportOpen] = useState(false), [file, setFile] = useState<File | null>(null), [preview, setPreview] = useState<Preview | null>(null), [overrides, setOverrides] = useState<Record<number, ImportOverride>>({}), [importResult, setImportResult] = useState<ImportResult | null>(null), [importFilter, setImportFilter] = useState<ImportStatus | "">(""), [cpfError, setCpfError] = useState(""), [pairs, setPairs] = useState<Pair[] | null>(null), [mergeCurrent, setMergeCurrent] = useState<Item | null>(null), [mergeOther, setMergeOther] = useState<Item | null>(null), [primaryId, setPrimaryId] = useState(""), [counts, setCounts] = useState<Counts | null>(null);
@@ -35,23 +45,29 @@ export default function CollaboratorsPage() {
   // Só exibição: qual etapa do ImportFlow está em andamento (análise inicial ou confirmação).
   const [importPhase, setImportPhase] = useState<"idle" | "analyzing" | "applying">("idle");
 
+  // Carrega todos (inclusive inativos/mesclados) com CPF e admissão; isAdmin libera a exclusão definitiva (purge).
   const load = useCallback(async () => { const r = await fetch("/api/collaborators?status=all&limit=10000&fields=cpf,admissionDate"); const b = await r.json(); if (!r.ok) throw new Error(b.error); setItems(b.items); }, []);
   useEffect(() => { void load().catch((e) => toast.error(e.message, "Falha ao carregar colaboradores")); }, [load, toast]);
   useEffect(() => { fetch("/api/auth/me").then((r) => r.json()).then((body) => setIsAdmin((body.roles ?? []).includes("ADMIN"))).catch(() => setIsAdmin(false)); }, []);
 
   const filtered = useMemo(() => items.filter((i) => (!q || norm(`${i.officialName} ${i.jobTitle} ${i.department} ${i.costCenter}`).includes(norm(q)) || (normalizeCpf(q).length >= 3 && Boolean(i.cpf?.includes(normalizeCpf(q))))) && (!department || i.department === department) && (!costCenter || i.costCenter === costCenter) && (status === "all" || i.active === (status === "active"))), [items, q, department, costCenter, status]);
 
+  // fetch com busy global e toast de erro; relança para o chamador interromper o fluxo.
   const request = async (url: string, init?: RequestInit) => { setBusy(true); try { const r = await fetch(url, init); const b = await r.json(); if (!r.ok) throw new Error(b.error); return b; } catch (e) { toast.error(e instanceof Error ? e.message : "Operação não concluída.", "Não foi possível concluir"); throw e; } finally { setBusy(false); } };
 
   const openEdit = (item?: Item) => { setMenuId(null); setEditing(item?.id ?? null); setCpfError(""); setForm(item ? { officialName: item.officialName, jobTitle: item.jobTitle, department: item.department, costCenter: item.costCenter, cpf: item.cpf ? formatCpf(item.cpf) : "", admissionDate: dateOnlyFromDb(item.admissionDate) ?? "", active: item.active } : blank); setEditOpen(true); };
 
   // CPF: máscara na digitação; validação real (dígitos verificadores) antes de enviar — o backend normaliza e valida de novo.
   async function save(e: FormEvent) { e.preventDefault(); if (form.cpf.trim() && !isValidCpf(form.cpf)) { setCpfError("CPF inválido."); return; } setCpfError(""); try { await request(editing ? `/api/collaborators/${editing}` : "/api/collaborators", { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, cpf: normalizeCpf(form.cpf) || null, admissionDate: form.admissionDate || null }) }); toast.success(editing ? "Colaborador atualizado com sucesso." : "Colaborador cadastrado com sucesso."); setEditOpen(false); await load(); } catch {} }
+  // Mesclagem: escolhe o outro cadastro, carrega os vínculos dele e o usuário define qual permanece (o outro é inativado).
   const openMerge = (item: Item, other?: Item) => { setMenuId(null); setMergeCurrent(item); setMergeOther(other ?? null); setPrimaryId(item.id); setCounts(null); };
   useEffect(() => { if (!mergeOther) return; fetch(`/api/collaborators/${mergeOther.id}/references`).then((r) => r.json()).then(setCounts).catch(() => setCounts(null)); }, [mergeOther]);
   async function merge() { if (!mergeCurrent || !mergeOther || !primaryId) return; const primary = primaryId === mergeCurrent.id ? mergeCurrent : mergeOther, secondary = primary.id === mergeCurrent.id ? mergeOther : mergeCurrent; try { await request("/api/collaborators/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ primaryId: primary.id, secondaryId: secondary.id }) }); toast.success("Colaboradores mesclados com sucesso."); setMergeCurrent(null); setMergeOther(null); await load(); if (pairs) await inspect(); } catch {} }
+  // Inativar/reativar um colaborador (após ConfirmModal) e em lote reutilizam /api/collaborators/bulk.
   async function executeConfirmation() { if (!confirmAction) return; const { item, kind } = confirmAction; try { await request("/api/collaborators/bulk", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [item.id], active: kind === "activate" }) }); toast.success(kind === "activate" ? "Colaborador reativado." : "Colaborador inativado."); setConfirmAction(null); await load(); } catch {} }
   async function bulk(active: boolean) { try { await request("/api/collaborators/bulk", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: selected, active }) }); toast.success(`${selected.length} colaborador(es) ${active ? "reativado(s)" : "inativado(s)"}.`); setSelected([]); await load(); } catch {} }
+  // Exclusão em duas etapas: "analyze" mostra o impacto no diálogo; "execute" exige a confirmação digitada quando
+  // é purge de vários/todos.
   async function openDeletion(ids?: string[], scope: "selection" | "all" = "selection") { setMenuId(null); setDeleteConfirmation(""); const mode = isAdmin ? "purge" : "common"; try { const analysis = await request("/api/collaborators/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "analyze", scope, ids, mode: mode === "purge" ? "purge" : undefined }) }); setDeletePlan({ ...analysis, scope, ids, mode }); } catch {} }
   async function confirmDeletion() { if (!deletePlan) return; try { const result = await request("/api/collaborators/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "execute", scope: deletePlan.scope, ids: deletePlan.ids, mode: deletePlan.mode === "purge" ? "purge" : undefined, confirmation: deleteConfirmation }) }); toast.success(deletePlan.mode === "purge" ? "Base de colaboradores limpa com sucesso." : `${result.deleted} colaborador(es) excluído(s). ${result.deactivated} inativado(s) por possuírem histórico.`); const processed = new Set(deletePlan.items.map((item) => item.id)); setSelected((current) => current.filter((id) => !processed.has(id))); setDeletePlan(null); setDeleteConfirmation(""); await load(); } catch {} }
   async function inspect() { try { const b = await request("/api/collaborators/duplicates"); setPairs(b.items); } catch {} }
@@ -66,6 +82,7 @@ export default function CollaboratorsPage() {
   const resetImport = () => { setPreview(null); setOverrides({}); setImportFilter(""); if (importResult) { setImportResult(null); setFile(null); } };
   const importStep: ImportFlowStep = importResult ? "done" : importPhase === "applying" ? "applying" : preview ? "preview" : importPhase === "analyzing" ? "processing" : "select";
 
+  // Opções dos filtros derivadas da base carregada.
   const deps = [...new Set(items.map((i) => i.department))].sort(), costs = [...new Set(items.map((i) => i.costCenter).filter(Boolean))].sort();
   const mergeOptions = items.filter((i) => !i.mergedIntoId && i.id !== mergeCurrent?.id);
   // Indicadores só de leitura sobre a base já carregada (nenhum endpoint novo): ajudam a achar cadastros incompletos.

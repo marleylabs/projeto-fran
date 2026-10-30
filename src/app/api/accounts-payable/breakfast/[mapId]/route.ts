@@ -1,7 +1,14 @@
+// DELETE /api/accounts-payable/breakfast/[mapId] — exclusão (soft cancel) do lançamento do Café da Manhã.
+// Delega a cancelBreakfastMap (deletion-server): linhas marcadas como excluídas, obrigação cancelada; nada é apagado.
 import { NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { AccountsPayableDeletionError, cancelBreakfastMap } from "@/modules/accounts-payable/deletion-server";
 
+/**
+ * Permissão: FINANCIAL_RECORDS_DELETE; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Entrada (JSON): { confirmation: "EXCLUIR", reason: string }.
+ * Erros: 400 sem a confirmação digitada; 409 AccountsPayableDeletionError.
+ */
 export async function DELETE(request: Request, context: { params: Promise<{ mapId: string }> }) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_DELETE);
   if (response || !user) return response;

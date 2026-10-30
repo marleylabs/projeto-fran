@@ -7,15 +7,21 @@ import { Button } from "@/components/ui";
 // Seleção de várias datas dentro de um período (date-only, UTC). Fase 7M: só visual/acessibilidade (ícones lucide e
 // tokens); seleção, ordenação, serialização ISO e callbacks inalterados.
 
+// Monta "AAAA-MM-DD" sem passar por Date (evita deslocamento de fuso).
 const iso = (year: number, month: number, day: number) =>
   `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
+/** Todas as datas ISO entre minDate e maxDate (inclusive). Assume as duas datas no MESMO mês (período de uma
+ * competência): usa o ano/mês de minDate e só o dia de maxDate. */
 export function datesInPeriod(minDate: string, maxDate: string) {
   const [year, month, first] = minDate.split("-").map(Number);
   const last = Number(maxDate.slice(-2));
   return Array.from({ length: last - first + 1 }, (_, index) => iso(year, month, first + index));
 }
 
+/** Botão que abre um calendário do mês de minDate para marcar várias datas. A seleção fica em rascunho (`draft`) e só
+ * é enviada em "Aplicar datas" (onChange com a lista ordenada); fechar/Esc descarta o rascunho. Datas fora de
+ * [minDate, maxDate] ficam desabilitadas. */
 export function MultiDatePicker({ value, onChange, minDate, maxDate }: {
   value: string[];
   onChange: (dates: string[]) => void;
@@ -29,6 +35,7 @@ export function MultiDatePicker({ value, onChange, minDate, maxDate }: {
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
   const allowed = useMemo(() => new Set(datesInPeriod(minDate, maxDate)), [minDate, maxDate]);
+  // Ao abrir, foca o primeiro dia habilitado (acessibilidade de teclado).
   useEffect(() => { if (open) requestAnimationFrame(() => dialog.current?.querySelector<HTMLElement>("button[data-day]:not(:disabled)")?.focus()); }, [open]);
   const sorted = (dates: string[]) => [...dates].sort();
   const summary = value.length === 1

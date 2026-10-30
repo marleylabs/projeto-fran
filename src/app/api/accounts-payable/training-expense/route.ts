@@ -1,8 +1,14 @@
+// /api/accounts-payable/training-expense — listagem e criação de lançamentos de despesa de Treinamento.
 import { NextRequest, NextResponse } from "next/server";
 import { PERMISSIONS, requirePermission } from "@/lib/auth/permissions";
 import { TrainingExpenseValidationError, parseCreateTrainingExpenseInput } from "@/modules/accounts-payable/training-expense/schema";
 import { createTrainingExpenseDraft, listTrainingExpenses } from "@/modules/accounts-payable/training-expense/server";
 
+/**
+ * GET — Permissão: FINANCIAL_RECORDS_READ; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Query opcional: year, month, supplierId, trainingId, status (DRAFT|COMPLETED|CANCELLED), q (busca). Saída: { items }.
+ * status não é validado aqui; valor desconhecido é repassado ao filtro do servidor.
+ */
 export async function GET(request: NextRequest) {
   const { response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_READ);
   if (response) return response;
@@ -17,6 +23,10 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ items });
 }
 
+/**
+ * POST — cria rascunho (DRAFT). Permissão: FINANCIAL_RECORDS_CREATE; 401 sem sessão / 403 sem permissão (requirePermission).
+ * Entrada (JSON): ver parseCreateTrainingExpenseInput. Saída: 201 { item }. Erros: 400 TrainingExpenseValidationError.
+ */
 export async function POST(request: Request) {
   const { user, response } = await requirePermission(PERMISSIONS.FINANCIAL_RECORDS_CREATE);
   if (response || !user) return response;

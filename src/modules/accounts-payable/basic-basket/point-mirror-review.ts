@@ -10,14 +10,19 @@
 //     competência não exigem decisão (sem efeito financeiro).
 import { calculateCurrentBasketDays, calculateRetroactiveDays, resolveBasicBasketAdjustments, BASIC_BASKET_CALCULATION_DAYS, NO_BASIC_BASKET_ADJUSTMENTS, type BasicBasketAdjustments, type BasicBasketContext, type BasicBasketOccurrences } from "./calculations";
 
+/** Erro da revisão; server.ts o converte em BasicBasketValidationError (HTTP 400). */
 export class BasicBasketReviewError extends Error {}
 
+// ABSENCE = Falta Injustificada · VACATION_CURRENT = Férias no mês da competência (reduz a Cesta) ·
+// VACATION_REFERENCE = Férias no mês anterior (reduz só o Retroativo). effects = o que a data faria se aprovada.
 export type PointMirrorCandidateKind = "ABSENCE" | "VACATION_CURRENT" | "VACATION_REFERENCE";
 export type PointMirrorCandidateEffect = "CURRENT_CUT" | "RETRO_CUT" | "CURRENT_VACATION" | "RETRO_VACATION";
 export type PointMirrorCandidate = { id: string; employeeId: string; kind: PointMirrorCandidateKind; date: string; effects: PointMirrorCandidateEffect[]; ignoredReason: string | null };
 export type PointMirrorDecision = "APPROVED" | "REJECTED";
+// IGNORED = sem efeito possível (ignoredReason) · MANUAL_OVERRIDE = Férias da competência neutralizadas por Férias manuais.
 export type PointMirrorReviewState = "PENDING" | "APPROVED" | "REJECTED" | "IGNORED" | "MANUAL_OVERRIDE";
 
+/** Id estável entre prévia, "Aplicar" e salvamento: o servidor reconstrói os candidatos e confere os ids enviados. */
 export const pointMirrorCandidateId = (importId: string, employeeId: string, kind: PointMirrorCandidateKind, date: string) => `${importId}:${employeeId}:${kind}:${date}`;
 const within = (date: string, start: string, end: string) => date >= start && date <= end;
 
@@ -48,12 +53,14 @@ export function buildPointMirrorCandidates(input: { importId: string; context: B
 export const isPointMirrorCandidateActionable = (candidate: PointMirrorCandidate, manualVacationDays: number | null | undefined) =>
   !candidate.ignoredReason && !(candidate.kind === "VACATION_CURRENT" && manualVacationDays !== null && manualVacationDays !== undefined);
 
+/** Estado exibido: ignorado → override manual → decisão do usuário (sem decisão = PENDING). */
 export function pointMirrorReviewState(candidate: PointMirrorCandidate, decision: PointMirrorDecision | undefined, manualVacationDays: number | null | undefined): PointMirrorReviewState {
   if (candidate.ignoredReason) return "IGNORED";
   if (!isPointMirrorCandidateActionable(candidate, manualVacationDays)) return "MANUAL_OVERRIDE";
   return decision ?? "PENDING";
 }
 
+/** Contagem por estado (cards da revisão e resumo devolvido pelo "Aplicar"). */
 export function summarizePointMirrorReview(candidates: readonly PointMirrorCandidate[], decisions: Readonly<Record<string, PointMirrorDecision>>, manualByEmployee: Readonly<Record<string, number | null | undefined>>) {
   const totals = { total: candidates.length, PENDING: 0, APPROVED: 0, REJECTED: 0, IGNORED: 0, MANUAL_OVERRIDE: 0 };
   for (const candidate of candidates) totals[pointMirrorReviewState(candidate, decisions[candidate.id], manualByEmployee[candidate.employeeId])] += 1;
