@@ -3130,3 +3130,14 @@ test("plano de saúde: empresa do contrato do PDF casa com a Company ativa pelo 
   assert.equal(matchContractCompany("PROJETAX LTDA", companies), null);
   assert.equal(matchContractCompany("PROJETA LTDA", [...companies, { id: "p2", tradeName: "Projeta", active: true }]), null); // ambíguo
 });
+
+test("plano de saúde: vários PDFs entram numa fila processada um por vez, sem parar no primeiro erro", async () => {
+  const [dropzone, section] = await Promise.all([readFile("src/components/ui/UploadDropzone.tsx", "utf8"), readFile("src/modules/accounts-payable/health-plan/HealthPlanSection.tsx", "utf8")]);
+  assert.match(dropzone, /multiple=\{multiple\}/);
+  assert.match(dropzone, /if \(files\.length > 1\) \{ setLocalError\("Envie apenas um arquivo por vez\."\)/); // sem `multiple`, continua um arquivo
+  assert.match(section, /<UploadDropzone [^>]*multiple /);
+  // Sequencial (await dentro do for), cada arquivo com seu status e o erro registrado no item.
+  assert.match(section, /for \(const item of pending\) \{\s*patchItem\(item\.id, \{ status: "processing"/);
+  assert.match(section, /catch \(cause\) \{ failed \+= 1; patchItem\(item\.id, \{ status: "error"/);
+  assert.doesNotMatch(section, /Promise\.all\(pending/);
+});

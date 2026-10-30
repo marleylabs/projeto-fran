@@ -5,7 +5,7 @@
 // junta as faturas do mesmo fornecedor na competência (um card, um XLSX). Estado e chamadas de API ficam aqui; toda
 // conferência de valores é do servidor (Cobrado = Valor Bruto).
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Download, ListTree, UserX, XCircle } from "lucide-react";
+import { Download, ListTree, UserX, X, XCircle } from "lucide-react";
 import clsx from "clsx";
 import { AllocationViews } from "@/components/allocation/AllocationViews";
 import { Badge, Button, buttonClassName, Card, CardHeader, DataTable, DeletionModal, EmptyState, FeedbackAlert, Field, StatusBadge, UploadDropzone, textInputClassName, useToast, type DataTableColumn } from "@/components/ui";
@@ -44,9 +44,8 @@ export function HealthPlanSection() {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [entityId, setEntityId] = useState("");
   const [competenceMode, setCompetenceMode] = useState<"due" | "selected">("due");
-  const [file, setFile] = useState<File | null>(null);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
-  const [imported, setImported] = useState<Invoice | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<string | null>(null);
@@ -67,33 +66,49 @@ export function HealthPlanSection() {
     }).catch(() => undefined);
   }, []);
 
-  async function upload(event: FormEvent) {
-    event.preventDefault(); if (!file || !entityId) return;
+  const enqueue = (file: File) => setQueue((current) => current.some((item) => item.status !== "done" && item.file.name === file.name && item.file.size === file.size) ? current : [...current, { id: `${Date.now()}-${Math.random()}`, file, status: "pending" }]);
+  const patchItem = (id: string, patch: Partial<QueueItem>) => setQueue((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+
+  // Fila de extração: um PDF por vez (cada importação gera obrigação numa transação serializável no servidor);
+  // erro em um arquivo não para os demais. Fechar a página interrompe os que ainda estão pendentes.
+  async function processQueue(event: FormEvent) {
+    event.preventDefault(); if (!entityId || busy) return;
+    const pending = queue.filter((item) => item.status === "pending" || item.status === "error");
+    if (!pending.length) return;
     setBusy(true); setError(null);
-    try {
-      const data = new FormData(); data.set("file", file); data.set("administrativeEntityId", entityId);
-      if (competenceMode === "selected") { data.set("year", String(year)); data.set("month", String(month)); }
-      const response = await fetch("/api/accounts-payable/health-plan", { method: "POST", body: data });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? "Não foi possível processar o PDF.");
-      const invoice = body.invoice as Invoice;
-      setImported(invoice); setFile(null);
-      const target = `${invoice.competence.year}-${String(invoice.competence.month).padStart(2, "0")}`;
-      if (target === competence) await load(); else setCompetence(target);
-      toast.success(`Fatura ${invoice.obligation} importada: ${invoice.holderCount} titulares, ${money(invoice.totalAmount)}.`);
-    } catch (cause) { const message = cause instanceof Error ? cause.message : "Falha ao importar."; setError(message); toast.error(message, "Fatura não importada"); }
-    finally { setBusy(false); }
+    let last: Invoice | null = null, failed = 0;
+    for (const item of pending) {
+      patchItem(item.id, { status: "processing", message: undefined });
+      try {
+        const data = new FormData(); data.set("file", item.file); data.set("administrativeEntityId", entityId);
+        if (competenceMode === "selected") { data.set("year", String(year)); data.set("month", String(month)); }
+        const response = await fetch("/api/accounts-payable/health-plan", { method: "POST", body: data });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error ?? "Não foi possível processar o PDF.");
+        last = body.invoice as Invoice;
+        patchItem(item.id, { status: "done", invoice: last });
+      } catch (cause) { failed += 1; patchItem(item.id, { status: "error", message: cause instanceof Error ? cause.message : "Falha ao importar." }); }
+    }
+    setBusy(false);
+    if (last) {
+      const target = `${last.competence.year}-${String(last.competence.month).padStart(2, "0")}`;
+      if (target === competence) await load().catch(() => undefined); else setCompetence(target);
+    }
+    const imported = pending.length - failed;
+    if (failed) toast.error(`${imported} de ${pending.length} PDF(s) importado(s); ${failed} com erro. Veja a fila.`, "Fila de importação");
+    else toast.success(`${imported} PDF(s) importado(s).`);
   }
   async function confirmCancel(reason: string) {
     if (!cancelTarget) return; setCancelling(true); setCancelError(null);
     try {
       const response = await fetch(`/api/accounts-payable/health-plan/${cancelTarget}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason, confirmation: "EXCLUIR" }) });
       const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Não foi possível excluir.");
-      setCancelTarget(null); if (imported?.id === cancelTarget) setImported(null); await load();
+      setCancelTarget(null); await load();
     } catch (cause) { setCancelError(cause instanceof Error ? cause.message : "Não foi possível excluir."); } finally { setCancelling(false); }
   }
 
   const list = useMemo(() => invoices ?? [], [invoices]);
+  const waiting = queue.filter((item) => item.status === "pending" || item.status === "error").length;
   const totalCents = list.reduce((sum, invoice) => sum + amountToCents(invoice.totalAmount), 0);
   const missing = notFound(list);
   const lives = list.reduce((sum, invoice) => sum + invoice.beneficiaryCount, 0);
@@ -135,19 +150,19 @@ export function HealthPlanSection() {
       }
       operation={
         <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
-          <form onSubmit={upload} className="grid grid-cols-[minmax(0,1fr)] gap-4">
+          <form onSubmit={processQueue} className="grid grid-cols-[minmax(0,1fr)] gap-4">
             <Card className="grid gap-4">
-              <CardHeader titleAs="h3" title="Importar fatura" description="Um PDF por fatura. A soma de Cobrado precisa fechar com o Valor Bruto do PDF; a mesma obrigação não é importada duas vezes." />
+              <CardHeader titleAs="h3" title="Importar faturas" description="Selecione um ou vários PDFs (um por fatura); a fila processa um de cada vez. A soma de Cobrado precisa fechar com o Valor Bruto de cada PDF; a mesma obrigação não é importada duas vezes." />
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Cadastro da obrigação" required helper={entities.some(isHealthPlan) ? undefined : "Nenhum cadastro com área Plano de Saúde: mostrando todos."}>{(control) => <select {...control} required className={textInputClassName} value={entityId} onChange={(event) => setEntityId(event.target.value)}><option value="">Selecionar cadastro</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select>}</Field>
                 <Field label="Competência da fatura">{(control) => <select {...control} className={textInputClassName} value={competenceMode} onChange={(event) => setCompetenceMode(event.target.value as "due" | "selected")}><option value="due">Mês do vencimento (do PDF)</option><option value="selected">Competência selecionada ({monthLabel})</option></select>}</Field>
               </div>
-              <UploadDropzone label="PDF da fatura" file={file} onFileSelect={(selected) => { setFile(selected); setError(null); }} onClear={() => setFile(null)} accept=".pdf,application/pdf" maxSize={MAX_FILE} helperText="Analítico Fatura Mensal com texto copiável." />
+              <UploadDropzone label="PDFs das faturas" file={null} multiple disabled={busy} onFileSelect={(selected) => { enqueue(selected); setError(null); }} accept=".pdf,application/pdf" maxSize={MAX_FILE} helperText="Analítico Fatura Mensal com texto copiável." />
+              <ImportQueue items={queue} busy={busy} onRemove={(id) => setQueue((current) => current.filter((item) => item.id !== id))} onClearDone={() => setQueue((current) => current.filter((item) => item.status !== "done"))} />
               {error && <FeedbackAlert status="error">{error}</FeedbackAlert>}
-              <div className="flex justify-end"><Button type="submit" loading={busy} disabled={busy || !file || !entityId} aura={Boolean(file && entityId)}>Processar PDF / Gerar Rateio</Button></div>
+              <div className="flex justify-end"><Button type="submit" loading={busy} disabled={busy || !waiting || !entityId} aura={Boolean(waiting && entityId)}>{waiting > 1 ? `Processar ${waiting} PDFs / Gerar Rateio` : "Processar PDF / Gerar Rateio"}</Button></div>
             </Card>
           </form>
-          {imported && <ImportResult invoice={imported} />}
           <MissingHolders rows={missing} />
         </div>
       }
@@ -159,19 +174,25 @@ export function HealthPlanSection() {
   </>;
 }
 
-function ImportResult({ invoice }: { invoice: Invoice }) {
-  const missing = invoice.allocations.filter((row) => !row.employeeId).length;
+type QueueItem = { id: string; file: File; status: "pending" | "processing" | "done" | "error"; message?: string; invoice?: Invoice };
+const QUEUE_STATUS = { pending: { tone: "neutral", label: "Na fila" }, processing: { tone: "info", label: "Processando" }, done: { tone: "success", label: "Importado" }, error: { tone: "danger", label: "Erro" } } as const;
+
+// Fila de PDFs (só exibição): status por arquivo e, quando importado, o resumo conferido da fatura.
+function ImportQueue({ items, busy, onRemove, onClearDone }: { items: QueueItem[]; busy: boolean; onRemove: (id: string) => void; onClearDone: () => void }) {
+  if (!items.length) return null;
+  const columns: DataTableColumn<QueueItem>[] = [
+    { id: "file", header: "Arquivo", rowHeader: true, wrap: true, cell: (item) => <span className="grid">{item.file.name}{item.message && <span className="text-caption text-danger-text">{item.message}</span>}</span> },
+    { id: "status", header: "Situação", cell: (item) => <StatusBadge tone={QUEUE_STATUS[item.status].tone}>{QUEUE_STATUS[item.status].label}</StatusBadge> },
+    { id: "obligation", header: "Fatura", cell: (item) => item.invoice ? <span className="grid tabular-nums">{item.invoice.obligation}<span className="text-caption text-foreground-muted">venc. {dateBr(item.invoice.dueDate)} · {item.invoice.financialRecord?.identifier ?? "—"}</span></span> : "—" },
+    { id: "holders", header: "Titulares", numeric: true, cell: (item) => item.invoice ? <span className="grid">{item.invoice.holderCount}{item.invoice.allocations.some((row) => !row.employeeId) && <span className="text-caption text-warning-text">{item.invoice.allocations.filter((row) => !row.employeeId).length} não localizado(s)</span>}</span> : "—" },
+    { id: "amount", header: "Cobrado", numeric: true, cell: (item) => (item.invoice ? <strong>{money(item.invoice.totalAmount)}</strong> : "—") },
+  ];
   return (
-    <Card className="grid gap-3" as="section" aria-label="Resultado da importação">
-      <CardHeader titleAs="h3" title={`Fatura ${invoice.obligation} importada`} description={`${invoice.provider} · ${invoice.fileName} · vencimento ${dateBr(invoice.dueDate)} · competência ${String(invoice.competence.month).padStart(2, "0")}/${invoice.competence.year}`} actions={<StatusBadge tone={missing ? "warning" : "success"}>{missing ? `${missing} não localizado(s)` : "Todos localizados"}</StatusBadge>} />
-      <CompetenceSummary className="xl:grid-cols-5" items={[
-        { label: "Contratos (PDF)", value: invoice.contracts.map((contract) => contract.code).join(", "), helper: invoice.contracts[0]?.name },
-        { label: "Titulares", value: invoice.holderCount },
-        { label: "Vidas", value: invoice.beneficiaryCount },
-        { label: "Valor bruto (PDF)", value: money(invoice.grossAmount) },
-        { label: "Cobrado (conferido)", value: money(invoice.totalAmount), helper: invoice.financialRecord?.identifier, emphasis: true },
-      ]} />
-    </Card>
+    <div className="grid gap-2">
+      <DataTable caption="Fila de importação" columns={columns} rows={items} getRowId={(item) => item.id} density="dense" minWidth="720px" actionsLabel="Ações"
+        rowActions={(item) => item.status !== "processing" && !busy ? <Button size="sm" variant="ghost" onClick={() => onRemove(item.id)} aria-label={`Remover ${item.file.name} da fila`}><X size={14} aria-hidden="true" />Remover</Button> : null} />
+      {items.some((item) => item.status === "done") && !busy && <div className="flex justify-end"><Button size="sm" variant="ghost" onClick={onClearDone}>Limpar importados</Button></div>}
+    </div>
   );
 }
 

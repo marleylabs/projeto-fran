@@ -7,7 +7,8 @@ import clsx from "clsx";
 // Área de upload reutilizável: arrastar-e-soltar OU clicar/teclado (o controle real é um <input type="file"> nativo,
 // visualmente oculto e focável — Tab chega nele, Enter/Espaço abrem o seletor do sistema). Arrastar nunca é o único
 // caminho (WCAG 2.5.7). Valida SÓ o que recebe por props (accept/maxSize) — nenhum formato de domínio embutido.
-// Controlada: o consumidor guarda o arquivo (`file`) e decide o que fazer com ele (`onFileSelect`).
+// Controlada: o consumidor guarda o arquivo (`file`) e decide o que fazer com ele (`onFileSelect`). Com `multiple`,
+// `onFileSelect` é chamado uma vez por arquivo válido e o consumidor mostra a própria lista (passa `file={null}`).
 
 export type UploadFileLike = { name: string; size: number; type?: string };
 
@@ -70,6 +71,8 @@ export type UploadDropzoneProps = {
   accept?: string;
   maxSize?: number;
   disabled?: boolean;
+  /** Aceita vários arquivos de uma vez (seletor e arrastar). */
+  multiple?: boolean;
   helperText?: ReactNode;
   /** Erro vindo do consumidor (ex.: arquivo recusado pelo servidor). Erros de accept/maxSize são internos. */
   error?: ReactNode;
@@ -77,7 +80,7 @@ export type UploadDropzoneProps = {
   className?: string;
 };
 
-export function UploadDropzone({ label, file, onFileSelect, onClear, accept, maxSize, disabled = false, helperText, error, id, className }: UploadDropzoneProps) {
+export function UploadDropzone({ label, file, onFileSelect, onClear, accept, maxSize, disabled = false, multiple = false, helperText, error, id, className }: UploadDropzoneProps) {
   const generated = useId();
   const inputId = id ?? `upload-${generated}`;
   const hintId = `${inputId}-hint`;
@@ -95,11 +98,20 @@ export function UploadDropzone({ label, file, onFileSelect, onClear, accept, max
     if (!problem) onFileSelect(candidate);
   };
 
+  // Vários arquivos: os válidos seguem; os recusados aparecem juntos no erro.
+  const takeMany = (files: File[]) => {
+    if (disabled) return;
+    const problems = files.map((candidate) => [candidate, validateUploadFile(candidate, { accept, maxSize })] as const);
+    setLocalError(problems.filter(([, problem]) => problem).map(([candidate, problem]) => `${candidate.name}: ${problem}`).join(" ") || null);
+    for (const [candidate, problem] of problems) if (!problem) onFileSelect(candidate);
+  };
+
   const onDrop = (event: DragEvent<HTMLLabelElement>) => {
     event.preventDefault();
     setDragging(false);
     if (disabled) return;
     const files = event.dataTransfer.files;
+    if (multiple) { takeMany([...files]); return; }
     if (files.length > 1) { setLocalError("Envie apenas um arquivo por vez."); return; }
     take(files[0]);
   };
@@ -111,12 +123,13 @@ export function UploadDropzone({ label, file, onFileSelect, onClear, accept, max
         id={inputId}
         type="file"
         accept={accept}
+        multiple={multiple}
         disabled={disabled}
         aria-describedby={[shownError ? errorId : null, hintId].filter(Boolean).join(" ")}
         aria-invalid={shownError ? true : undefined}
         // Visualmente oculto mas focável; o foco aparece no contorno da área (peer-focus-visible).
         className="peer sr-only"
-        onChange={(event) => { take(event.target.files?.[0]); event.target.value = ""; }}
+        onChange={(event) => { const files = [...(event.target.files ?? [])]; if (multiple) takeMany(files); else take(files[0]); event.target.value = ""; }}
       />
       <label
         htmlFor={inputId}
@@ -142,7 +155,7 @@ export function UploadDropzone({ label, file, onFileSelect, onClear, accept, max
         </span>
         <span className="text-card-title text-foreground">{label}</span>
         <span className="text-body text-foreground-muted">
-          {dragging ? "Solte o arquivo para selecionar" : <>Arraste o arquivo para cá ou <span className={clsx("font-semibold", !disabled && "text-primary underline underline-offset-2")}>clique para selecionar</span></>}
+          {dragging ? (multiple ? "Solte os arquivos para selecionar" : "Solte o arquivo para selecionar") : <>{multiple ? "Arraste os arquivos" : "Arraste o arquivo"} para cá ou <span className={clsx("font-semibold", !disabled && "text-primary underline underline-offset-2")}>clique para selecionar</span></>}
         </span>
       </label>
       <p id={hintId} className="text-caption text-foreground-muted">
